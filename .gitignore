@@ -1,0 +1,15 @@
+# Visual Studio Code
+.vscode/
+# Python
+.venv/
+env/
+.env
+.pytest_cache
+/**/*.pyc
+__pycache__/
+# Data stores
+*-data/
+# Linters
+.ruff_cache
+# MacOS Desktop Services Store
+.DS_Store

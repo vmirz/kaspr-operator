@@ -1,0 +1,36 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KafkaMessageScheduler
+metadata:
+  name: my-scheduler
+  labels:
+    domain: sales
+spec:
+  version: 0.1.0
+  replicas: 3
+  bootstrapServers: localhost:9092
+  tls: {}
+  authentication:
+    type: plain
+    username: kafka-user
+    passwordSecret:
+      secretName: kafka-credentials
+      passwordKey: password
+  config:
+    topic_partitions: 3  
+    web_port: 6065
+    web_metrics_base_path: /kafka/scheduler
+    kms_checkpoint_save_interval_seconds: 5
+    kms_janitor_clean_interval_seconds: 20
+    kms_janitor_highwater_offset_seconds: 86400
+  resources:
+    requests:
+      cpu: 0.1
+      memory: 512Mi
+    limits:
+      cpu: 1
+      memory: 512Mi
+  storage:
+    type: persistent-claim
+    class: standard
+    size: 256Mi
+    deleteClaim: True
