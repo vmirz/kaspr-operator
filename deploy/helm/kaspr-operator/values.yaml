@@ -2,9 +2,9 @@
 # Declare variables to be passed into your templates.
 
 operator:
-  # Default values for kaspr-operator
+  # Deploy the kaspr operator
   enable: True
-
+  
   namespaceOverride: ""
 
   # Set to `True` if you want the operator to be "cluster-wide" and operate over all namespaces.
