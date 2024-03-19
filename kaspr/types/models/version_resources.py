@@ -1,6 +1,4 @@
 from typing import NamedTuple, List
-from kaspr.utils.objects import cached_property
-
 
 class VersionInfo(NamedTuple):
     major: int
@@ -8,7 +6,7 @@ class VersionInfo(NamedTuple):
     micro: int
     releaselevel: str
     serial: str
-    
+
 class KasprVersion(NamedTuple):
     operator_version: str
     version: str
