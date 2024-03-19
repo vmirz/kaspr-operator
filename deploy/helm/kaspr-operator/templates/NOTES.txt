@@ -1,0 +1,4 @@
+{{ $.Chart.Name }} has been installed. Check its status by running:
+  kubectl --namespace {{ template "kaspr.operator.namespace" . }} get pods -l "app.kubernetes.io/name={{ include "kaspr.operator.name" . }}"
+
+Visit https://github.com/kaspr-operator/ for instructions on how to create & configure Kaspr custom resources.

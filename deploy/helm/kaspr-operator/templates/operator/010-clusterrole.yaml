@@ -1,0 +1,72 @@
+{{- if and .Values.operator.rbac.create .Values.operator.createGlobalResources -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kaspr-operator-namespaced
+  labels:
+    component: role
+    {{- include "kaspr.operator.labels" . | nindent 4 }}
+rules:
+# Resources in this role are used by the operator based on an operand being deployed in some namespace. When needed, you
+# can deploy the operator as a cluster-wide operator. But grant the rights listed in this role only on the namespaces
+# where the operands will be deployed. That way, you can limit the access the operator has to other namespaces where it
+# does not manage any clusters.
+- apiGroups:
+  - ""
+  resources:
+    # The cluster operator needs to access and delete pods, this is to allow it to monitor pod health and coordinate rolling updates
+  - pods
+    # The cluster operator needs to access and manage service accounts to grant Kaspr components cluster permissions
+  - serviceaccounts
+    # The cluster operator needs to access and manage config maps for Kaspr components configuration
+  - configmaps
+    # The cluster operator needs to access and manage services to expose Kaspr components to network traffic
+  - services
+    # The cluster operator needs to access and manage secrets to handle credentials
+  - secrets
+    # The cluster operator needs to access and manage persistent volume claims to bind them to Kaspr components for persistent data
+  - persistentvolumeclaims
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - delete
+  - patch
+  - update
+- apiGroups:
+  - "apps"
+  resources:
+    # The operator needs to access and manage stateful sets to run stateful sets based Kaspr components
+  - statefulsets
+    # The operator needs to access replica-sets to manage Kaspr components and to determine error states
+  - replicasets
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - delete
+  - patch
+  - update
+- apiGroups:
+  - "apps"
+  resources:
+    # The operator needs to scale Statefulsets
+  - statefulsets/scale
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - ""
+  - events.k8s.io # new events api, used by operator
+  resources:
+    # The cluster operator needs to be able to create events and delegate permissions to do so
+  - events
+  verbs:
+  - create
+  - get
+  - list
+  - watch
+{{- end -}}
