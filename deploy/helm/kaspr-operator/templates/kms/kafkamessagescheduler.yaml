@@ -1,0 +1,12 @@
+{{- if .Values.kafkaMessageSchedulers }}
+{{- $root := . -}}
+{{- range .Values.kafkaMessageSchedulers }}
+---
+apiVersion: kaspr.io/v1alpha1
+kind: KafkaMessageScheduler
+metadata:
+  name: {{ .name }}
+spec: 
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}

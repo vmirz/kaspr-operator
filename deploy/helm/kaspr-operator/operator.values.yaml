@@ -9,7 +9,7 @@ operator:
 
   # Set to `True` if you want the operator to be "cluster-wide" and operate over all namespaces.
   # If false, 
-  watchAnyNamespace: False
+  watchAnyNamespace: True
 
   # Specific namespace to watch over. The namespace the operator is deployed to is automatically included.
   # If you set `watchNamespaces` to the same value as ``.Release.Namespace` (e.g. `helm ... --namespace $NAMESPACE`),

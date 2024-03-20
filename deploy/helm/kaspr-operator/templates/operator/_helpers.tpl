@@ -65,7 +65,7 @@ Create the name of the service account to use
 Allow the release namespace to be overridden for multi-namespace deployments in combined charts
 */}}
 {{- define "kaspr.operator.namespace" -}}
-  {{- if .Values.operator.namespaceOverride -}}
+  {{- if and .Values.operator .Values.operator.namespaceOverride -}}
     {{- .Values.operator.namespaceOverride -}}
   {{- else -}}
     {{- .Release.Namespace -}}

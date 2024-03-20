@@ -1,4 +1,4 @@
-{{- if .Values.operator.enable -}}
+{{- if and .Values.operator .Values.operator.enable .Values.operator.enable -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

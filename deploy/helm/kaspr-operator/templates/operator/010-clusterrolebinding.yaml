@@ -1,4 +1,4 @@
-{{- if .Values.operator.rbac.create }}
+{{- if and .Values.operator .Values.operator.enable .Values.operator.rbac.create }}
 {{- $root := . -}}
 {{- $opns := include "kaspr.operator.namespace" . -}}
 {{- range append .Values.operator.watchNamespaces $opns }}
