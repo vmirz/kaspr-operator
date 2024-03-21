@@ -284,6 +284,7 @@ class KafkaMessageScheduler(BaseResource):
             env_for("app_name"): self.component_name,
             env_for("kafka_bootstrap_servers"): self.bootstrap_servers,
             **self.prepare_kafka_credentials_env_dict(),
+            env_for("web_port"): self.web_port,
             env_for("table_dir"): self.table_dir_path,
             env_for("kms_enabled"): "true",
             env_for("topic_prefix"): self.topic_prefix,
