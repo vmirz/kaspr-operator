@@ -19,11 +19,18 @@ class KasprVersionResources:
     #: Mapping of operator version to kaspr application version
     _VERSIONS = (
         KasprVersion(
+            operator_version="0.1.10",
+            version="0.1.1",
+            image="kasprio/kaspr:0.1.1",
+            supported=True,
+            default=True,
+        ),
+        KasprVersion(
             operator_version="0.1.0",
             version="0.1.0",
             image="kasprio/kaspr:0.1.0",
             supported=True,
-            default=True,
+            default=False,
         ),
     )
 
