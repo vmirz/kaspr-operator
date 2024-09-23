@@ -7,7 +7,7 @@ from kaspr.types.models.storage import KasprAppStorage
 from kaspr.types.models.resource_requirements import ResourceRequirements
 from kaspr.types.models.probe import Probe
 
-class KafkaMessageSchedulerSpec(BaseModel):
+class KasprSchedulerSpec(BaseModel):
     """Kafka Message Scheduler CRD spec"""
 
     version: Optional[str]

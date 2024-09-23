@@ -2,7 +2,7 @@ from marshmallow import fields
 from kaspr.types.base import BaseSchema, EXCLUDE
 from kaspr.types.schemas.tls import ClientTlsSchema
 from kaspr.types.schemas.authentication import KafkaClientAuthenticationSchema
-from kaspr.types.models.kafkamessagescheduler_spec import KafkaMessageSchedulerSpec
+from kaspr.types.models.kasprapp_spec import KasprAppSpec
 from kaspr.types.schemas.config import (
     KasprAppConfigSchema,
 )
@@ -11,14 +11,14 @@ from kaspr.types.schemas.probe import ProbeSchema
 from kaspr.types.schemas.storage import KasprAppStorageSchema
 
 
-class KafkaMessageSchedulerSpecSchema(BaseSchema):
-    __model__ = KafkaMessageSchedulerSpec
+class KasprAppSpecSchema(BaseSchema):
+    __model__ = KasprAppSpec
 
     version = fields.Str(data_key="version", allow_none=True, load_default=None)
     replicas = fields.Int(data_key="replicas", allow_none=True)
     image = fields.Str(data_key="image", allow_none=True, load_default=None)
     bootstrap_servers = fields.Str(data_key="bootstrapServers", required=True)
-    tls = fields.Nested(ClientTlsSchema(), data_key="tls", allow_none=True)
+    tls = fields.Nested(ClientTlsSchema(), data_key="tls", allow_none=True, load_default=None)
     authentication = fields.Nested(
         KafkaClientAuthenticationSchema(), data_key="authentication", required=True
     )
