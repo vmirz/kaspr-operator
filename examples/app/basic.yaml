@@ -1,17 +1,13 @@
 apiVersion: kaspr.io/v1alpha1
-kind: KafkaMessageScheduler
+kind: KasprApp
 metadata:
-  name: my-scheduler
+  name: my-app
 spec:
   replicas: 1
   bootstrapServers: localhost:9092
-  tls: {}
+  #tls: {}
   authentication:
     type: plain
-    username: kafka-user
-    passwordSecret:
-      secretName: kafka-credentials
-      passwordKey: password
   storage:
     type: persistent-claim
     class: standard

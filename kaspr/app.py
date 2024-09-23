@@ -1,5 +1,5 @@
 import kopf
-import kaspr.handlers.kafkamessagescheduler as kafkamessagescheduler
+import kaspr.handlers.kasprscheduler as kasprscheduler
 
 # Disabling Webhook server for now.
 # @kopf.on.startup()
@@ -7,5 +7,5 @@ import kaspr.handlers.kafkamessagescheduler as kafkamessagescheduler
 #     settings.admission.server = kopf.WebhookServer()
 
 __all__ = [
-    "kafkamessagescheduler"
+    "kasprscheduler"
 ]
