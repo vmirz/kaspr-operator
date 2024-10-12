@@ -19,6 +19,7 @@ from kaspr.types.models.probe import Probe
 from kubernetes.client import (
     AppsV1Api,
     CoreV1Api,
+    CustomObjectsApi,
     V1ObjectMeta,
     V1Service,
     V1ServiceSpec,
@@ -88,6 +89,7 @@ class KasprApp(BaseResource):
     # k8s resources
     _apps_v1_api: AppsV1Api = None
     _core_v1_api: CoreV1Api = None
+    _custom_objects_api: CustomObjectsApi = None
     _service: V1Service = None
     _persistent_volume_claim: V1PersistentVolumeClaim = None
     _persistent_volume_claim_retention_policy: V1StatefulSetPersistentVolumeClaimRetentionPolicy = None
@@ -154,6 +156,27 @@ class KasprApp(BaseResource):
         app.readiness_probe = spec.readiness_probe
         app.storage = spec.storage
         return app
+
+    @classmethod
+    def default(self) -> "KasprApp":    
+        """Create a default KasprApp resource."""
+        return KasprApp(
+            name="default",
+            kind=self.KIND,
+            namespace=None,
+            component_type=self.COMPONENT_TYPE,
+        )
+
+    def fetch(self, name: str, namespace: str):
+        """Fetch actual KasprApp in kubernetes."""
+        return self.get_custom_object(
+            self.custom_objects_api,
+            namespace=namespace,
+            group="kaspr.io",
+            version="v1alpha1",
+            plural="kasprapps",
+            name=name,
+        )
 
     def supported_version(self, version: str) -> bool:
         """Return True if version is supported."""
@@ -545,6 +568,12 @@ class KasprApp(BaseResource):
         if self._core_v1_api is None:
             self._core_v1_api = CoreV1Api()
         return self._core_v1_api
+
+    @cached_property
+    def custom_objects_api(self) -> CustomObjectsApi:
+        if self._custom_objects_api is None:
+            self._custom_objects_api = CustomObjectsApi()
+        return self._custom_objects_api
 
     @cached_property
     def service(self) -> V1Service:

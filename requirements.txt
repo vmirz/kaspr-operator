@@ -1,3 +1,4 @@
 kopf[dev]==1.37.1
 kubernetes==29.0.0
 marshmallow==3.21.1
+python-benedict[all]==0.33.2

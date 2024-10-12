@@ -47,6 +47,10 @@ class Labels(ResourceLabels):
     def include(self, label: str, value: str) -> "Labels":
         self.update({label: value})
         return self
+    
+    def exclude(self, label: str) -> "Labels":
+        self._labels.pop(label, None)
+        return self
 
     def include_kaspr_kind(self, kind) -> "Labels":
         return self.include(self.KASPR_KIND_LABEL, kind)
@@ -67,6 +71,9 @@ class Labels(ResourceLabels):
                 f"{self.APPLICATION_NAME}-{instance_name}"
             ),
         )
+    
+    def get(self, key: str) -> str:
+        return self._labels.get(key, None)
 
     def get_or_valid_instance_label_value(self, instance: str):
         """Validates the instance name and if needed modifies it to make it a valid Label value:

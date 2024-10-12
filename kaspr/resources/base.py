@@ -13,6 +13,7 @@ from kubernetes.client import (
     V1Container,
     V1ServiceAccount,
     CoreV1Api,
+    CustomObjectsApi,
     V1Service,
     AppsV1Api,
     V1StatefulSet,
@@ -73,7 +74,7 @@ class BaseResource:
     @property
     def image(self) -> str:
         return self._image
-    
+
     @cached_property
     def operator_version(self) -> Version:
         return Version.from_str(kaspr.__version__)
@@ -85,6 +86,8 @@ class BaseResource:
         """Compute a hash of the config map data."""
         if isinstance(data, dict):
             hash_input = json.dumps(data, sort_keys=True).encode()
+        elif isinstance(data, str):
+            hash_input = data.encode()
         else:
             raise ValueError(f"Hash of {type(data)} is not supporetd.")
         return hashlib.sha256(hash_input).hexdigest()
@@ -239,4 +242,43 @@ class BaseResource:
             name=name,
             namespace=namespace,
             body=pvc,
+        )
+
+    def get_custom_object(
+        self,
+        custom_objects_api: CustomObjectsApi,
+        namespace: str,
+        group: str,
+        version: str,
+        plural: str,
+        name: str,
+    ):
+        try:
+            return custom_objects_api.get_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                name=name,
+            )
+        except ApiException as ex:
+            if ex.status == 404:
+                return None
+            raise
+
+    def list_custom_objects(
+        self,
+        custom_objects_api: CustomObjectsApi,
+        namespace: str,
+        group: str,
+        version: str,
+        plural: str,
+        label_selector: str = None,
+    ):
+        return custom_objects_api.list_namespaced_custom_object(
+            group=group,
+            version=version,
+            namespace=namespace,
+            plural=plural,
+            label_selector=label_selector,
         )
