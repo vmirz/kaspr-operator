@@ -67,6 +67,7 @@ class KasprApp(BaseResource):
     DEFAULT_REPLICAS = 1
     DEFAULT_DATA_DIR = "/var/lib/data"
     DEFAULT_TABLE_DIR = "/var/lib/data/tables"
+    DEFAULT_AGENTS_DIR = "/var/lib/data/agents"
     DEFAULT_WEB_PORT = 6065
 
     replicas: int
@@ -341,6 +342,7 @@ class KasprApp(BaseResource):
             env_for("web_port"): str(self.web_port),
             env_for("data_dir"): self.data_dir_path,
             env_for("table_dir"): self.table_dir_path,
+            env_for("agents_dir"): self.agents_dir_path,
             env_for("kms_enabled"): "false",
             env_for("topic_prefix"): self.topic_prefix,
         }
@@ -647,7 +649,7 @@ class KasprApp(BaseResource):
 
     @cached_property
     def agents_dir_path(self):
-        return f"{self.data_dir_path}/agents"
+        return getattr(self.config, "agents_dir", self.DEFAULT_AGENTS_DIR)
 
     @cached_property
     def topic_prefix(self):
