@@ -1,11 +1,21 @@
+import asyncio
 import kopf
+from collections import defaultdict
+from typing import List, Dict
 from kaspr.types.schemas.kasprapp_spec import (
     KasprAppSpecSchema,
 )
-from kaspr.types.models.kasprapp_spec import KasprAppSpec
-from kaspr.resources.kasprapp import KasprApp
+from kaspr.types.models import KasprAppSpec
+from kaspr.types.schemas import KasprAgentSpecSchema
+from kaspr.resources import KasprApp, KasprAgent
+from kaspr.utils.helpers import utc_now
 
 APP_KIND = "KasprApp"
+
+AGENTS_UPDATED = "AgentsUpdated"
+
+# Queue of requests to patch KasprApps
+patch_request_queues: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
 
 
 @kopf.on.resume(kind=APP_KIND)
@@ -94,3 +104,143 @@ def immutable_config_updated_00(**kwargs):
 #     if 'storage' in spec and 'storage' in old:
 #         if spec['storage'].get('class') != old['storage'].get('class'):
 #             raise kopf.AdmissionError("Changing the storage.class field is not allowed.")
+
+
+@kopf.timer(APP_KIND, interval=1)
+async def patch_resource(name, patch, **kwargs):
+    """Update KasprApp status.
+
+    Example usage:
+    ```
+        # Request to patch annotations
+        await patch_request_queues[resource_name].put(
+            {
+                "field": "metadata.annotations",
+                "value": {"kaspr.io/last-applied-agents-hash": "xyz"},
+            }
+        )
+    ```
+
+    Update multiple fields in one pass:
+    ```
+        # Request to patch annotations
+        await patch_request_queues[resource_name].put(
+            [
+                {
+                    "field": "metadata.annotations",
+                    "value": {
+                        "kaspr.io/last-applied-agents-hash": "xyz"
+                    },
+                },
+                {
+                    "field": "status",
+                    "value": {
+                        "agents": [{"name": "agent-1", "status": "running"}],
+                    },
+                },
+            ]
+        )
+    ```    
+    """
+    queue = patch_request_queues[name]
+
+    def set_patch(request):
+        fields = request["field"].split(".")
+        _patch = patch
+        for field in fields:
+            _patch = getattr(_patch, field)
+        _patch.update(request["value"])
+        
+    while not queue.empty():
+        request = queue.get_nowait()
+        if isinstance(request, list):
+            for req in request:
+                set_patch(req)
+        else:
+            set_patch(request)
+
+
+@kopf.daemon(
+    kind=APP_KIND, cancellation_backoff=2.0, cancellation_timeout=5.0, initial_delay=5.0
+)
+async def monitor_agents(
+    stopped,
+    name,
+    body,
+    spec,
+    meta,
+    labels,
+    annotations,
+    status,
+    namespace,
+    patch,
+    logger,
+    **kwargs,
+):
+    """Monitor app's agents.
+
+    On every iteration, the handler:
+    1. Finds all agents related to the app.
+    2. Determines if the app needs to be patched with updated agents.
+    3. (Maybe) Patches the app with updated agents.
+    4. Update app annotations & status with changes.
+    """
+    try:
+        while not stopped:
+            # 1. Find all related agents.
+            agents: List[KasprAgent] = []
+            result = KasprAgent.default().search(namespace, apps=[name])
+            for agent in result.get("items", []) if result else []:
+                agents.append(
+                    KasprAgent.from_spec(
+                        agent["metadata"]["name"],
+                        KasprAgent.KIND,
+                        namespace,
+                        KasprAgentSpecSchema().load(agent["spec"]),
+                        dict(agent["metadata"]["labels"]),
+                    )
+                )
+
+            # 2. Determine if app needs to be patched
+            spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
+            app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
+            app.with_agents(agents)
+            current_agents_hash, desired_agents_hash = (
+                annotations.get("kaspr.io/last-applied-agents-hash"),
+                app.agents_hash,
+            )
+            # 3. Patch app with updated agents
+            app.patch_agents()
+            # 4. Push the request to the patch queue.
+            await patch_request_queues[name].put(
+                [
+                    {
+                        "field": "metadata.annotations",
+                        "value": {
+                            "kaspr.io/last-applied-agents-hash": desired_agents_hash
+                        },
+                    },
+                    {
+                        "field": "status",
+                        "value": {
+                            "agents": {
+                                "registered": app.agents_status(),
+                                "lastTransitionTime": utc_now().isoformat(),
+                                "hash": app.agents_hash,
+                            }
+                        },
+                    }                                           
+                ]
+            )
+
+            if current_agents_hash != desired_agents_hash:
+                kopf.event(
+                    body,
+                    type="Normal",
+                    reason=AGENTS_UPDATED,
+                    message=f"Agents were updated for `{name}` in `{namespace or 'default'}` namespace.",
+                )            
+
+            await asyncio.sleep(10)
+    except asyncio.CancelledError:
+        print("We are done. Bye.")

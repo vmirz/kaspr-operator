@@ -9,6 +9,7 @@ from kaspr.types.models import KasprAgentResources
 from kubernetes.client import (
     AppsV1Api,
     CoreV1Api,
+    CustomObjectsApi,
     V1ObjectMeta,
     V1ConfigMap,
     V1EnvVar,
@@ -24,19 +25,22 @@ class KasprAgent(BaseResource):
     """Kaspr App kubernetes resource."""
 
     KIND = "KasprAgent"
+    GROUP_VERSION = "v1alpha1"
     COMPONENT_TYPE = "agent"
     KASPR_APP_NAME_LABEL = "kaspr.io/app"
 
     config_map_name: str
+    volume_mount_name: str
     spec: KasprAgentSpec
 
     # derived from spec
-    _config_hash: str = None
+    _hash: str = None
     _json_str: str = None
 
     # k8s resources
     _apps_v1_api: AppsV1Api = None
     _core_v1_api: CoreV1Api = None
+    _custom_objects_api: CustomObjectsApi = None
     _config_map: V1ConfigMap = None
 
     def __init__(
@@ -55,7 +59,7 @@ class KasprAgent(BaseResource):
             component_type,
             self.KASPR_OPERATOR_NAME,
         )
-        _labels.update(labels)
+        _labels.update(labels or {})
         _labels.exclude(Labels.KASPR_CLUSTER_LABEL)
         super().__init__(
             cluster=name,
@@ -71,12 +75,49 @@ class KasprAgent(BaseResource):
         kind: str,
         namespace: str,
         spec: KasprAgentSpec,
-        labels: Dict[str, str],
+        labels: Dict[str, str] = None,
     ) -> "KasprAgent":
         agent = KasprAgent(name, kind, namespace, self.KIND, labels)
         agent.spec = spec
         agent.config_map_name = KasprAgentResources.agent_config_name(name)
+        agent.volume_mount_name = KasprAgentResources.volume_mount_name(name)
         return agent
+
+    @classmethod
+    def default(self) -> "KasprAgent":
+        """Create a default KasprAgent resource."""
+        return KasprAgent(
+            name="default",
+            kind=self.KIND,
+            namespace=None,
+            component_type=self.COMPONENT_TYPE,
+        )
+
+    def fetch(self, name: str, namespace: str):
+        """Fetch KasprAgent from kubernetes."""
+        return self.get_custom_object(
+            self.custom_objects_api,
+            namespace=namespace,
+            group="kaspr.io",
+            version=self.GROUP_VERSION,
+            plural="kaspragents",
+            name=name,
+        )
+
+    def search(self, namespace: str, apps: List[str] = None):
+        """Search for KasprAgents in kubernetes."""
+
+        label_selector = (
+            ",".join(f"kaspr.io/app={app}" for app in apps) if apps else None
+        )
+        return self.list_custom_objects(
+            self.custom_objects_api,
+            namespace=namespace,
+            group="kaspr.io",
+            version=self.GROUP_VERSION,
+            plural="kaspragents",
+            label_selector=label_selector,
+        )
 
     def patch_config_map(self):
         """Update resources as a result of app settings change."""
@@ -102,7 +143,7 @@ class KasprAgent(BaseResource):
                 labels=self.labels.as_dict(),
             ),
             data={
-                f"{self.component_name}.json": self.json_str,
+                self.file_name: self.json_str,
             },
         )
 
@@ -120,12 +161,26 @@ class KasprAgent(BaseResource):
         """Ensure all child resources are owned by the root resource"""
         children = [self.config_map]
         kopf.adopt(children)
+        
+    def info(self) -> Dict:
+        """Return agent info."""
+        return {
+            "name": self.cluster,
+            "configMap": self.config_map_name,
+            "hash": self.hash,
+        }
 
     @cached_property
     def core_v1_api(self) -> CoreV1Api:
         if self._core_v1_api is None:
             self._core_v1_api = CoreV1Api()
         return self._core_v1_api
+
+    @cached_property
+    def custom_objects_api(self) -> CustomObjectsApi:
+        if self._custom_objects_api is None:
+            self._custom_objects_api = CustomObjectsApi()
+        return self._custom_objects_api
 
     @cached_property
     def app_name(self):
@@ -138,13 +193,17 @@ class KasprAgent(BaseResource):
         return self._config_map
 
     @cached_property
-    def config_hash(self) -> str:
-        if self._config_hash is None:
-            self._config_hash = self.compute_hash(self.config_map.data)
-        return self._config_hash
+    def hash(self) -> str:
+        if self._hash is None:
+            self._hash = self.compute_hash(self.config_map.data)
+        return self._hash
 
     @cached_property
     def json_str(self) -> str:
         if self._json_str is None:
             self._json_str = self.prepare_json_str()
         return self._json_str
+
+    @cached_property
+    def file_name(self) -> str:
+        return f"{self.component_name}.json"

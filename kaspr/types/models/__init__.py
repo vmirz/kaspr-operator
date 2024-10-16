@@ -1,4 +1,5 @@
 from .kaspragent_resources import KasprAgentResources
+from .kasprapp_spec import KasprAppSpec, KasprAppConfig, KasprAppStorage
 from .kaspragent_spec import (
     KasprAgentSpec,
     KasprAgentInput,
@@ -8,6 +9,9 @@ from .kaspragent_spec import (
 )
 
 __all__ = [
+    "KasprAppSpec",
+    "KasprAppConfig",
+    "KasprAppStorage",
     "KasprAgentResources",
     "KasprAgentSpec",
     "KasprAgentInput",

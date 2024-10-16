@@ -31,9 +31,5 @@ class KasprAgentResources:
         raise NotImplementedError()
     
     @classmethod
-    def persistent_volume_claim_name(self, cluster_name: str):
-         raise NotImplementedError()
-    
-    @classmethod
-    def stateful_set_name(self, cluster_name: str):
-        raise NotImplementedError()
+    def volume_mount_name(self, cluster_name: str):
+         return f"{cluster_name}-agent"

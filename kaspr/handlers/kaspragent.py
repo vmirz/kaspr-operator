@@ -1,23 +1,29 @@
 import asyncio
 import kopf
 import logging
+from collections import defaultdict
+from typing import Dict
 from benedict import benedict
 from kaspr.types.schemas import KasprAgentSpecSchema
 from kaspr.types.models import KasprAgentSpec
 from kaspr.resources import KasprAgent, KasprApp
+from kaspr.utils.helpers import utc_now
 
 KIND = "KasprAgent"
 APP_NOT_FOUND = "AppNotFound"
 APP_FOUND = "AppFound"
 
 # Queue of requests to update KasprAgent status
-status_updates_queue = asyncio.Queue()
+patch_request_queues: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
+
 
 class TimerLogFilter(logging.Filter):
     def filter(self, record):
         """Timer logs are noisy so we filter them out."""
         return "Timer " not in record.getMessage()
-kopf_logger = logging.getLogger('kopf.objects')
+
+
+kopf_logger = logging.getLogger("kopf.objects")
 kopf_logger.addFilter(TimerLogFilter())
 
 
@@ -30,16 +36,8 @@ def reconciliation(
     """Reconcile KasprAgent resources."""
     spec_model: KasprAgentSpec = KasprAgentSpecSchema().load(spec)
     agent = KasprAgent.from_spec(name, KIND, namespace, spec_model, dict(labels))
-
     # Warn if the agent's app does not exists.
     app = KasprApp.default().fetch(agent.app_name, namespace)
-    if app is None:
-        kopf.warn(
-            body,
-            reason=APP_NOT_FOUND,
-            message=f"KasprApp `{agent.app_name}` does not exist in `{namespace or 'default'}` namespace.",
-        )
-
     agent.create()
     # fetch the agent's app and update it's status.
     patch.status.update(
@@ -49,16 +47,43 @@ def reconciliation(
                 "status": APP_FOUND if app else APP_NOT_FOUND,
             },
             "configMap": agent.config_map_name,
-            "hash": agent.config_hash,
+            "hash": agent.hash,
+            "lastUpdateTime": utc_now().isoformat(),
         }
     )
+    if app is None:
+        kopf.warn(
+            body,
+            reason=APP_NOT_FOUND,
+            message=f"KasprApp `{agent.app_name}` does not exist in `{namespace or 'default'}` namespace.",
+        )
+    else:
+        kopf.event(
+            body,
+            type="Normal",
+            reason=APP_FOUND,
+            message=f"KasprApp `{agent.app_name}` found in `{namespace or 'default'}` namespace.",
+        )
 
 
 @kopf.timer(KIND, interval=1)
-async def update_status(patch, **kwargs):
-    """Update KasprAgent status."""
-    while not status_updates_queue.empty():
-        patch.status.update(status_updates_queue.get_nowait())
+async def patch_resource(name, patch, **kwargs):
+    queue = patch_request_queues[name]
+
+    def set_patch(request):
+        fields = request["field"].split(".")
+        _patch = patch
+        for field in fields:
+            _patch = getattr(_patch, field)
+        _patch.update(request["value"])
+
+    while not queue.empty():
+        request = queue.get_nowait()
+        if isinstance(request, list):
+            for req in request:
+                set_patch(req)
+        else:
+            set_patch(request)
 
 
 @kopf.daemon(
@@ -95,7 +120,15 @@ async def monitor_agent(
                 _status_updates.app.status = APP_FOUND
 
             if _status_updates:
-                await status_updates_queue.put(_status_updates)
+                await patch_request_queues[name].put(
+                    [
+                        {"field": "status", "value": _status_updates},
+                        {
+                            "field": "status",
+                            "value": {"lastUpdateTime": utc_now().isoformat()},
+                        },
+                    ]
+                )
 
             await asyncio.sleep(10)
     except asyncio.CancelledError:

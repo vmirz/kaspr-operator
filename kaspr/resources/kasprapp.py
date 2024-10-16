@@ -33,6 +33,9 @@ from kubernetes.client import (
     V1Container,
     V1ContainerPort,
     V1VolumeMount,
+    V1Volume,
+    V1ConfigMapVolumeSource,
+    V1KeyToPath,
     V1PersistentVolumeClaimSpec,
     V1PersistentVolumeClaim,
     V1PersistentVolumeClaimTemplate,
@@ -48,6 +51,7 @@ from kubernetes.client import (
 )
 
 from kaspr.resources.base import BaseResource
+from kaspr.resources import KasprAgent
 from kaspr.common.models.labels import Labels
 
 
@@ -55,11 +59,13 @@ class KasprApp(BaseResource):
     """Kaspr App kubernetes resource."""
 
     KIND = "KasprApp"
+    GROUP_VERSION = "v1alpha1"
     COMPONENT_TYPE = "app"
     WEB_PORT_NAME = "http"
     KASPR_CONTAINER_NAME = "kaspr"
 
     DEFAULT_REPLICAS = 1
+    DEFAULT_DATA_DIR = "/var/lib/data"
     DEFAULT_TABLE_DIR = "/var/lib/data/tables"
     DEFAULT_WEB_PORT = 6065
 
@@ -96,10 +102,16 @@ class KasprApp(BaseResource):
     _settings_config_map: V1ConfigMap = None
     _env_vars: List[V1EnvVar] = None
     _volume_mounts: List[V1VolumeMount] = None
+    _volumes: List[V1Volume] = None
     _container_ports: List[V1ContainerPort] = None
     _stateful_set: V1StatefulSet = None
     _kaspr_container: V1Container = None
     _pod_template: V1PodTemplateSpec = None
+    _agent_pod_volumes: List[V1Volume] = None
+
+    # Reference to agent resources
+    agents: List[KasprAgent] = None
+    _agents_hash: str = None
 
     # TODO: Templates allow customizing k8s behavior
     # PodDisruptionBudgetTemplate templatePodDisruptionBudget;
@@ -158,7 +170,7 @@ class KasprApp(BaseResource):
         return app
 
     @classmethod
-    def default(self) -> "KasprApp":    
+    def default(self) -> "KasprApp":
         """Create a default KasprApp resource."""
         return KasprApp(
             name="default",
@@ -167,13 +179,18 @@ class KasprApp(BaseResource):
             component_type=self.COMPONENT_TYPE,
         )
 
+    def with_agents(self, agents: List[KasprAgent]):
+        """Apply agent resources to the app."""
+        self.agents = agents
+        self._agents_hash = None  # reset hash
+
     def fetch(self, name: str, namespace: str):
         """Fetch actual KasprApp in kubernetes."""
         return self.get_custom_object(
             self.custom_objects_api,
             namespace=namespace,
             group="kaspr.io",
-            version="v1alpha1",
+            version=self.GROUP_VERSION,
             plural="kasprapps",
             name=name,
         )
@@ -287,6 +304,10 @@ class KasprApp(BaseResource):
         # include config hash
         env_vars.append(V1EnvVar(name="CONFIG_HASH", value=self.config_hash))
 
+        # include agents hash
+        if self.agents:
+            env_vars.append(V1EnvVar(name="AGENTS_HASH", value=self.agents_hash))
+
         return env_vars
 
     def prepare_kafka_credentials_env_dict(self) -> Dict[str, str]:
@@ -318,6 +339,7 @@ class KasprApp(BaseResource):
             env_for("kafka_bootstrap_servers"): self.bootstrap_servers,
             **self.prepare_kafka_credentials_env_dict(),
             env_for("web_port"): str(self.web_port),
+            env_for("data_dir"): self.data_dir_path,
             env_for("table_dir"): self.table_dir_path,
             env_for("kms_enabled"): "false",
             env_for("topic_prefix"): self.topic_prefix,
@@ -326,12 +348,32 @@ class KasprApp(BaseResource):
         _envs.update(overrides)
         return _envs
 
+    def prepare_agent_volume_mounts(self) -> List[V1VolumeMount]:
+        volume_mounts = []
+        for agent in self.agents if self.agents else []:
+            volume_mounts.append(
+                V1VolumeMount(
+                    name=agent.volume_mount_name,
+                    mount_path=self.prepare_agent_mount_path(agent),
+                    read_only=True,
+                    sub_path=agent.file_name,
+                )
+            )
+        return volume_mounts
+
+    def prepare_agent_mount_path(self, agent: KasprAgent) -> str:
+        return f"{self.agents_dir_path}/{agent.file_name}"
+
     def prepare_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
-        volume_mounts.append(
-            V1VolumeMount(
-                name=self.persistent_volume_claim_name, mount_path=self.table_dir_path
-            )
+        volume_mounts.extend(
+            [
+                V1VolumeMount(
+                    name=self.persistent_volume_claim_name,
+                    mount_path=self.table_dir_path,
+                ),
+                *self.prepare_agent_volume_mounts(),
+            ]
         )
         return volume_mounts
 
@@ -362,6 +404,25 @@ class KasprApp(BaseResource):
         )
         return ports
 
+    def prepare_volumes(self) -> List[V1Volume]:
+        volumes = []
+        volumes.extend(self.prepare_agent_volumes())
+        return volumes
+
+    def prepare_agent_volumes(self) -> List[V1Volume]:
+        volumes = []
+        for agent in self.agents if self.agents else []:
+            volumes.append(
+                V1Volume(
+                    name=agent.volume_mount_name,
+                    config_map=V1ConfigMapVolumeSource(
+                        name=agent.config_map_name,
+                        items=[V1KeyToPath(key=agent.file_name, path=agent.file_name)],
+                    ),
+                )
+            )
+        return volumes
+
     def prepare_kaspr_container(self) -> V1Container:
         return V1Container(
             name=self.KASPR_CONTAINER_NAME,
@@ -377,9 +438,7 @@ class KasprApp(BaseResource):
     def prepare_pod_template(self) -> V1PodTemplateSpec:
         return V1PodTemplateSpec(
             metadata=V1ObjectMeta(labels=self.labels.as_dict()),
-            spec=V1PodSpec(
-                containers=[self.kaspr_container],
-            ),
+            spec=V1PodSpec(containers=[self.kaspr_container], volumes=self.volumes),
         )
 
     def prepare_statefulset(self) -> V1StatefulSetSpec:
@@ -532,10 +591,39 @@ class KasprApp(BaseResource):
                 self.core_v1_api, pvc.metadata.name, self.namespace, pvc
             )
 
+    def patch_agents(self):
+        patch = [
+            {
+                "op": "replace",
+                "path": "/spec/template/spec/containers/0/volumeMounts",
+                "value": self.volume_mounts,
+            },
+            {
+                "op": "replace",
+                "path": "/spec/template/spec/volumes",
+                "value": self.volumes,
+            },
+            {
+                "op": "replace",
+                "path": "/spec/template/spec/containers/0/env",
+                "value": self.env_vars,
+            }
+        ]
+        self.patch_stateful_set(
+            self.apps_v1_api,
+            self.stateful_set_name,
+            self.namespace,
+            stateful_set=patch,
+        )
+
     def unite(self):
         """Ensure all child resources are owned by the root resource"""
         children = [self.settings_config_map, self.service, self.stateful_set]
         kopf.adopt(children)
+
+    def agents_status(self) -> Dict:
+        """Return status of all agents."""
+        return [agent.info() for agent in self.agents]
 
     @cached_property
     def version(self) -> KasprVersion:
@@ -550,8 +638,16 @@ class KasprApp(BaseResource):
         return getattr(self.config, "web_port", self.DEFAULT_WEB_PORT)
 
     @cached_property
+    def data_dir_path(self):
+        return getattr(self.config, "data_dir", self.DEFAULT_DATA_DIR)
+
+    @cached_property
     def table_dir_path(self):
         return getattr(self.config, "table_dir", self.DEFAULT_TABLE_DIR)
+
+    @cached_property
+    def agents_dir_path(self):
+        return f"{self.data_dir_path}/agents"
 
     @cached_property
     def topic_prefix(self):
@@ -636,6 +732,12 @@ class KasprApp(BaseResource):
         return self._volume_mounts
 
     @cached_property
+    def volumes(self) -> List[V1Volume]:
+        if self._volumes is None:
+            self._volumes = self.prepare_volumes()
+        return self._volumes
+
+    @cached_property
     def kaspr_container(self) -> V1Container:
         if self._kaspr_container is None:
             self._kaspr_container = self.prepare_kaspr_container()
@@ -652,3 +754,20 @@ class KasprApp(BaseResource):
         if self._stateful_set is None:
             self._stateful_set = self.prepare_statefulset()
         return self._stateful_set
+
+    @cached_property
+    def agent_pod_volumes(self) -> List[V1Volume]:
+        if self._agent_pod_volumes is None:
+            self._agent_pod_volumes = self.prepare_agent_volumes()
+        return self._agent_pod_volumes
+
+    @cached_property
+    def agents_hash(self) -> str:
+        """Hash of all agents."""
+        if self._agents_hash is None:
+            self._agents_hash = (
+                self.compute_hash("".join(agent.hash for agent in self.agents))
+                if self.agents
+                else None
+            )
+        return self._agents_hash

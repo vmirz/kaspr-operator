@@ -24,6 +24,13 @@ class KasprVersionResources:
             version="0.1.3",
             image="kasprio/kaspr:0.1.3",
             supported=True,
+            default=False,
+        ),  
+        KasprVersion(
+            operator_version="0.1.10",
+            version="0.1.2",
+            image="kasprio/kaspr:0.1.2",
+            supported=True,
             default=True,
         ),        
         KasprVersion(

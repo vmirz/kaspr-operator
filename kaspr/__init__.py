@@ -1,15 +1,15 @@
 from kaspr.handlers import (
+    kaspragent,
     kasprscheduler,
     probes, 
-    kasprapp,
-    kaspagent
+    kasprapp
 )
 
 __all__ = [
     "kasprscheduler",
     "probes",
     "kasprapp",
-    "kaspagent"
+    "kaspragent"
 ]
 
 __version__ = "0.1.10"
