@@ -15,7 +15,7 @@ class KasprVersion(NamedTuple):
     default: True
 
     def __repr__(self) -> str:
-        return f"{self.version} ({self.image})"
+        return f"{self.version}"
 
 
 class KasprVersionResources:
