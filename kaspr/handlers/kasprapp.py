@@ -223,6 +223,7 @@ async def monitor_agents(
                     {
                         "field": "status",
                         "value": {
+                            "version": str(app.version),
                             "agents": {
                                 "registered": app.agents_status(),
                                 "lastTransitionTime": utc_now().isoformat(),

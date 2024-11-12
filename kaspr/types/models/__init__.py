@@ -3,10 +3,15 @@ from .kasprapp_spec import KasprAppSpec, KasprAppConfig, KasprAppStorage
 from .kaspragent_spec import (
     KasprAgentSpec,
     KasprAgentInput,
-    KasprAgentOutput,
     KasprAgentTopic,
     KasprAgentChannel,
+    KasprAgentProcessors,
+    KasprAgentProcessorsInit,
+    KasprAgentProcessorsOperation
 )
+from .code import CodeSpec
+from .operation import MapOperation, FilterOperation
+from .component import KasprAppComponents
 
 __all__ = [
     "KasprAppSpec",
@@ -15,7 +20,13 @@ __all__ = [
     "KasprAgentResources",
     "KasprAgentSpec",
     "KasprAgentInput",
-    "KasprAgentOutput",
     "KasprAgentTopic",
     "KasprAgentChannel",
+    "CodeSpec",
+    "KasprAgentProcessors",
+    "KasprAgentProcessorsInit",
+    "KasprAgentProcessorsOperation",
+    "MapOperation",
+    "FilterOperation",
+    "KasprAppComponents",
 ]

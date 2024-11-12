@@ -67,7 +67,7 @@ class KasprApp(BaseResource):
     DEFAULT_REPLICAS = 1
     DEFAULT_DATA_DIR = "/var/lib/data"
     DEFAULT_TABLE_DIR = "/var/lib/data/tables"
-    DEFAULT_AGENTS_DIR = "/var/lib/data/agents"
+    DEFAULT_DEFINITIONS_DIR = "/var/lib/data/definitions"
     DEFAULT_WEB_PORT = 6065
 
     replicas: int
@@ -342,7 +342,7 @@ class KasprApp(BaseResource):
             env_for("web_port"): str(self.web_port),
             env_for("data_dir"): self.data_dir_path,
             env_for("table_dir"): self.table_dir_path,
-            env_for("agents_dir"): self.agents_dir_path,
+            env_for("definitions_dir"): self.definitions_dir_path,
             env_for("kms_enabled"): "false",
             env_for("topic_prefix"): self.topic_prefix,
         }
@@ -364,7 +364,7 @@ class KasprApp(BaseResource):
         return volume_mounts
 
     def prepare_agent_mount_path(self, agent: KasprAgent) -> str:
-        return f"{self.agents_dir_path}/{agent.file_name}"
+        return f"{self.definitions_dir_path}/{agent.file_name}"
 
     def prepare_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
@@ -648,8 +648,8 @@ class KasprApp(BaseResource):
         return getattr(self.config, "table_dir", self.DEFAULT_TABLE_DIR)
 
     @cached_property
-    def agents_dir_path(self):
-        return getattr(self.config, "agents_dir", self.DEFAULT_AGENTS_DIR)
+    def definitions_dir_path(self):
+        return getattr(self.config, "definitions_dir", self.DEFAULT_DEFINITIONS_DIR)
 
     @cached_property
     def topic_prefix(self):

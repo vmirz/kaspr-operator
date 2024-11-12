@@ -14,24 +14,27 @@ class KasprVersion(NamedTuple):
     supported: bool
     default: True
 
+    def __repr__(self) -> str:
+        return f"{self.version} ({self.image})"
+
 
 class KasprVersionResources:
     #: Mapping of operator version to kaspr application version
     # TODO: This should be moved to a configuration file
-    _VERSIONS = (
+    _VERSIONS = (        
         KasprVersion(
             operator_version="0.1.10",
-            version="0.1.3",
-            image="kasprio/kaspr:0.1.3",
+            version="0.2.2-alpha",
+            image="kasprio/kaspr:0.2.2-alpha",
             supported=True,
-            default=False,
+            default=True,
         ),  
         KasprVersion(
             operator_version="0.1.10",
             version="0.1.2",
             image="kasprio/kaspr:0.1.2",
-            supported=True,
-            default=True,
+            supported=False,
+            default=False,
         ),        
         KasprVersion(
             operator_version="0.1.10",

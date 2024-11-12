@@ -3,7 +3,7 @@ import math
 import inspect
 from functools import wraps
 from datetime import datetime, timezone
-from typing import Optional, Iterator, List, Mapping
+from typing import Optional, Iterator, List, Mapping, OrderedDict
 
 DEFAULT_DATE_FORMAT = "%Y-%m-%d"
 
@@ -166,3 +166,10 @@ def ensure_dollars(val) -> float:
 def ensure_date(dtstr, format=DEFAULT_DATE_FORMAT):
     """Converts input datetime string to YYYY-MM-DD format"""
     return datetime.fromisoformat(dtstr).strftime(format)
+
+def ordered_dict_to_dict(data):
+    if isinstance(data, OrderedDict):
+        return dict((k, ordered_dict_to_dict(v)) for k, v in data.items())
+    elif isinstance(data, list):
+        return [ordered_dict_to_dict(i) for i in data]
+    return data

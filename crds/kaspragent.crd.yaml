@@ -29,70 +29,94 @@ spec:
                   description: A short description of what this agent does.
                 inputs:
                   description: Inputs to stream processing.
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      topic:
+                  type: object
+                  properties:
+                    topic:
+                      type: object
+                      properties:
+                        names:
+                          type: array
+                          description: Topic names to subscribe to
+                          items:
+                            type: string
+                        pattern:
+                          type: string
+                          description: Regex pattern of topic names to subscribe to
+                        keySerializer:
+                          type: string
+                          description: Serializer for the key of the message
+                          enum: ["raw", "json", "pickle", "binary"]
+                        valueSerializer:
+                          type: string
+                          description: Serializer for the value of the message
+                          enum: ["raw", "json", "pickle", "binary"]
+                      anyOf:
+                        - required: ["names"]
+                        - required: ["pattern"]
+                    channel:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          description: The name of the channel to write to.
+                      required:
+                        - name
+                  anyOf:
+                    - required: ["topic"]
+                    - required: ["channel"]
+                processors:
+                  description: Processors operate on input events.
+                  type: object
+                  properties:
+                    pipeline:
+                      type: array
+                      items:
+                        type: string
+                        description: Sequence of operations to run.
+                    init:
+                      description: Initialization code to run.
+                      type: object
+                      properties:
+                        python:
+                          type: string
+                          description: Python code to run.
+                      required:
+                        - python
+                    operations:
+                      description: Operations to run on input events.
+                      type: array
+                      items:
                         type: object
                         properties:
                           name:
                             type: string
-                            description: The name of the topic to read from.
-                          partitions:
-                            type: integer
-                            minimum: 1
-                            description: The number of partitions in the topic.
+                            description: The name of the operation.
+                          map:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          filter:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
                         required:
                           - name
-                          - partitions
-                      channel:
-                        type: object
-                        properties:
-                          name:
-                            type: string
-                            description: The name of the channel to write to.
-                        required:
-                          - name
-                    anyOf:
-                      - required:
-                          - topic
-                      - required:
-                          - channel
-                outputs:
-                  description: Outputs to stream processing.
-                  type: array
-                  items:
-                    type: object
-                    properties:
-                      topic:
-                        type: object
-                        properties:
-                          name:
-                            type: string
-                            description: The name of the topic to read from.
-                          partitions:
-                            type: integer
-                            minimum: 1
-                            description: The number of partitions in the topic.
-                        required:
-                          - name
-                      channel:
-                        type: object
-                        properties:
-                          name:
-                            type: string
-                            description: The name of the channel to write to.
-                        required:
-                          - name
-                    anyOf:
-                      - required:
-                          - topic
-                      - required:
-                          - channel
+                        oneOf:
+                          - required: ["map"]
+                          - required: ["filter"]
+                      required:
+                        - pipeline
+                        - operations
               required:
                 - inputs
-                - outputs
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true
