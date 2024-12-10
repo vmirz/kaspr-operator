@@ -151,10 +151,6 @@ spec:
                     size:
                       type: string
                       description: "When type=persistent-claim, defines the size of the persistent volume claim (i.e 1Gi). Mandatory when type=persistent-claim."
-                    sizeLimit:
-                      type: string
-                      pattern: "^([0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$"
-                      description: "When type=ephemeral, defines the total amount of local storage required for this EmptyDir volume (for example 1Gi)."
                   required:
                   - type
               required:

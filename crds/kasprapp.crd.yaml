@@ -26,14 +26,14 @@ spec:
               properties:
                 version:
                   type: string
-                  description: The Kafka Message Scheduler version. Defaults to the latest version. Consult the user documentation to understand the process required to upgrade or downgrade the version.
+                  description: The kaspr version. Defaults to the latest.
                 replicas:
                   type: integer
                   minimum: 0
-                  description: The number of pods in the Kafka Message Scheduler group. Defaults to `1`.
+                  description: The number of desired replicas. Defaults to 1. 
                 image:
                   type: string
-                  description: The container image used for Kafka Message Scheduler pods. If no image name is explicitly specified, it is determined based on the spec.version configuration. The image names are specifically mapped to corresponding versions in the Operator configuration.
+                  description: The container kaspr image to use. If no image name is explicitly specified, it is determined based on the spec.version configuration.
                 bootstrapServers:
                   type: string
                   description: Bootstrap servers to connect to. This should be given as a comma separated list of _<hostname>_:_<port>_ pairs.
@@ -151,10 +151,6 @@ spec:
                     size:
                       type: string
                       description: "When type=persistent-claim, defines the size of the persistent volume claim (i.e 1Gi). Mandatory when type=persistent-claim."
-                    sizeLimit:
-                      type: string
-                      pattern: "^([0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$"
-                      description: "When type=ephemeral, defines the total amount of local storage required for this EmptyDir volume (for example 1Gi)."
                   required:
                   - type
               required:

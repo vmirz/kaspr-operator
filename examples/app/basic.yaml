@@ -13,3 +13,5 @@ spec:
     class: standard
     size: 256Mi
     deleteClaim: False
+  config:
+    topic_replication_factor: 1
