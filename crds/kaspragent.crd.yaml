@@ -74,6 +74,9 @@ spec:
                           name:
                             type: string
                             description: Topic name to publish to
+                          ack:
+                            type: boolean
+                            description: Wait for acknoledgement from the broker before considering the message sent
                           keySerializer:
                             type: string
                             description: Serializer for the key of the message
@@ -169,9 +172,6 @@ spec:
                               - python
                         required:
                           - name
-                        oneOf:
-                          - required: ["map"]
-                          - required: ["filter"]
                       required:
                         - pipeline
                         - operations
