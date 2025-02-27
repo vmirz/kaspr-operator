@@ -3,8 +3,10 @@ from kaspr.types.base import BaseSchema
 from kaspr.types.models import (
     KasprAgentSpec,
     KasprAgentInput,
-    KasprAgentChannel,
-    KasprAgentTopic,
+    KasprAgentInputChannel,
+    KasprAgentInputTopic,
+    KasprAgentOutput,
+    KasprAgentOutputTopic,
     KasprAgentProcessors,
     KasprAgentProcessorsInit,
 )
@@ -12,12 +14,10 @@ from kaspr.types.schemas.code import CodeSpecSchema
 from kaspr.types.schemas.operation import MapOperationSchema, FilterOperationSchema
 
 
-class KasprAgentTopicSchema(BaseSchema):
-    __model__ = KasprAgentTopic
+class KasprAgentInputTopicSchema(BaseSchema):
+    __model__ = KasprAgentInputTopic
 
-    names = fields.List(
-        fields.Str(data_key="name", required=True), required=False, load_default=[]
-    )
+    name = fields.Str(data_key="name", required=True)
     pattern = fields.Str(data_key="pattern", required=False, load_default=None)
     key_serializer = fields.Str(
         data_key="keySerializer", required=False, load_default=None
@@ -28,13 +28,54 @@ class KasprAgentTopicSchema(BaseSchema):
 
     @post_dump
     def map_fields(self, data, **kwargs):
-        data['key_serializer'] = data.pop('keySerializer')
-        data['value_serializer'] = data.pop('valueSerializer')
-        return data    
+        data["key_serializer"] = data.pop("keySerializer")
+        data["value_serializer"] = data.pop("valueSerializer")
+        return data
+
+
+class KasprAgentOutputTopicSchema(BaseSchema):
+    __model__ = KasprAgentOutputTopic
+
+    name = fields.Str(data_key="name", required=True)
+    key_serializer = fields.Str(
+        data_key="keySerializer", required=False, load_default=None
+    )
+    value_serializer = fields.Str(
+        data_key="valueSerializer", required=False, load_default=None
+    )
+    key_selector = fields.Nested(
+        CodeSpecSchema(), data_key="keySelector", required=False, load_default=None
+    )
+    value_selector = fields.Nested(
+        CodeSpecSchema(), data_key="valueSelector", required=False, load_default=None
+    )
+    partition_selector = fields.Nested(
+        CodeSpecSchema(),
+        data_key="partitionSelector",
+        required=False,
+        load_default=None,
+    )
+    headers_selector = fields.Nested(
+        CodeSpecSchema(), data_key="headersSelector", required=False, load_default=None
+    )
+    predicate = fields.Nested(
+        CodeSpecSchema(), data_key="predicate", required=False, load_default=None
+    )
+
+    @post_dump
+    def map_fields(self, data, **kwargs):
+        data["key_serializer"] = data.pop("keySerializer")
+        data["value_serializer"] = data.pop("valueSerializer")
+        data["key_selector"] = data.pop("keySelector")
+        data["value_selector"] = data.pop("valueSelector")
+        data["partition_selector"] = data.pop("partitionSelector")
+        data["headers_selector"] = data.pop("headersSelector")
+        data["predicate"] = data.pop("predicate")
+        return data
 
 
 class KasprAgentChannelSchema(BaseSchema):
-    __model__ = KasprAgentChannel
+    __model__ = KasprAgentInputChannel
 
     name = fields.Str(data_key="name", required=True)
 
@@ -43,11 +84,25 @@ class KasprAgentInputSchema(BaseSchema):
     __model__ = KasprAgentInput
 
     topic = fields.Nested(
-        KasprAgentTopicSchema(), data_key="topic", allow_none=True, load_default=None
+        KasprAgentInputTopicSchema(),
+        data_key="topic",
+        allow_none=True,
+        load_default=None,
     )
     channel = fields.Nested(
         KasprAgentChannelSchema(),
         data_key="channel",
+        allow_none=True,
+        load_default=None,
+    )
+
+
+class KasprAgentOutputSchema(BaseSchema):
+    __model__ = KasprAgentOutput
+
+    topics = fields.List(
+        fields.Nested(KasprAgentOutputTopicSchema()),
+        data_key="topics",
         allow_none=True,
         load_default=None,
     )
@@ -99,7 +154,8 @@ class KasprAgentSpecSchema(BaseSchema):
 
     name = fields.Str(data_key="name", required=False)
     description = fields.Str(data_key="description", allow_none=True, load_default=None)
-    inputs = fields.Nested(KasprAgentInputSchema(), data_key="inputs", allow_none=True)
+    input = fields.Nested(KasprAgentInputSchema(), data_key="input", allow_none=True)
+    output = fields.Nested(KasprAgentOutputSchema(), data_key="output", allow_none=True)
     processors = fields.Nested(
         KasprAgentProcessorsSchema(),
         data_key="processors",

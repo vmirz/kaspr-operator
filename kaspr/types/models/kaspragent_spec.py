@@ -3,18 +3,31 @@ from kaspr.types.base import BaseModel
 from kaspr.types.models.code import CodeSpec
 from kaspr.types.models.operation import MapOperation, FilterOperation
 
-class KasprAgentTopic(BaseModel):
+class KasprAgentInputTopic(BaseModel):
     names: Optional[List[str]]
     pattern: Optional[str]
     key_serializer: Optional[str]
     value_serializer: Optional[str]
 
-class KasprAgentChannel(BaseModel):
+class KasprAgentOutputTopic(BaseModel):
+    name: str
+    key_serializer: Optional[str]
+    value_serializer: Optional[str]
+    key_selector: Optional[CodeSpec]
+    value_selector: Optional[CodeSpec]
+    partition_selector: Optional[CodeSpec]
+    headers_selector: Optional[CodeSpec]
+    predicate: Optional[CodeSpec]
+
+class KasprAgentInputChannel(BaseModel):
     name: str
 
 class KasprAgentInput(BaseModel):
-    topic: Optional[KasprAgentTopic]
-    channel: Optional[KasprAgentChannel]
+    topic: Optional[KasprAgentInputTopic]
+    channel: Optional[KasprAgentInputChannel]
+
+class KasprAgentOutput(BaseModel):
+    topics: Optional[List[KasprAgentOutputTopic]]
 
 class KasprAgentProcessorsOperation(BaseModel):
     name: str
@@ -34,5 +47,6 @@ class KasprAgentSpec(BaseModel):
 
     name: str
     description: Optional[str]
-    inputs: KasprAgentInput
+    input: KasprAgentInput
+    output: KasprAgentOutput
     processors: KasprAgentProcessors

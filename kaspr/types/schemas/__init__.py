@@ -1,8 +1,10 @@
 from .kaspragent_spec import (
     KasprAgentSpecSchema,
     KasprAgentInputSchema,
-    KasprAgentTopicSchema,
+    KasprAgentInputTopicSchema,
     KasprAgentChannelSchema,
+    KasprAgentOutputSchema,
+    KasprAgentOutputTopicSchema,
     KasprAgentProcessorsSchema
 )
 from .code import CodeSpecSchema
@@ -12,8 +14,10 @@ from .component import KasprAppComponentsSchema
 __all__ = [
     "KasprAgentSpecSchema",
     "KasprAgentInputSchema",
-    "KasprAgentTopicSchema",
+    "KasprAgentInputTopicSchema",
     "KasprAgentChannelSchema",
+    "KasprAgentOutputSchema",
+    "KasprAgentOutputTopicSchema",
     "CodeSpecSchema",
     "MapOperationSchema",
     "FilterOperationSchema",

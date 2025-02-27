@@ -27,18 +27,16 @@ spec:
                 description:
                   type: string
                   description: A short description of what this agent does.
-                inputs:
-                  description: Inputs to stream processing.
+                input:
+                  description: Input to stream processing.
                   type: object
                   properties:
                     topic:
                       type: object
                       properties:
-                        names:
-                          type: array
+                        name:
+                          type: string
                           description: Topic names to subscribe to
-                          items:
-                            type: string
                         pattern:
                           type: string
                           description: Regex pattern of topic names to subscribe to
@@ -51,7 +49,7 @@ spec:
                           description: Serializer for the value of the message
                           enum: ["raw", "json", "pickle", "binary"]
                       anyOf:
-                        - required: ["names"]
+                        - required: ["name"]
                         - required: ["pattern"]
                     channel:
                       type: object
@@ -64,8 +62,70 @@ spec:
                   anyOf:
                     - required: ["topic"]
                     - required: ["channel"]
+                output:
+                  description: Send received values to topics, channels, or any custom callable.
+                  type: object
+                  properties:
+                    topics:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            description: Topic name to publish to
+                          keySerializer:
+                            type: string
+                            description: Serializer for the key of the message
+                            enum: ["raw", "json", "pickle", "binary"]
+                          valueSerializer:
+                            type: string
+                            description: Serializer for the value of the message
+                            enum: ["raw", "json", "pickle", "binary"]
+                          keySelector:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          valueSelector:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          partitionSelector:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          headersSelector:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          predicate:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                        required:
+                          - name
                 processors:
-                  description: Processors operate on input events.
+                  description: Chain of processors that modify input values
                   type: object
                   properties:
                     pipeline:
@@ -83,7 +143,7 @@ spec:
                       required:
                         - python
                     operations:
-                      description: Operations to run on input events.
+                      description: Chain of operations to run on input events.
                       type: array
                       items:
                         type: object
@@ -116,7 +176,7 @@ spec:
                         - pipeline
                         - operations
               required:
-                - inputs
+                - input
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true
