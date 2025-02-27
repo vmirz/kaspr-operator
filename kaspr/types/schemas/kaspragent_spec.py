@@ -37,6 +37,7 @@ class KasprAgentOutputTopicSchema(BaseSchema):
     __model__ = KasprAgentOutputTopic
 
     name = fields.Str(data_key="name", required=True)
+    ack = fields.Bool(data_key="ack", required=False, load_default=None)
     key_serializer = fields.Str(
         data_key="keySerializer", required=False, load_default=None
     )

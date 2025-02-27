@@ -11,6 +11,7 @@ class KasprAgentInputTopic(BaseModel):
 
 class KasprAgentOutputTopic(BaseModel):
     name: str
+    ack: Optional[bool]
     key_serializer: Optional[str]
     value_serializer: Optional[str]
     key_selector: Optional[CodeSpec]
