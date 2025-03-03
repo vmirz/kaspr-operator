@@ -4,12 +4,22 @@ from .kaspragent_spec import (
     KasprAgentInputTopicSchema,
     KasprAgentChannelSchema,
     KasprAgentOutputSchema,
-    KasprAgentOutputTopicSchema,
     KasprAgentProcessorsSchema
 )
 from .code import CodeSpecSchema
 from .operation import MapOperationSchema, FilterOperationSchema
 from .component import KasprAppComponentsSchema
+from .topicout import TopicOutSpecSchema
+from .kasprwebview_spec import (
+    KasprWebViewProcessorTopicSendOperatorSchema,
+    KasprWebViewProcessorMapOperatorSchema,
+    KasprWebViewProcessorOperationSchema,
+    KasprWebViewProcessorSpecSchema,
+    KasprWebViewResponseSelectorSchema,
+    KasprWebViewResponseSpecSchema,
+    KasprWebViewRequestSpecSchema,
+    KasprWebViewSpecSchema
+)
 
 __all__ = [
     "KasprAgentSpecSchema",
@@ -17,10 +27,18 @@ __all__ = [
     "KasprAgentInputTopicSchema",
     "KasprAgentChannelSchema",
     "KasprAgentOutputSchema",
-    "KasprAgentOutputTopicSchema",
     "CodeSpecSchema",
     "MapOperationSchema",
     "FilterOperationSchema",
     "KasprAgentProcessorsSchema",
     "KasprAppComponentsSchema",
+    "TopicOutSpecSchema",
+    "KasprWebViewProcessorTopicSendOperatorSchema",
+    "KasprWebViewProcessorMapOperatorSchema",
+    "KasprWebViewProcessorOperationSchema",
+    "KasprWebViewProcessorSpecSchema",
+    "KasprWebViewResponseSelectorSchema",
+    "KasprWebViewResponseSpecSchema",
+    "KasprWebViewRequestSpecSchema",
+    "KasprWebViewSpecSchema",
 ]

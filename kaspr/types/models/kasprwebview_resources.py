@@ -1,10 +1,10 @@
-class KasprAgentResources:
+class KasprWebViewResources:
     """Encapsulates the naming scheme used for the resources which the Kaspr Operator manages 
-    for KasprAgent resources."""
+    for KasprWebView resources."""
 
     @classmethod
     def component_name(self, cluster_name: str):
-        return f"{cluster_name}-agent"
+        return f"{cluster_name}-webview"
 
     @classmethod
     def service_account_name(self, cluster_name: str):
@@ -24,7 +24,7 @@ class KasprAgentResources:
 
     @classmethod
     def config_name(self, cluster_name: str):
-        return f"{cluster_name}-agent"
+        return f"{cluster_name}-webview"
     
     @classmethod
     def settings_secret_name(self, cluster_name: str):
@@ -32,4 +32,4 @@ class KasprAgentResources:
     
     @classmethod
     def volume_mount_name(self, cluster_name: str):
-         return f"{cluster_name}-agent"
+         return f"{cluster_name}-webview"

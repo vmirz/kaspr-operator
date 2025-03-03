@@ -6,10 +6,10 @@ from kaspr.types.models import (
     KasprAgentInputChannel,
     KasprAgentInputTopic,
     KasprAgentOutput,
-    KasprAgentOutputTopic,
     KasprAgentProcessors,
     KasprAgentProcessorsInit,
 )
+from kaspr.types.schemas.topicout import TopicOutSpecSchema
 from kaspr.types.schemas.code import CodeSpecSchema
 from kaspr.types.schemas.operation import MapOperationSchema, FilterOperationSchema
 
@@ -30,48 +30,6 @@ class KasprAgentInputTopicSchema(BaseSchema):
     def map_fields(self, data, **kwargs):
         data["key_serializer"] = data.pop("keySerializer")
         data["value_serializer"] = data.pop("valueSerializer")
-        return data
-
-
-class KasprAgentOutputTopicSchema(BaseSchema):
-    __model__ = KasprAgentOutputTopic
-
-    name = fields.Str(data_key="name", required=True)
-    ack = fields.Bool(data_key="ack", required=False, load_default=None)
-    key_serializer = fields.Str(
-        data_key="keySerializer", required=False, load_default=None
-    )
-    value_serializer = fields.Str(
-        data_key="valueSerializer", required=False, load_default=None
-    )
-    key_selector = fields.Nested(
-        CodeSpecSchema(), data_key="keySelector", required=False, load_default=None
-    )
-    value_selector = fields.Nested(
-        CodeSpecSchema(), data_key="valueSelector", required=False, load_default=None
-    )
-    partition_selector = fields.Nested(
-        CodeSpecSchema(),
-        data_key="partitionSelector",
-        required=False,
-        load_default=None,
-    )
-    headers_selector = fields.Nested(
-        CodeSpecSchema(), data_key="headersSelector", required=False, load_default=None
-    )
-    predicate = fields.Nested(
-        CodeSpecSchema(), data_key="predicate", required=False, load_default=None
-    )
-
-    @post_dump
-    def map_fields(self, data, **kwargs):
-        data["key_serializer"] = data.pop("keySerializer")
-        data["value_serializer"] = data.pop("valueSerializer")
-        data["key_selector"] = data.pop("keySelector")
-        data["value_selector"] = data.pop("valueSelector")
-        data["partition_selector"] = data.pop("partitionSelector")
-        data["headers_selector"] = data.pop("headersSelector")
-        data["predicate"] = data.pop("predicate")
         return data
 
 
@@ -102,7 +60,7 @@ class KasprAgentOutputSchema(BaseSchema):
     __model__ = KasprAgentOutput
 
     topics = fields.List(
-        fields.Nested(KasprAgentOutputTopicSchema()),
+        fields.Nested(TopicOutSpecSchema()),
         data_key="topics",
         allow_none=True,
         load_default=None,

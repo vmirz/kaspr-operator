@@ -1,10 +1,9 @@
 import kopf
 import yaml
-import time
 from typing import List, Dict, Optional
 from kaspr.utils.objects import cached_property
 from kaspr.utils.helpers import ordered_dict_to_dict
-from kaspr.types.models import KasprAgentSpec, KasprAgentResources, KasprAppComponents
+from kaspr.types.models import KasprWebViewSpec, KasprWebViewResources, KasprAppComponents
 from kaspr.types.schemas import KasprAppComponentsSchema
 
 from kubernetes.client import (
@@ -18,20 +17,20 @@ from kaspr.resources.base import BaseResource
 from kaspr.common.models.labels import Labels
 
 
-class KasprAgent(BaseResource):
-    """Kaspr App kubernetes resource."""
+class KasprWebView(BaseResource):
+    """Kaspr WebView kubernetes resource."""
 
-    KIND = "KasprAgent"
+    KIND = "KasprWebView"
     GROUP_NAME = "kaspr.io"
     GROUP_VERSION = "v1alpha1"
-    COMPONENT_TYPE = "agent"
-    PLURAL_NAME = "kaspragents"
+    COMPONENT_TYPE = "webview"
+    PLURAL_NAME = "kasprwebviews"
     KASPR_APP_NAME_LABEL = "kaspr.io/app"
     OUTPUT_TYPE = "yaml"
 
     config_map_name: str
     volume_mount_name: str
-    spec: KasprAgentSpec
+    spec: KasprWebViewSpec
 
     # derived from spec
     _hash: str = None
@@ -51,7 +50,7 @@ class KasprAgent(BaseResource):
         component_type: str,
         labels: Optional[Dict[str, str]] = None,
     ):
-        component_name = KasprAgentResources.component_name(name)
+        component_name = KasprWebViewResources.component_name(name)
         _labels = Labels.generate_default_labels(
             name,
             kind,
@@ -74,20 +73,20 @@ class KasprAgent(BaseResource):
         name: str,
         kind: str,
         namespace: str,
-        spec: KasprAgentSpec,
+        spec: KasprWebViewSpec,
         labels: Dict[str, str] = None,
-    ) -> "KasprAgent":
-        agent = KasprAgent(name, kind, namespace, self.KIND, labels)
+    ) -> "KasprWebView":
+        agent = KasprWebView(name, kind, namespace, self.KIND, labels)
         agent.spec = spec
         agent.spec.name = name
-        agent.config_map_name = KasprAgentResources.config_name(name)
-        agent.volume_mount_name = KasprAgentResources.volume_mount_name(name)
+        agent.config_map_name = KasprWebViewResources.config_name(name)
+        agent.volume_mount_name = KasprWebViewResources.volume_mount_name(name)
         return agent
 
     @classmethod
-    def default(self) -> "KasprAgent":
-        """Create a default KasprAgent resource."""
-        return KasprAgent(
+    def default(self) -> "KasprWebView":
+        """Create a default KasprWebView resource."""
+        return KasprWebView(
             name="default",
             kind=self.KIND,
             namespace=None,
@@ -95,7 +94,7 @@ class KasprAgent(BaseResource):
         )
 
     def fetch(self, name: str, namespace: str):
-        """Fetch KasprAgent from kubernetes."""
+        """Fetch KasprWebView from kubernetes."""
         return self.get_custom_object(
             self.custom_objects_api,
             namespace=namespace,
@@ -106,7 +105,7 @@ class KasprAgent(BaseResource):
         )
 
     def search(self, namespace: str, apps: List[str] = None):
-        """Search for KasprAgents in kubernetes."""
+        """Search for KasprWebView in kubernetes."""
 
         label_selector = (
             ",".join(f"kaspr.io/app={app}" for app in apps) if apps else None
@@ -130,11 +129,11 @@ class KasprAgent(BaseResource):
         )
 
     def prepare_json_str(self) -> str:
-        """Prepare json string for agent config map data."""
+        """Prepare json string for webview config map data."""
         return KasprAppComponentsSchema().dumps(self.wrap_components())
 
     def prepare_yaml_str(self) -> str:
-        """Prepare yaml string for agent config map data."""
+        """Prepare yaml string for webview config map data."""
         components = KasprAppComponentsSchema().dump(self.wrap_components())
         components = ordered_dict_to_dict(components)
         return yaml.dump(
@@ -143,10 +142,10 @@ class KasprAgent(BaseResource):
     
     def wrap_components(self) -> KasprAppComponents:
         """Wrap agent spec in KasprAppComponents."""
-        return KasprAppComponents(agents=[self.spec])
+        return KasprAppComponents(webviews=[self.spec])
 
     def prepare_config_map(self) -> V1ConfigMap:
-        """Prepare config map for agent."""
+        """Prepare config map for webview."""
         return V1ConfigMap(
             api_version="v1",
             kind="ConfigMap",
@@ -161,7 +160,7 @@ class KasprAgent(BaseResource):
         )
 
     def create(self):
-        """Create agent resources."""
+        """Create webview resources."""
         # we can remove this once validation admission is implemented
         if not self.app_name:
             raise kopf.PermanentError(
@@ -176,7 +175,7 @@ class KasprAgent(BaseResource):
         kopf.adopt(children)
 
     def info(self) -> Dict:
-        """Return agent info."""
+        """Return webview info."""
         return {
             "name": self.cluster,
             "configMap": self.config_map_name,
