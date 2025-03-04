@@ -33,7 +33,7 @@ kopf_logger.addFilter(TimerLogFilter())
 def reconciliation(
     body, spec, name, namespace, logger, labels, patch, annotations, **kwargs
 ):
-    """Reconcile KasprAgent resources."""
+    """Reconcile KasprWebView resources."""
     spec_model: KasprWebViewSpec = KasprWebViewSpecSchema().load(spec)
     agent = KasprWebView.from_spec(name, KIND, namespace, spec_model, dict(labels))
     app = KasprApp.default().fetch(agent.app_name, namespace)

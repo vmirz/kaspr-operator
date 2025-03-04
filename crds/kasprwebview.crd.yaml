@@ -45,6 +45,10 @@ spec:
                   description: Describe the response of the webview.
                   type: object
                   properties:
+                    contentType:
+                      type: string
+                      description: Content type of the response
+                      enum: ["text/html", "application/json", "text/plain", "application/octet-stream"]
                     statusCode:
                       type: integer
                       description: HTTP status code to return on success
@@ -73,7 +77,7 @@ spec:
                               description: Python code to run.
                           required:
                             - python
-                      oneOf:
+                      anyOf:
                         - required: ["onSuccess"]
                         - required: ["onError"]
                     statusCodeSelector:
@@ -98,7 +102,7 @@ spec:
                               description: Python code to run.
                           required:
                             - python
-                      oneOf:
+                      anyOf:
                         - required: ["onSuccess"]
                         - required: ["onError"]
                     headersSelector:
@@ -123,6 +127,9 @@ spec:
                               description: Python code to run.
                           required:
                             - python
+                      anyOf:
+                        - required: ["onSuccess"]
+                        - required: ["onError"]
                 processors:
                   description: Chain of processors to handle the webview request.
                   type: object

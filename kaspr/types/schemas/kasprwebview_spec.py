@@ -108,7 +108,7 @@ class KasprWebViewResponseSpecSchema(BaseSchema):
         values=fields.Str(required=True),
         data_key="headers",
         allow_none=False,
-        load_default=[],
+        load_default={},
     )
     body_selector = fields.Nested(
         KasprWebViewResponseSelectorSchema(),

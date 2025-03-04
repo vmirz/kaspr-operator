@@ -6,13 +6,14 @@ from kaspr.types.schemas.kasprapp_spec import (
     KasprAppSpecSchema,
 )
 from kaspr.types.models import KasprAppSpec
-from kaspr.types.schemas import KasprAgentSpecSchema
-from kaspr.resources import KasprApp, KasprAgent
+from kaspr.types.schemas import KasprAgentSpecSchema, KasprWebViewSpecSchema
+from kaspr.resources import KasprApp, KasprAgent, KasprWebView
 from kaspr.utils.helpers import utc_now
 
 APP_KIND = "KasprApp"
 
 AGENTS_UPDATED = "AgentsUpdated"
+WEBVIEWS_UPDATED = "WebviewsUpdated"
 
 # Queue of requests to patch KasprApps
 patch_request_queues: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
@@ -245,3 +246,92 @@ async def monitor_agents(
             await asyncio.sleep(10)
     except asyncio.CancelledError:
         print("We are done. Bye.")
+
+
+
+
+# @kopf.daemon(
+#     kind=APP_KIND, cancellation_backoff=2.0, cancellation_timeout=5.0, initial_delay=5.0
+# )
+# async def monitor_webviews(
+#     stopped,
+#     name,
+#     body,
+#     spec,
+#     meta,
+#     labels,
+#     annotations,
+#     status,
+#     namespace,
+#     patch,
+#     logger,
+#     **kwargs,
+# ):
+#     """Monitor app's webviews.
+
+#     On every iteration, the handler:
+#     1. Finds all webviews related to the app.
+#     2. Determines if the app needs to be patched with updated webviews.
+#     3. (Maybe) Patches the app with updated webviews.
+#     4. Update app annotations & status with changes.
+#     """
+#     try:
+#         while not stopped:
+#             # 1. Find all related webviews.
+#             webviews: List[KasprWebView] = []
+#             result = KasprWebView.default().search(namespace, apps=[name])
+#             for webview in result.get("items", []) if result else []:
+#                 webviews.append(
+#                     KasprWebView.from_spec(
+#                         webview["metadata"]["name"],
+#                         KasprWebView.KIND,
+#                         namespace,
+#                         KasprWebViewSpecSchema().load(webview["spec"]),
+#                         dict(webview["metadata"]["labels"]),
+#                     )
+#                 )
+
+#             # 2. Determine if app needs to be patched
+#             spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
+#             app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
+#             app.with_webviews(webviews)
+#             current_webviews_hash, desired_webviews_hash = (
+#                 annotations.get("kaspr.io/last-applied-webviews-hash"),
+#                 app.webviews_hash,
+#             )
+#             # 3. Patch app with updated agents
+#             app.patch_webviews()
+#             # 4. Push the request to the patch queue.
+#             await patch_request_queues[name].put(
+#                 [
+#                     {
+#                         "field": "metadata.annotations",
+#                         "value": {
+#                             "kaspr.io/last-applied-webviews-hash": desired_webviews_hash
+#                         },
+#                     },
+#                     {
+#                         "field": "status",
+#                         "value": {
+#                             "version": str(app.version),
+#                             "webviews": {
+#                                 "registered": app.webviews_status(),
+#                                 "lastTransitionTime": utc_now().isoformat(),
+#                                 "hash": app.webviews_hash,
+#                             }
+#                         },
+#                     }                                           
+#                 ]
+#             )
+
+#             if current_webviews_hash != desired_webviews_hash:
+#                 kopf.event(
+#                     body,
+#                     type="Normal",
+#                     reason=WEBVIEWS_UPDATED,
+#                     message=f"Webviews were updated for `{name}` in `{namespace or 'default'}` namespace.",
+#                 )            
+
+#             await asyncio.sleep(10)
+#     except asyncio.CancelledError:
+#         print("We are done. Bye.")

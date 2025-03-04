@@ -51,7 +51,7 @@ from kubernetes.client import (
 )
 
 from kaspr.resources.base import BaseResource
-from kaspr.resources import KasprAgent
+from kaspr.resources import KasprAgent, KasprWebView
 from kaspr.common.models.labels import Labels
 
 
@@ -109,9 +109,12 @@ class KasprApp(BaseResource):
     _kaspr_container: V1Container = None
     _pod_template: V1PodTemplateSpec = None
     _agent_pod_volumes: List[V1Volume] = None
+    _webview_pod_volumes: List[V1Volume] = None
 
     # Reference to agent resources
     agents: List[KasprAgent] = None
+    webviews: List[KasprWebView] = None
+    _webviews_hash: str = None
     _agents_hash: str = None
 
     # TODO: Templates allow customizing k8s behavior
@@ -184,6 +187,11 @@ class KasprApp(BaseResource):
         """Apply agent resources to the app."""
         self.agents = agents
         self._agents_hash = None  # reset hash
+
+    def with_webviews(self, webviews: List[KasprWebView]):
+        """Apply webview resources to the app."""
+        self.webviews = webviews
+        self._webviews_hash = None # reset hash
 
     def fetch(self, name: str, namespace: str):
         """Fetch actual KasprApp in kubernetes."""
@@ -309,6 +317,10 @@ class KasprApp(BaseResource):
         if self.agents:
             env_vars.append(V1EnvVar(name="AGENTS_HASH", value=self.agents_hash))
 
+        # include webviews hash
+        if self.webviews:
+            env_vars.append(V1EnvVar(name="WEBVIEWS_HASH", value=self._webviews_hash))
+
         return env_vars
 
     def prepare_kafka_credentials_env_dict(self) -> Dict[str, str]:
@@ -362,10 +374,26 @@ class KasprApp(BaseResource):
                 )
             )
         return volume_mounts
+    
+    def prepare_webview_volume_mounts(self) -> List[V1VolumeMount]:
+        volume_mounts = []
+        for webview in self.webviews if self.webviews else []:
+            volume_mounts.append(
+                V1VolumeMount(
+                    name=webview.volume_mount_name,
+                    mount_path=self.prepare_webview_mount_path(webview),
+                    read_only=True,
+                    sub_path=webview.file_name,
+                )
+            )
+        return volume_mounts
 
     def prepare_agent_mount_path(self, agent: KasprAgent) -> str:
         return f"{self.definitions_dir_path}/{agent.file_name}"
 
+    def prepare_webview_mount_path(self, webview: KasprWebView) -> str:
+        return f"{self.definitions_dir_path}/{webview.file_name}"
+    
     def prepare_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
         volume_mounts.extend(
@@ -375,6 +403,7 @@ class KasprApp(BaseResource):
                     mount_path=self.table_dir_path,
                 ),
                 *self.prepare_agent_volume_mounts(),
+                *self.prepare_webview_volume_mounts(),
             ]
         )
         return volume_mounts
@@ -409,6 +438,7 @@ class KasprApp(BaseResource):
     def prepare_volumes(self) -> List[V1Volume]:
         volumes = []
         volumes.extend(self.prepare_agent_volumes())
+        volumes.extend(self.prepare_webview_volumes())
         return volumes
 
     def prepare_agent_volumes(self) -> List[V1Volume]:
@@ -420,6 +450,20 @@ class KasprApp(BaseResource):
                     config_map=V1ConfigMapVolumeSource(
                         name=agent.config_map_name,
                         items=[V1KeyToPath(key=agent.file_name, path=agent.file_name)],
+                    ),
+                )
+            )
+        return volumes
+    
+    def prepare_webview_volumes(self) -> List[V1Volume]:
+        volumes = []
+        for webview in self.webviews if self.webviews else []:
+            volumes.append(
+                V1Volume(
+                    name=webview.volume_mount_name,
+                    config_map=V1ConfigMapVolumeSource(
+                        name=webview.config_map_name,
+                        items=[V1KeyToPath(key=webview.file_name, path=webview.file_name)],
                     ),
                 )
             )
@@ -593,7 +637,7 @@ class KasprApp(BaseResource):
                 self.core_v1_api, pvc.metadata.name, self.namespace, pvc
             )
 
-    def patch_agents(self):
+    def patch_volume_mounted_resources(self):
         patch = [
             {
                 "op": "replace",
@@ -618,6 +662,12 @@ class KasprApp(BaseResource):
             stateful_set=patch,
         )
 
+    def patch_agents(self):
+        self.patch_volume_mounted_resources()
+
+    def patch_webviews(self):
+        self.patch_volume_mounted_resources()
+
     def unite(self):
         """Ensure all child resources are owned by the root resource"""
         children = [self.settings_config_map, self.service, self.stateful_set]
@@ -626,6 +676,10 @@ class KasprApp(BaseResource):
     def agents_status(self) -> Dict:
         """Return status of all agents."""
         return [agent.info() for agent in self.agents]
+    
+    def webviews_status(self) -> Dict:
+        """Return status of all webviews."""
+        return [webview.info() for webview in self.webviews]
 
     @cached_property
     def version(self) -> KasprVersion:
@@ -762,6 +816,12 @@ class KasprApp(BaseResource):
         if self._agent_pod_volumes is None:
             self._agent_pod_volumes = self.prepare_agent_volumes()
         return self._agent_pod_volumes
+    
+    @cached_property
+    def webview_pod_volumes(self) -> List[V1Volume]:
+        if self._webview_pod_volumes is None:
+            self._webview_pod_volumes = self.prepare_webview_volumes()
+        return self._webview_pod_volumes
 
     @cached_property
     def agents_hash(self) -> str:
@@ -773,3 +833,14 @@ class KasprApp(BaseResource):
                 else None
             )
         return self._agents_hash
+
+    @cached_property
+    def webviews_hash(self) -> str:
+        """Hash of all webviews."""
+        if self._webviews_hash is None:
+            self._webviews_hash = (
+                self.compute_hash("".join(webview.hash for webview in self.webviews))
+                if self.webviews
+                else None
+            )
+        return self._webviews_hash
