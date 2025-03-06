@@ -47,7 +47,7 @@ from kubernetes.client import (
     V1SecretKeySelector,
     V1ResourceRequirements,
     V1Probe,
-    V1DeleteOptions,
+    V1DeleteOptions
 )
 
 from kaspr.resources.base import BaseResource
@@ -661,12 +661,6 @@ class KasprApp(BaseResource):
             self.namespace,
             stateful_set=patch,
         )
-
-    def patch_agents(self):
-        self.patch_volume_mounted_resources()
-
-    def patch_webviews(self):
-        self.patch_volume_mounted_resources()
 
     def unite(self):
         """Ensure all child resources are owned by the root resource"""

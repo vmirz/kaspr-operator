@@ -14,7 +14,6 @@ spec:
     method: POST
     path: /grafana-webhook-receiver
   response:
-    contentType: application/json
     bodySelector:
       onSuccess:
         python: |

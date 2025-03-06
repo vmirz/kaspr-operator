@@ -141,7 +141,7 @@ async def patch_resource(name, patch, **kwargs):
                 },
             ]
         )
-    ```    
+    ```
     """
     queue = patch_request_queues[name]
 
@@ -151,7 +151,7 @@ async def patch_resource(name, patch, **kwargs):
         for field in fields:
             _patch = getattr(_patch, field)
         _patch.update(request["value"])
-        
+
     while not queue.empty():
         request = queue.get_nowait()
         if isinstance(request, list):
@@ -164,7 +164,7 @@ async def patch_resource(name, patch, **kwargs):
 @kopf.daemon(
     kind=APP_KIND, cancellation_backoff=2.0, cancellation_timeout=5.0, initial_delay=5.0
 )
-async def monitor_agents(
+async def monitor_app(
     stopped,
     name,
     body,
@@ -178,20 +178,23 @@ async def monitor_agents(
     logger,
     **kwargs,
 ):
-    """Monitor app's agents.
+    """Monitor app's agents, webviews, etc.
 
     On every iteration, the handler:
-    1. Finds all agents related to the app.
-    2. Determines if the app needs to be patched with updated agents.
-    3. (Maybe) Patches the app with updated agents.
+    1. Finds all agents, webviews, etc. related to the app.
+    2. Determines if the app needs to be patched with updates to any resource.
+    3. (Maybe) Patches the app with updated resources.
     4. Update app annotations & status with changes.
     """
     try:
         while not stopped:
-            # 1. Find all related agents.
+            spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
+            app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
             agents: List[KasprAgent] = []
-            result = KasprAgent.default().search(namespace, apps=[name])
-            for agent in result.get("items", []) if result else []:
+            webviews: List[KasprWebView] = []
+            agent_resources = KasprAgent.default().search(namespace, apps=[name])
+            webview_resources = KasprWebView.default().search(namespace, apps=[name])
+            for agent in agent_resources.get("items", []) if agent_resources else []:
                 agents.append(
                     KasprAgent.from_spec(
                         agent["metadata"]["name"],
@@ -201,24 +204,41 @@ async def monitor_agents(
                         dict(agent["metadata"]["labels"]),
                     )
                 )
-
-            # 2. Determine if app needs to be patched
-            spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-            app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
+            for webview in (
+                webview_resources.get("items", []) if webview_resources else []
+            ):
+                webviews.append(
+                    KasprWebView.from_spec(
+                        webview["metadata"]["name"],
+                        KasprWebView.KIND,
+                        namespace,
+                        KasprWebViewSpecSchema().load(webview["spec"]),
+                        dict(webview["metadata"]["labels"]),
+                    )
+                )
             app.with_agents(agents)
+            app.with_webviews(webviews)
             current_agents_hash, desired_agents_hash = (
                 annotations.get("kaspr.io/last-applied-agents-hash"),
                 app.agents_hash,
             )
-            # 3. Patch app with updated agents
-            app.patch_agents()
-            # 4. Push the request to the patch queue.
+            current_webviews_hash, desired_webviews_hash = (
+                annotations.get("kaspr.io/last-applied-webviews-hash"),
+                app.webviews_hash,
+            )
+            app.patch_volume_mounted_resources()
             await patch_request_queues[name].put(
                 [
                     {
                         "field": "metadata.annotations",
                         "value": {
                             "kaspr.io/last-applied-agents-hash": desired_agents_hash
+                        },
+                    },
+                    {
+                        "field": "metadata.annotations",
+                        "value": {
+                            "kaspr.io/last-applied-webviews-hash": desired_webviews_hash
                         },
                     },
                     {
@@ -229,9 +249,20 @@ async def monitor_agents(
                                 "registered": app.agents_status(),
                                 "lastTransitionTime": utc_now().isoformat(),
                                 "hash": app.agents_hash,
-                            }
+                            },
                         },
-                    }                                           
+                    },
+                    {
+                        "field": "status",
+                        "value": {
+                            "version": str(app.version),
+                            "webviews": {
+                                "registered": app.webviews_status(),
+                                "lastTransitionTime": utc_now().isoformat(),
+                                "hash": app.webviews_hash,
+                            },
+                        },
+                    },
                 ]
             )
 
@@ -241,97 +272,17 @@ async def monitor_agents(
                     type="Normal",
                     reason=AGENTS_UPDATED,
                     message=f"Agents were updated for `{name}` in `{namespace or 'default'}` namespace.",
-                )            
+                )
+
+            if current_webviews_hash != desired_webviews_hash:
+                kopf.event(
+                    body,
+                    type="Normal",
+                    reason=WEBVIEWS_UPDATED,
+                    message=f"Webviews were updated for `{name}` in `{namespace or 'default'}` namespace.",
+                )
 
             await asyncio.sleep(10)
+
     except asyncio.CancelledError:
         print("We are done. Bye.")
-
-
-
-
-# @kopf.daemon(
-#     kind=APP_KIND, cancellation_backoff=2.0, cancellation_timeout=5.0, initial_delay=5.0
-# )
-# async def monitor_webviews(
-#     stopped,
-#     name,
-#     body,
-#     spec,
-#     meta,
-#     labels,
-#     annotations,
-#     status,
-#     namespace,
-#     patch,
-#     logger,
-#     **kwargs,
-# ):
-#     """Monitor app's webviews.
-
-#     On every iteration, the handler:
-#     1. Finds all webviews related to the app.
-#     2. Determines if the app needs to be patched with updated webviews.
-#     3. (Maybe) Patches the app with updated webviews.
-#     4. Update app annotations & status with changes.
-#     """
-#     try:
-#         while not stopped:
-#             # 1. Find all related webviews.
-#             webviews: List[KasprWebView] = []
-#             result = KasprWebView.default().search(namespace, apps=[name])
-#             for webview in result.get("items", []) if result else []:
-#                 webviews.append(
-#                     KasprWebView.from_spec(
-#                         webview["metadata"]["name"],
-#                         KasprWebView.KIND,
-#                         namespace,
-#                         KasprWebViewSpecSchema().load(webview["spec"]),
-#                         dict(webview["metadata"]["labels"]),
-#                     )
-#                 )
-
-#             # 2. Determine if app needs to be patched
-#             spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-#             app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
-#             app.with_webviews(webviews)
-#             current_webviews_hash, desired_webviews_hash = (
-#                 annotations.get("kaspr.io/last-applied-webviews-hash"),
-#                 app.webviews_hash,
-#             )
-#             # 3. Patch app with updated agents
-#             app.patch_webviews()
-#             # 4. Push the request to the patch queue.
-#             await patch_request_queues[name].put(
-#                 [
-#                     {
-#                         "field": "metadata.annotations",
-#                         "value": {
-#                             "kaspr.io/last-applied-webviews-hash": desired_webviews_hash
-#                         },
-#                     },
-#                     {
-#                         "field": "status",
-#                         "value": {
-#                             "version": str(app.version),
-#                             "webviews": {
-#                                 "registered": app.webviews_status(),
-#                                 "lastTransitionTime": utc_now().isoformat(),
-#                                 "hash": app.webviews_hash,
-#                             }
-#                         },
-#                     }                                           
-#                 ]
-#             )
-
-#             if current_webviews_hash != desired_webviews_hash:
-#                 kopf.event(
-#                     body,
-#                     type="Normal",
-#                     reason=WEBVIEWS_UPDATED,
-#                     message=f"Webviews were updated for `{name}` in `{namespace or 'default'}` namespace.",
-#                 )            
-
-#             await asyncio.sleep(10)
-#     except asyncio.CancelledError:
-#         print("We are done. Bye.")
