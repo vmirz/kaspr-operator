@@ -132,6 +132,57 @@ class BaseResource:
             body=service,
         )
 
+    def fetch_service_account(
+        self, core_v1_api: CoreV1Api, name: str, namespace: str
+    ) -> V1ServiceAccount:
+        return core_v1_api.read_namespaced_service_account(
+            name=name, namespace=namespace
+        )
+
+    def create_service_account(
+        self, core_v1_api: CoreV1Api, namespace: str, service_account: V1ServiceAccount
+    ) -> None:
+        try:
+            core_v1_api.create_namespaced_service_account(
+                namespace=namespace, body=service_account
+            )
+        except ApiException as ex:
+            if already_exists_error(ex):
+                self.replace_service_account(
+                    core_v1_api,
+                    name=service_account.metadata.name,
+                    namespace=namespace,
+                    service_account=service_account,
+                )
+            else:
+                raise
+
+    def replace_service_account(
+        self,
+        core_v1_api: CoreV1Api,
+        name: str,
+        namespace: str,
+        service_account: V1ServiceAccount,
+    ) -> None:
+        core_v1_api.replace_namespaced_service_account(
+            name=name,
+            namespace=namespace,
+            body=service_account,
+        )
+
+    def patch_service_account(
+        self,
+        core_v1_api: CoreV1Api,
+        name: str,
+        namespace: str,
+        service_account: V1ServiceAccount,
+    ) -> None:
+        core_v1_api.patch_namespaced_service_account(
+            name=name,
+            namespace=namespace,
+            body=service_account,
+        )
+
     def fetch_stateful_set(
         self, apps_v1_api: AppsV1Api, name: str, namespace: str
     ) -> V1StatefulSet:

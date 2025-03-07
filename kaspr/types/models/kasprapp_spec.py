@@ -6,6 +6,11 @@ from kaspr.types.models.config import KasprAppConfig
 from kaspr.types.models.storage import KasprAppStorage
 from kaspr.types.models.resource_requirements import ResourceRequirements
 from kaspr.types.models.probe import Probe
+from kaspr.types.models.resource_template import ResourceTemplate
+
+class KasprAppTemplate(BaseModel):
+    """KasprApp template"""
+    service_account: Optional[ResourceTemplate]
 
 class KasprAppSpec(BaseModel):
     """KasprApp CRD spec"""
@@ -21,3 +26,4 @@ class KasprAppSpec(BaseModel):
     liveness_probe: Probe
     readiness_probe: Probe
     storage: KasprAppStorage
+    template: Optional[KasprAppTemplate]

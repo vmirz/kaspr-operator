@@ -1,3 +1,4 @@
+from .resource_template import MetadataTemplate, ResourceTemplate
 from .kasprapp_spec import KasprAppSpec, KasprAppConfig, KasprAppStorage
 from .kaspragent_resources import KasprAgentResources
 from .kaspragent_spec import (
@@ -28,6 +29,8 @@ from .kasprwebview_spec import (
 )
 
 __all__ = [
+    "MetadataTemplate",
+    "ResourceTemplate",
     "KasprAppSpec",
     "KasprAppConfig",
     "KasprAppStorage",

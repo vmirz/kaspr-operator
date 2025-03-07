@@ -87,6 +87,13 @@ def on_storage_size_update(
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
     app.patch_storage_size()
 
+@kopf.on.update(kind=APP_KIND, field="spec.template.serviceAccount")
+def on_template_service_account_updated(
+    old, new, diff, spec, name, status, namespace, logger, **kwargs
+):
+    spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
+    app.patch_template_service_account()
 
 # @kopf.on.update(kind=APP_KIND, field="spec.config.kms_topic_partitions")
 @kopf.on.update(kind=APP_KIND, field="spec.config.topic_partitions")

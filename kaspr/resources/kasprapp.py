@@ -2,7 +2,8 @@ import kopf
 import time
 from typing import List, Dict, Optional
 from kaspr.utils.objects import cached_property
-from kaspr.types.models.kasprapp_spec import KasprAppSpec
+from kaspr.types.models.kasprapp_spec import KasprAppSpec, KasprAppTemplate
+from kaspr.types.models.storage import KasprAppStorage
 from kaspr.types.models.config import KasprAppConfig
 from kaspr.types.models.tls import ClientTls
 from kaspr.types.models.kasprapp_resources import (
@@ -13,9 +14,9 @@ from kaspr.types.models.authentication import (
     SASLCredentials,
     KafkaClientAuthentication,
 )
-from kaspr.types.models.storage import KasprAppStorage
 from kaspr.types.models.resource_requirements import ResourceRequirements
 from kaspr.types.models.probe import Probe
+from kaspr.types.models.resource_template import ResourceTemplate
 from kubernetes.client import (
     AppsV1Api,
     CoreV1Api,
@@ -47,7 +48,8 @@ from kubernetes.client import (
     V1SecretKeySelector,
     V1ResourceRequirements,
     V1Probe,
-    V1DeleteOptions
+    V1DeleteOptions,
+    V1ServiceAccount,
 )
 
 from kaspr.resources.base import BaseResource
@@ -73,6 +75,7 @@ class KasprApp(BaseResource):
     replicas: int
     image: str
     service_name: str
+    service_account_name: str
     config_map_name: str
     persistent_volume_claim_name: str
     stateful_set_name: str
@@ -98,6 +101,7 @@ class KasprApp(BaseResource):
     _core_v1_api: CoreV1Api = None
     _custom_objects_api: CustomObjectsApi = None
     _service: V1Service = None
+    _service_account: V1ServiceAccount = None
     _persistent_volume_claim: V1PersistentVolumeClaim = None
     _persistent_volume_claim_retention_policy: V1StatefulSetPersistentVolumeClaimRetentionPolicy = None
     _settings_config_map: V1ConfigMap = None
@@ -118,6 +122,7 @@ class KasprApp(BaseResource):
     _agents_hash: str = None
 
     # TODO: Templates allow customizing k8s behavior
+    template_service_account: ResourceTemplate
     # PodDisruptionBudgetTemplate templatePodDisruptionBudget;
     # ResourceTemplate templateInitClusterRoleBinding;
     # DeploymentTemplate templateDeployment;
@@ -155,6 +160,7 @@ class KasprApp(BaseResource):
     ) -> "KasprApp":
         app = KasprApp(name, kind, namespace, self.KIND)
         app.service_name = KasprAppResources.service_name(name)
+        app.service_account_name = KasprAppResources.service_account_name(name)
         app.config_map_name = KasprAppResources.settings_config_name(name)
         app.stateful_set_name = KasprAppResources.stateful_set_name(name)
         app.persistent_volume_claim_name = (
@@ -171,6 +177,7 @@ class KasprApp(BaseResource):
         app.liveness_probe = spec.liveness_probe
         app.readiness_probe = spec.readiness_probe
         app.storage = spec.storage
+        app.template_service_account = spec.template.service_account
         return app
 
     @classmethod
@@ -191,7 +198,7 @@ class KasprApp(BaseResource):
     def with_webviews(self, webviews: List[KasprWebView]):
         """Apply webview resources to the app."""
         self.webviews = webviews
-        self._webviews_hash = None # reset hash
+        self._webviews_hash = None  # reset hash
 
     def fetch(self, name: str, namespace: str):
         """Fetch actual KasprApp in kubernetes."""
@@ -249,6 +256,25 @@ class KasprApp(BaseResource):
             ),
         )
         return service
+
+    def prepare_service_account(self) -> V1ServiceAccount:
+        """Build service account resource."""
+        labels, annotations = self.labels.as_dict(), {}
+        if self.template_service_account:
+            if self.template_service_account.metadata:
+                if self.template_service_account.metadata.labels:
+                    labels.update(self.template_service_account.metadata.labels)
+                if self.template_service_account.metadata.annotations:
+                    annotations.update(
+                        self.template_service_account.metadata.annotations
+                    )
+        return V1ServiceAccount(
+            api_version="v1",
+            kind="ServiceAccount",
+            metadata=V1ObjectMeta(
+                name=self.service_account_name, labels=labels, annotations=annotations
+            ),
+        )
 
     def prepare_config_map(self) -> V1ConfigMap:
         """Build a config map resource."""
@@ -374,7 +400,7 @@ class KasprApp(BaseResource):
                 )
             )
         return volume_mounts
-    
+
     def prepare_webview_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
         for webview in self.webviews if self.webviews else []:
@@ -393,7 +419,7 @@ class KasprApp(BaseResource):
 
     def prepare_webview_mount_path(self, webview: KasprWebView) -> str:
         return f"{self.definitions_dir_path}/{webview.file_name}"
-    
+
     def prepare_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
         volume_mounts.extend(
@@ -454,7 +480,7 @@ class KasprApp(BaseResource):
                 )
             )
         return volumes
-    
+
     def prepare_webview_volumes(self) -> List[V1Volume]:
         volumes = []
         for webview in self.webviews if self.webviews else []:
@@ -463,7 +489,9 @@ class KasprApp(BaseResource):
                     name=webview.volume_mount_name,
                     config_map=V1ConfigMapVolumeSource(
                         name=webview.config_map_name,
-                        items=[V1KeyToPath(key=webview.file_name, path=webview.file_name)],
+                        items=[
+                            V1KeyToPath(key=webview.file_name, path=webview.file_name)
+                        ],
                     ),
                 )
             )
@@ -524,6 +552,9 @@ class KasprApp(BaseResource):
     def create(self):
         """Create KMS resources."""
         self.unite()
+        self.create_service_account(
+            self.core_v1_api, self.namespace, self.service_account
+        )
         self.create_config_map(
             self.core_v1_api, self.namespace, self.settings_config_map
         )
@@ -653,7 +684,7 @@ class KasprApp(BaseResource):
                 "op": "replace",
                 "path": "/spec/template/spec/containers/0/env",
                 "value": self.env_vars,
-            }
+            },
         ]
         self.patch_stateful_set(
             self.apps_v1_api,
@@ -662,15 +693,40 @@ class KasprApp(BaseResource):
             stateful_set=patch,
         )
 
+    def patch_template_service_account(self):
+        patch = [
+            {
+                "op": "replace",
+                "path": "/metadata/labels",
+                "value": self.service_account.metadata.labels,
+            },
+            {
+                "op": "replace",
+                "path": "/metadata/annotations",
+                "value": self.service_account.metadata.annotations,
+            }            
+        ]
+        self.patch_service_account(
+            self.core_v1_api,
+            self.service_account_name,
+            self.namespace,
+            patch,
+        )
+
     def unite(self):
         """Ensure all child resources are owned by the root resource"""
-        children = [self.settings_config_map, self.service, self.stateful_set]
+        children = [
+            self.service_account,
+            self.settings_config_map,
+            self.service,
+            self.stateful_set,
+        ]
         kopf.adopt(children)
 
     def agents_status(self) -> Dict:
         """Return status of all agents."""
         return [agent.info() for agent in self.agents]
-    
+
     def webviews_status(self) -> Dict:
         """Return status of all webviews."""
         return [webview.info() for webview in self.webviews]
@@ -726,6 +782,12 @@ class KasprApp(BaseResource):
         if self._service is None:
             self._service = self.prepare_service()
         return self._service
+
+    @cached_property
+    def service_account(self) -> V1ServiceAccount:
+        if self._service_account is None:
+            self._service_account = self.prepare_service_account()
+        return self._service_account
 
     @cached_property
     def settings_config_map(self) -> V1ConfigMap:
@@ -810,7 +872,7 @@ class KasprApp(BaseResource):
         if self._agent_pod_volumes is None:
             self._agent_pod_volumes = self.prepare_agent_volumes()
         return self._agent_pod_volumes
-    
+
     @cached_property
     def webview_pod_volumes(self) -> List[V1Volume]:
         if self._webview_pod_volumes is None:

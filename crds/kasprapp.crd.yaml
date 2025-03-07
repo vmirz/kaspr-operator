@@ -153,6 +153,23 @@ spec:
                       description: "When type=persistent-claim, defines the size of the persistent volume claim (i.e 1Gi). Mandatory when type=persistent-claim."
                   required:
                   - type
+                template:
+                  type: object
+                  properties:
+                    serviceAccount:
+                      type: object
+                      properties:
+                        metadata:
+                          type: object
+                          properties:
+                            labels:
+                              type: object
+                              additionalProperties:
+                                type: string
+                            annotations:
+                              type: object
+                              additionalProperties:
+                                type: string
               required:
                 - bootstrapServers
                 - authentication
