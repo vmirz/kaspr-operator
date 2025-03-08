@@ -6,9 +6,14 @@ from kaspr.types.models.config import KasprAppConfig
 from kaspr.types.models.storage import KasprAppStorage
 from kaspr.types.models.resource_requirements import ResourceRequirements
 from kaspr.types.models.probe import Probe
+from kaspr.types.models.resource_template import ResourceTemplate
 
-class KafkaMessageSchedulerSpec(BaseModel):
-    """Kafka Message Scheduler CRD spec"""
+class KasprAppTemplate(BaseModel):
+    """KasprApp template"""
+    service_account: Optional[ResourceTemplate]
+
+class KasprAppSpec(BaseModel):
+    """KasprApp CRD spec"""
 
     version: Optional[str]
     replicas: Optional[str]
@@ -21,3 +26,4 @@ class KafkaMessageSchedulerSpec(BaseModel):
     liveness_probe: Probe
     readiness_probe: Probe
     storage: KasprAppStorage
+    template: Optional[KasprAppTemplate]

@@ -2,11 +2,11 @@ import kopf
 import time
 from typing import List, Dict, Optional
 from kaspr.utils.objects import cached_property
-from kaspr.types.models.kafkamessagescheduler_spec import KafkaMessageSchedulerSpec
+from kaspr.types.models.kasprscheduler_spec import KasprSchedulerSpec
 from kaspr.types.models.config import KasprAppConfig
 from kaspr.types.models.tls import ClientTls
-from kaspr.types.models.kafkamessagescheduler_resources import (
-    KafkaMessageSchedulerResources,
+from kaspr.types.models.kasprscheduler_resources import (
+    KasprSchedulerResources,
 )
 from kaspr.types.models.version_resources import KasprVersion, KasprVersionResources
 from kaspr.types.models.authentication import (
@@ -50,10 +50,11 @@ from kaspr.resources.base import BaseResource
 from kaspr.common.models.labels import Labels
 
 
-class KafkaMessageScheduler(BaseResource):
+class KasprScheduler(BaseResource):
     """Builder of Kafka Message Scheduler underlying kubernetes resources."""
 
-    COMPONENT_TYPE = "kafka-message-scheduler"
+    KIND = "KasprScheduler"
+    COMPONENT_TYPE = "scheduler"
     WEB_PORT_NAME = "http"
     KASPR_CONTAINER_NAME = "kaspr"
 
@@ -115,7 +116,7 @@ class KafkaMessageScheduler(BaseResource):
         namespace: str,
         component_type: str,
     ):
-        component_name = KafkaMessageSchedulerResources.component_name(name)
+        component_name = KasprSchedulerResources.component_name(name)
         labels = Labels.generate_default_labels(
             name,
             kind,
@@ -132,14 +133,14 @@ class KafkaMessageScheduler(BaseResource):
 
     @classmethod
     def from_spec(
-        self, name: str, kind: str, namespace: str, spec: KafkaMessageSchedulerSpec
-    ) -> "KafkaMessageScheduler":
-        kms = KafkaMessageScheduler(name, kind, namespace, "KafkaMessageScheduler")
-        kms.service_name = KafkaMessageSchedulerResources.service_name(name)
-        kms.config_map_name = KafkaMessageSchedulerResources.settings_config_name(name)
-        kms.stateful_set_name = KafkaMessageSchedulerResources.stateful_set_name(name)
+        self, name: str, kind: str, namespace: str, spec: KasprSchedulerSpec
+    ) -> "KasprScheduler":
+        kms = KasprScheduler(name, kind, namespace, self.KIND)
+        kms.service_name = KasprSchedulerResources.service_name(name)
+        kms.config_map_name = KasprSchedulerResources.settings_config_name(name)
+        kms.stateful_set_name = KasprSchedulerResources.stateful_set_name(name)
         kms.persistent_volume_claim_name = (
-            KafkaMessageSchedulerResources.persistent_volume_claim_name(name)
+            KasprSchedulerResources.persistent_volume_claim_name(name)
         )
         kms._version = spec.version
         kms._image = spec.image
@@ -478,6 +479,7 @@ class KafkaMessageScheduler(BaseResource):
             )
             # We need to wait a bit to allow k8s to actually execute the deletion
             # before moving on to recreate the statefulset.
+            # TODO: make this more deterministic
             time.sleep(5)
         self.unite()
         # Recreate the statefulset with new storage size PVC template
@@ -562,7 +564,7 @@ class KafkaMessageScheduler(BaseResource):
 
     @cached_property
     def sasl_credentials(self) -> SASLCredentials:
-        return self.authentication.sasl_credentials(tls=self.tls)
+        return self.authentication.sasl_credentials
 
     @cached_property
     def env_vars(self) -> List[V1EnvVar]:

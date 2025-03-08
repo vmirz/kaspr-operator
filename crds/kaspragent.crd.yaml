@@ -1,0 +1,182 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kaspragents.kaspr.io
+spec:
+  scope: Namespaced
+  group: kaspr.io
+  names:
+    kind: KasprAgent
+    plural: kaspragents
+    singular: kaspragent
+    shortNames:
+      - kagents
+      - kagent
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                description:
+                  type: string
+                  description: A short description of what this agent does.
+                input:
+                  description: Input to stream processing.
+                  type: object
+                  properties:
+                    topic:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          description: Topic names to subscribe to
+                        pattern:
+                          type: string
+                          description: Regex pattern of topic names to subscribe to
+                        keySerializer:
+                          type: string
+                          description: Serializer for the key of the message
+                          enum: ["raw", "json", "pickle", "binary"]
+                        valueSerializer:
+                          type: string
+                          description: Serializer for the value of the message
+                          enum: ["raw", "json", "pickle", "binary"]
+                      anyOf:
+                        - required: ["name"]
+                        - required: ["pattern"]
+                    channel:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          description: The name of the channel to write to.
+                      required:
+                        - name
+                  anyOf:
+                    - required: ["topic"]
+                    - required: ["channel"]
+                output:
+                  description: Send received values to topics, channels, or any custom callable.
+                  type: object
+                  properties:
+                    topics:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            description: Topic name to publish to
+                          ack:
+                            type: boolean
+                            description: Wait for acknoledgement from the broker before considering the message sent
+                          keySerializer:
+                            type: string
+                            description: Serializer for the key of the message
+                            enum: ["raw", "json", "pickle", "binary"]
+                          valueSerializer:
+                            type: string
+                            description: Serializer for the value of the message
+                            enum: ["raw", "json", "pickle", "binary"]
+                          keySelector:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          valueSelector:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          partitionSelector:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          headersSelector:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          predicate:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                        required:
+                          - name
+                processors:
+                  description: Chain of processors that modify input values
+                  type: object
+                  properties:
+                    pipeline:
+                      type: array
+                      items:
+                        type: string
+                        description: Sequence of operations to run.
+                    init:
+                      description: Initialization code to run.
+                      type: object
+                      properties:
+                        python:
+                          type: string
+                          description: Python code to run.
+                      required:
+                        - python
+                    operations:
+                      description: Chain of operations to run on input events.
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            description: The name of the operation.
+                          map:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          filter:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                        required:
+                          - name
+                      required:
+                        - pipeline
+                        - operations
+              required:
+                - input
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true

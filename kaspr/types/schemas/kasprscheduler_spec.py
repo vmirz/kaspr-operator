@@ -2,7 +2,7 @@ from marshmallow import fields
 from kaspr.types.base import BaseSchema, EXCLUDE
 from kaspr.types.schemas.tls import ClientTlsSchema
 from kaspr.types.schemas.authentication import KafkaClientAuthenticationSchema
-from kaspr.types.models.kafkamessagescheduler_spec import KafkaMessageSchedulerSpec
+from kaspr.types.models.kasprscheduler_spec import KasprSchedulerSpec
 from kaspr.types.schemas.config import (
     KasprAppConfigSchema,
 )
@@ -11,8 +11,8 @@ from kaspr.types.schemas.probe import ProbeSchema
 from kaspr.types.schemas.storage import KasprAppStorageSchema
 
 
-class KafkaMessageSchedulerSpecSchema(BaseSchema):
-    __model__ = KafkaMessageSchedulerSpec
+class KasprSchedulerSpecSchema(BaseSchema):
+    __model__ = KasprSchedulerSpec
 
     version = fields.Str(data_key="version", allow_none=True, load_default=None)
     replicas = fields.Int(data_key="replicas", allow_none=True)
