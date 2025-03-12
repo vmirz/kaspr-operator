@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.5.1
+## 0.3.2
+---
+* Minor improvements
+
+## 0.3.1
 ---
 * Deprecated `KasprScheduler` CRD
 

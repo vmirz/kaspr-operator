@@ -381,7 +381,6 @@ class KasprApp(BaseResource):
             env_for("data_dir"): self.data_dir_path,
             env_for("table_dir"): self.table_dir_path,
             env_for("definitions_dir"): self.definitions_dir_path,
-            env_for("kms_enabled"): "false",
             env_for("topic_prefix"): self.topic_prefix,
         }
         _envs = {**config_envs}

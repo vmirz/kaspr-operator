@@ -95,7 +95,6 @@ def on_template_service_account_updated(
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
     app.patch_template_service_account()
 
-# @kopf.on.update(kind=APP_KIND, field="spec.config.kms_topic_partitions")
 @kopf.on.update(kind=APP_KIND, field="spec.config.topic_partitions")
 def immutable_config_updated_00(**kwargs):
     raise kopf.PermanentError(

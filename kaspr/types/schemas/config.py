@@ -26,15 +26,15 @@ class KasprAppConfigSchema(BaseSchema):
     topic_allow_declare: bool = fields.Bool(default=None)
 
     # kafka message scheduler
-    kms_enabled: bool = fields.Bool(default=None)
-    kms_debug_stats_enabled: bool = fields.Bool(default=None)
-    kms_topic_partitions: int = fields.Int(default=None)
-    kms_checkpoint_save_interval_seconds: float = fields.Float(default=None)
-    kms_dispatcher_default_checkpoint_lookback_days: int = fields.Int(default=None)
-    kms_dispatcher_checkpoint_interval: float = fields.Float(default=None)
-    kms_janitor_checkpoint_interval: float = fields.Float(default=None)
-    kms_janitor_clean_interval_seconds: float = fields.Float(default=None)
-    kms_janitor_highwater_offset_seconds: float = fields.Float(default=None)
+    scheduler_enabled: bool = fields.Bool(default=None)
+    scheduler_debug_stats_enabled: bool = fields.Bool(default=None)
+    scheduler_topic_partitions: int = fields.Int(default=None)
+    scheduler_checkpoint_save_interval_seconds: float = fields.Float(default=None)
+    scheduler_dispatcher_default_checkpoint_lookback_days: int = fields.Int(default=None)
+    scheduler_dispatcher_checkpoint_interval: float = fields.Float(default=None)
+    scheduler_janitor_checkpoint_interval: float = fields.Float(default=None)
+    scheduler_janitor_clean_interval_seconds: float = fields.Float(default=None)
+    scheduler_janitor_highwater_offset_seconds: float = fields.Float(default=None)
 
     # rocksdb
     store_rocksdb_write_buffer_size: int = fields.Int(default=None)
