@@ -1,6 +1,5 @@
 import kopf
 import logging
-import kaspr.handlers.kasprscheduler as kasprscheduler
 
 # Configure Kopf settings
 @kopf.on.startup()
@@ -12,6 +11,4 @@ def configure_settings(settings: kopf.OperatorSettings, **kwargs):
     settings.posting.enabled = True
     settings.posting.level = logging.WARNING
 
-__all__ = [
-    "kasprscheduler"
-]
+__all__ = []

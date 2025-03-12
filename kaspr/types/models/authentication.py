@@ -106,9 +106,8 @@ class KafkaClientAuthentication(BaseModel):
     _sasl_credentials: SASLCredentials
     _sasl_enabled: bool
 
-    def __init__(self, tls: ClientTls = None, **data) -> None:
+    def __init__(self, **data) -> None:
         super().__init__(**data)
-        self._tls = tls
         self._security_protocol = None
         self._sasl_credentials = None
         self._sasl_enabled = False
@@ -161,6 +160,10 @@ class KafkaClientAuthentication(BaseModel):
     @property
     def tls(self) -> ClientTls:
         return self._tls
+    
+    @tls.setter
+    def tls(self, tls: ClientTls) -> None:
+        self._tls = tls
 
     @property
     def sasl_enabled(self) -> bool:
