@@ -1,3 +1,5 @@
+## DEPRECATED: Use `scheduler_enabled` configuration on KasprApp instead.
+
 import kopf
 from kaspr.types.schemas.kasprscheduler_spec import (
     KasprSchedulerSpecSchema,
