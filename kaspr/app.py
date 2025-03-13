@@ -1,6 +1,8 @@
 import kopf
 import logging
-import kaspr.handlers.kasprscheduler as kasprscheduler
+import kaspr.handlers.kasprapp as kasprapp
+import kaspr.handlers.kaspragent as kaspragent
+import kaspr.handlers.kasprwebview as kasprwebview
 
 # Configure Kopf settings
 @kopf.on.startup()
@@ -13,5 +15,7 @@ def configure_settings(settings: kopf.OperatorSettings, **kwargs):
     settings.posting.level = logging.WARNING
 
 __all__ = [
-    "kasprscheduler"
+    "kasprapp",
+    "kaspragent",
+    "kasprwebview",
 ]

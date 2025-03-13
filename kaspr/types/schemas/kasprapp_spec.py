@@ -1,5 +1,6 @@
+from typing import Any
 from marshmallow import fields
-from kaspr.types.base import BaseSchema, EXCLUDE
+from kaspr.types.base import BaseSchema, EXCLUDE, post_load
 from kaspr.types.schemas.tls import ClientTlsSchema
 from kaspr.types.schemas.authentication import KafkaClientAuthenticationSchema
 from kaspr.types.models.kasprapp_spec import KasprAppSpec, KasprAppTemplate
@@ -63,3 +64,10 @@ class KasprAppSpecSchema(BaseSchema):
         allow_none=True,
         load_default=lambda: KasprAppTemplateSchema().load({}),
     )
+
+    @post_load
+    def include_tls(self, app: KasprAppSpec, **kwargs: Any) -> KasprAppSpec:
+        """Include TLS spec in the child authentication object."""
+        if "authentication" in app:
+            app["authentication"].tls = app["tls"]
+        return app

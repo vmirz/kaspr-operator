@@ -106,9 +106,8 @@ class KafkaClientAuthentication(BaseModel):
     _sasl_credentials: SASLCredentials
     _sasl_enabled: bool
 
-    def __init__(self, tls: ClientTls = None, **data) -> None:
+    def __init__(self, **data) -> None:
         super().__init__(**data)
-        self._tls = tls
         self._security_protocol = None
         self._sasl_credentials = None
         self._sasl_enabled = False
@@ -143,7 +142,7 @@ class KafkaClientAuthentication(BaseModel):
     def has_sasl_credentials(self) -> bool:
         """Return True if SASL credentials are provided."""
         if self.type == AuthType.PLAIN.value:
-            return self.authentication_plain and self.authentication_plain.username
+            return self.authentication_plain and self.authentication_plain.username is not None
         elif self.type in [AuthType.SCRAM_SHA_256.value, AuthType.SCRAM_SHA_512.value]:
             return True
         return False
@@ -161,6 +160,10 @@ class KafkaClientAuthentication(BaseModel):
     @property
     def tls(self) -> ClientTls:
         return self._tls
+    
+    @tls.setter
+    def tls(self, tls: ClientTls) -> None:
+        self._tls = tls
 
     @property
     def sasl_enabled(self) -> bool:
