@@ -142,7 +142,7 @@ class KafkaClientAuthentication(BaseModel):
     def has_sasl_credentials(self) -> bool:
         """Return True if SASL credentials are provided."""
         if self.type == AuthType.PLAIN.value:
-            return self.authentication_plain and self.authentication_plain.username
+            return self.authentication_plain and self.authentication_plain.username is not None
         elif self.type in [AuthType.SCRAM_SHA_256.value, AuthType.SCRAM_SHA_512.value]:
             return True
         return False
