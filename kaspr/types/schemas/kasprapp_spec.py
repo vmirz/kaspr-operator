@@ -68,5 +68,6 @@ class KasprAppSpecSchema(BaseSchema):
     @post_load
     def include_tls(self, app: KasprAppSpec, **kwargs: Any) -> KasprAppSpec:
         """Include TLS spec in the child authentication object."""
-        if app.authentication:
-            app.authentication.tls = app.tls
+        if "authentication" in app:
+            app["authentication"].tls = app["tls"]
+        return app

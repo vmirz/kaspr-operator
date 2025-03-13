@@ -1,5 +1,8 @@
 import kopf
 import logging
+import kaspr.handlers.kasprapp as kasprapp
+import kaspr.handlers.kaspragent as kaspragent
+import kaspr.handlers.kasprwebview as kasprwebview
 
 # Configure Kopf settings
 @kopf.on.startup()
@@ -11,4 +14,8 @@ def configure_settings(settings: kopf.OperatorSettings, **kwargs):
     settings.posting.enabled = True
     settings.posting.level = logging.WARNING
 
-__all__ = []
+__all__ = [
+    "kasprapp",
+    "kaspragent",
+    "kasprwebview",
+]
