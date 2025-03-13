@@ -23,11 +23,18 @@ class KasprVersionResources:
     # TODO: This should be moved to a configuration file
     _VERSIONS = (
         KasprVersion(
+            operator_version="0.3.7",
+            version="0.5.2",
+            image="kasprio/kaspr:0.5.2-alpha",
+            supported=True,
+            default=True,
+        ),           
+        KasprVersion(
             operator_version="0.3.2",
             version="0.5.1",
             image="kasprio/kaspr:0.5.1-alpha",
             supported=True,
-            default=True,
+            default=False,
         ),          
         KasprVersion(
             operator_version="0.3.1",
