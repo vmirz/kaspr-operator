@@ -5,7 +5,7 @@ class KasprAppResources:
     @classmethod
     def component_name(self, cluster_name: str):
         """Returns the name of the KasprApp deployment for a cluster of the given name."""
-        return f"{cluster_name}-streams"
+        return f"{cluster_name}-app"
 
     @classmethod
     def service_account_name(self, cluster_name: str):
@@ -15,7 +15,7 @@ class KasprAppResources:
     @classmethod
     def service_name(self, cluster_name: str):
         """Returns the name of the HTTP service for a cluster of the given name."""
-        return f"{cluster_name}-streams-api"
+        return f"{cluster_name}-app-api"
 
     @classmethod
     def qualified_service_name(self, cluster_name: str, namespace: str):
@@ -29,15 +29,15 @@ class KasprAppResources:
 
     @classmethod
     def settings_config_name(self, cluster_name: str):
-        return f"{cluster_name}-streams-config"
+        return f"{cluster_name}-app-config"
     
     @classmethod
     def settings_secret_name(self, cluster_name: str):
-        return f"{cluster_name}-streams-secret"
+        return f"{cluster_name}-app-secret"
     
     @classmethod
     def persistent_volume_claim_name(self, cluster_name: str):
-        return f"{cluster_name}-streams-pv"
+        return f"{cluster_name}-app-pv"
     
     @classmethod
     def stateful_set_name(self, cluster_name: str):

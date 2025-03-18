@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.8
+--
+* Rename KasprApp resources with `-app` suffix
+
 ## 0.3.5
 ---
 
