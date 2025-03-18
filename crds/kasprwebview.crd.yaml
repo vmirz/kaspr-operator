@@ -1,0 +1,241 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kasprwebviews.kaspr.io
+spec:
+  scope: Namespaced
+  group: kaspr.io
+  names:
+    kind: KasprWebView
+    plural: kasprwebviews
+    singular: kasprwebview
+    shortNames:
+      - kwebviews
+      - kwebview
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                name:
+                  type: string
+                  description: The name of the webview.
+                description:
+                  type: string
+                  description: A short description of what this webview does.
+                request:
+                  description: Input to stream processing.
+                  type: object
+                  properties:
+                    method:
+                      type: string
+                      description: HTTP method to use
+                      enum: ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
+                    path:
+                      type: string
+                      description: Path to listen on
+                response:
+                  description: Describe the response of the webview.
+                  type: object
+                  properties:
+                    contentType:
+                      type: string
+                      description: Content type of the response
+                      enum: ["text/html", "application/json", "text/plain", "application/octet-stream"]
+                    statusCode:
+                      type: integer
+                      description: HTTP status code to return on success
+                    headers:
+                      type: object
+                      description: Headers as key and value pairs to return in the response
+                    bodySelector:
+                      description: Python code to transform response body on success or error.
+                      type: object
+                      properties:
+                        onSuccess:
+                          type: object
+                          description: Python code to transform response on success.
+                          properties:
+                            python:
+                              type: string
+                              description: Python code to run.
+                          required:
+                            - python
+                        onError:
+                          type: object
+                          description: Python code to transform response on error.
+                          properties:
+                            python:
+                              type: string
+                              description: Python code to run.
+                          required:
+                            - python
+                      anyOf:
+                        - required: ["onSuccess"]
+                        - required: ["onError"]
+                    statusCodeSelector:
+                      description: Python code to determine the status code to return on success or error.
+                      type: object
+                      properties:
+                        onSuccess:
+                          type: object
+                          description: Python code to determine status code on success.
+                          properties:
+                            python:
+                              type: string
+                              description: Python code to run.
+                          required:
+                            - python
+                        onError:
+                          type: object
+                          description: Python code to determine status code on error.
+                          properties:
+                            python:
+                              type: string
+                              description: Python code to run.
+                          required:
+                            - python
+                      anyOf:
+                        - required: ["onSuccess"]
+                        - required: ["onError"]
+                    headersSelector:
+                      description: Python code to determine headers to return on success or error.
+                      type: object
+                      properties:
+                        onSuccess:
+                          type: object
+                          description: Python code to determine headers on success.
+                          properties:
+                            python:
+                              type: string
+                              description: Python code to run.
+                          required:
+                            - python
+                        onError:
+                          type: object
+                          description: Python code to determine headers on error.
+                          properties:
+                            python:
+                              type: string
+                              description: Python code to run.
+                          required:
+                            - python
+                      anyOf:
+                        - required: ["onSuccess"]
+                        - required: ["onError"]
+                processors:
+                  description: Chain of processors to handle the webview request.
+                  type: object
+                  properties:
+                    pipeline:
+                      type: array
+                      items:
+                        type: string
+                        description: Sequence of operations to run.
+                    init:
+                      description: Initialization code to run once per webview instance. It's scope is available to all operations.
+                      type: object
+                      properties:
+                        python:
+                          type: string
+                          description: Python code to run.
+                      required:
+                        - python
+                    operations:
+                      description: Chain of operations to process the webview request.
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            description: The name of the operation.
+                          map:
+                            type: object
+                            properties:
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          topicSend:
+                            description: Send a message to a kafka topic.
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                                description: Name of the kafka topic to send the message to.
+                              ack:
+                                type: boolean
+                                description: Wait for acknoledgement from the broker before considering the message sent
+                              keySerializer:
+                                type: string
+                                description: Serializer for the key of the message
+                                enum: ["raw", "json", "pickle", "binary"]
+                              valueSerializer:
+                                type: string
+                                description: Serializer for the value of the message
+                                enum: ["raw", "json", "pickle", "binary"]
+                              keySelector:
+                                type: object
+                                description: Python code to determine the key of the message
+                                properties:
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              valueSelector:
+                                type: object
+                                description: Python code to determine the value of the message
+                                properties:
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              partitionSelector:
+                                type: object
+                                description: Python code to determine the topic partition of the message
+                                properties:
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              headersSelector:
+                                type: object
+                                description: Python code to determine the headers of the message
+                                properties:
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              predicate:
+                                type: object
+                                description: Python code to determine if the message should be sent
+                                properties:
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                            required:
+                              - name
+                      required:
+                        - pipeline
+                        - operations
+              required:
+                - name
+                - request
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true

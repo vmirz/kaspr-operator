@@ -1,3 +1,15 @@
-from kaspr.handlers import probes, kafkamessagescheduler
+from kaspr.handlers import (
+    kaspragent,
+    kasprwebview,
+    probes, 
+    kasprapp,
+)
 
-__version__ = "0.1.10"
+__all__ = [
+    "probes",
+    "kasprapp",
+    "kaspragent",
+    "kasprwebview",
+]
+
+__version__ = "0.3.7"

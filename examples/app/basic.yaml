@@ -1,0 +1,17 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: my-app
+spec:
+  replicas: 1
+  bootstrapServers: localhost:9092
+  #tls: {}
+  authentication:
+    type: plain
+  storage:
+    type: persistent-claim
+    class: standard
+    size: 256Mi
+    deleteClaim: False
+  config:
+    topic_replication_factor: 1

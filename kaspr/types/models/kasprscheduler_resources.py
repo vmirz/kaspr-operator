@@ -1,6 +1,6 @@
-class KafkaMessageSchedulerResources:
+class KasprSchedulerResources:
     """Encapsulates the naming scheme used for the resources which
-    the Kaspr Operator manages for a KafkaMessageScheduler cluster."""
+    the Kaspr Operator manages for a KasprScheduler cluster."""
 
     @classmethod
     def component_name(self, cluster_name: str):

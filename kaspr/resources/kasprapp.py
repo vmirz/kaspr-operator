@@ -2,23 +2,25 @@ import kopf
 import time
 from typing import List, Dict, Optional
 from kaspr.utils.objects import cached_property
-from kaspr.types.models.kafkamessagescheduler_spec import KafkaMessageSchedulerSpec
+from kaspr.types.models.kasprapp_spec import KasprAppSpec, KasprAppTemplate
+from kaspr.types.models.storage import KasprAppStorage
 from kaspr.types.models.config import KasprAppConfig
 from kaspr.types.models.tls import ClientTls
-from kaspr.types.models.kafkamessagescheduler_resources import (
-    KafkaMessageSchedulerResources,
+from kaspr.types.models.kasprapp_resources import (
+    KasprAppResources,
 )
 from kaspr.types.models.version_resources import KasprVersion, KasprVersionResources
 from kaspr.types.models.authentication import (
     SASLCredentials,
     KafkaClientAuthentication,
 )
-from kaspr.types.models.storage import KasprAppStorage
 from kaspr.types.models.resource_requirements import ResourceRequirements
 from kaspr.types.models.probe import Probe
+from kaspr.types.models.resource_template import ResourceTemplate
 from kubernetes.client import (
     AppsV1Api,
     CoreV1Api,
+    CustomObjectsApi,
     V1ObjectMeta,
     V1Service,
     V1ServiceSpec,
@@ -32,6 +34,9 @@ from kubernetes.client import (
     V1Container,
     V1ContainerPort,
     V1VolumeMount,
+    V1Volume,
+    V1ConfigMapVolumeSource,
+    V1KeyToPath,
     V1PersistentVolumeClaimSpec,
     V1PersistentVolumeClaim,
     V1PersistentVolumeClaimTemplate,
@@ -44,26 +49,33 @@ from kubernetes.client import (
     V1ResourceRequirements,
     V1Probe,
     V1DeleteOptions,
+    V1ServiceAccount,
 )
 
 from kaspr.resources.base import BaseResource
+from kaspr.resources import KasprAgent, KasprWebView
 from kaspr.common.models.labels import Labels
 
 
-class KafkaMessageScheduler(BaseResource):
-    """Builder of Kafka Message Scheduler underlying kubernetes resources."""
+class KasprApp(BaseResource):
+    """Kaspr App kubernetes resource."""
 
-    COMPONENT_TYPE = "kafka-message-scheduler"
+    KIND = "KasprApp"
+    GROUP_VERSION = "v1alpha1"
+    COMPONENT_TYPE = "app"
     WEB_PORT_NAME = "http"
     KASPR_CONTAINER_NAME = "kaspr"
 
     DEFAULT_REPLICAS = 1
+    DEFAULT_DATA_DIR = "/var/lib/data"
     DEFAULT_TABLE_DIR = "/var/lib/data/tables"
+    DEFAULT_DEFINITIONS_DIR = "/var/lib/data/definitions"
     DEFAULT_WEB_PORT = 6065
 
     replicas: int
     image: str
     service_name: str
+    service_account_name: str
     config_map_name: str
     persistent_volume_claim_name: str
     stateful_set_name: str
@@ -87,18 +99,30 @@ class KafkaMessageScheduler(BaseResource):
     # k8s resources
     _apps_v1_api: AppsV1Api = None
     _core_v1_api: CoreV1Api = None
+    _custom_objects_api: CustomObjectsApi = None
     _service: V1Service = None
+    _service_account: V1ServiceAccount = None
     _persistent_volume_claim: V1PersistentVolumeClaim = None
     _persistent_volume_claim_retention_policy: V1StatefulSetPersistentVolumeClaimRetentionPolicy = None
     _settings_config_map: V1ConfigMap = None
     _env_vars: List[V1EnvVar] = None
     _volume_mounts: List[V1VolumeMount] = None
+    _volumes: List[V1Volume] = None
     _container_ports: List[V1ContainerPort] = None
     _stateful_set: V1StatefulSet = None
-    _kms_container: V1Container = None
+    _kaspr_container: V1Container = None
     _pod_template: V1PodTemplateSpec = None
+    _agent_pod_volumes: List[V1Volume] = None
+    _webview_pod_volumes: List[V1Volume] = None
+
+    # Reference to agent resources
+    agents: List[KasprAgent] = None
+    webviews: List[KasprWebView] = None
+    _webviews_hash: str = None
+    _agents_hash: str = None
 
     # TODO: Templates allow customizing k8s behavior
+    template_service_account: ResourceTemplate
     # PodDisruptionBudgetTemplate templatePodDisruptionBudget;
     # ResourceTemplate templateInitClusterRoleBinding;
     # DeploymentTemplate templateDeployment;
@@ -115,7 +139,7 @@ class KafkaMessageScheduler(BaseResource):
         namespace: str,
         component_type: str,
     ):
-        component_name = KafkaMessageSchedulerResources.component_name(name)
+        component_name = KasprAppResources.component_name(name)
         labels = Labels.generate_default_labels(
             name,
             kind,
@@ -132,27 +156,60 @@ class KafkaMessageScheduler(BaseResource):
 
     @classmethod
     def from_spec(
-        self, name: str, kind: str, namespace: str, spec: KafkaMessageSchedulerSpec
-    ) -> "KafkaMessageScheduler":
-        kms = KafkaMessageScheduler(name, kind, namespace, "KafkaMessageScheduler")
-        kms.service_name = KafkaMessageSchedulerResources.service_name(name)
-        kms.config_map_name = KafkaMessageSchedulerResources.settings_config_name(name)
-        kms.stateful_set_name = KafkaMessageSchedulerResources.stateful_set_name(name)
-        kms.persistent_volume_claim_name = (
-            KafkaMessageSchedulerResources.persistent_volume_claim_name(name)
+        self, name: str, kind: str, namespace: str, spec: KasprAppSpec
+    ) -> "KasprApp":
+        app = KasprApp(name, kind, namespace, self.KIND)
+        app.service_name = KasprAppResources.service_name(name)
+        app.service_account_name = KasprAppResources.service_account_name(name)
+        app.config_map_name = KasprAppResources.settings_config_name(name)
+        app.stateful_set_name = KasprAppResources.stateful_set_name(name)
+        app.persistent_volume_claim_name = (
+            KasprAppResources.persistent_volume_claim_name(name)
         )
-        kms._version = spec.version
-        kms._image = spec.image
-        kms.replicas = spec.replicas or self.DEFAULT_REPLICAS
-        kms.bootstrap_servers = spec.bootstrap_servers
-        kms.tls = spec.tls
-        kms.authentication = spec.authentication
-        kms.config = spec.config
-        kms.resources = spec.resources
-        kms.liveness_probe = spec.liveness_probe
-        kms.readiness_probe = spec.readiness_probe
-        kms.storage = spec.storage
-        return kms
+        app._version = spec.version
+        app._image = spec.image
+        app.replicas = spec.replicas or self.DEFAULT_REPLICAS
+        app.bootstrap_servers = spec.bootstrap_servers
+        app.tls = spec.tls
+        app.authentication = spec.authentication
+        app.config = spec.config
+        app.resources = spec.resources
+        app.liveness_probe = spec.liveness_probe
+        app.readiness_probe = spec.readiness_probe
+        app.storage = spec.storage
+        app.template_service_account = spec.template.service_account
+        return app
+
+    @classmethod
+    def default(self) -> "KasprApp":
+        """Create a default KasprApp resource."""
+        return KasprApp(
+            name="default",
+            kind=self.KIND,
+            namespace=None,
+            component_type=self.COMPONENT_TYPE,
+        )
+
+    def with_agents(self, agents: List[KasprAgent]):
+        """Apply agent resources to the app."""
+        self.agents = agents
+        self._agents_hash = None  # reset hash
+
+    def with_webviews(self, webviews: List[KasprWebView]):
+        """Apply webview resources to the app."""
+        self.webviews = webviews
+        self._webviews_hash = None  # reset hash
+
+    def fetch(self, name: str, namespace: str):
+        """Fetch actual KasprApp in kubernetes."""
+        return self.get_custom_object(
+            self.custom_objects_api,
+            namespace=namespace,
+            group="kaspr.io",
+            version=self.GROUP_VERSION,
+            plural="kasprapps",
+            name=name,
+        )
 
     def supported_version(self, version: str) -> bool:
         """Return True if version is supported."""
@@ -200,6 +257,25 @@ class KafkaMessageScheduler(BaseResource):
         )
         return service
 
+    def prepare_service_account(self) -> V1ServiceAccount:
+        """Build service account resource."""
+        labels, annotations = self.labels.as_dict(), {}
+        if self.template_service_account:
+            if self.template_service_account.metadata:
+                if self.template_service_account.metadata.labels:
+                    labels.update(self.template_service_account.metadata.labels)
+                if self.template_service_account.metadata.annotations:
+                    annotations.update(
+                        self.template_service_account.metadata.annotations
+                    )
+        return V1ServiceAccount(
+            api_version="v1",
+            kind="ServiceAccount",
+            metadata=V1ObjectMeta(
+                name=self.service_account_name, labels=labels, annotations=annotations
+            ),
+        )
+
     def prepare_config_map(self) -> V1ConfigMap:
         """Build a config map resource."""
         return V1ConfigMap(
@@ -246,35 +322,52 @@ class KafkaMessageScheduler(BaseResource):
             )
 
         # include secret(s)
-        password_env_key = self.config.env_for("kafka_auth_password")
-        env_vars.append(
-            V1EnvVar(
-                name=password_env_key,
-                value_from=V1EnvVarSource(
-                    secret_key_ref=V1SecretKeySelector(
-                        key=self.sasl_credentials.password.password_key,
-                        name=self.sasl_credentials.password.secret_name,
-                    )
-                ),
+        if self.authentication.sasl_enabled:
+            password_env_key = self.config.env_for("kafka_auth_password")
+            env_vars.append(
+                V1EnvVar(
+                    name=password_env_key,
+                    value_from=V1EnvVarSource(
+                        secret_key_ref=V1SecretKeySelector(
+                            key=self.sasl_credentials.password.password_key,
+                            name=self.sasl_credentials.password.secret_name,
+                        )
+                    ),
+                )
             )
-        )
 
         # include config hash
         env_vars.append(V1EnvVar(name="CONFIG_HASH", value=self.config_hash))
+
+        # include agents hash
+        if self.agents:
+            env_vars.append(V1EnvVar(name="AGENTS_HASH", value=self.agents_hash))
+
+        # include webviews hash
+        if self.webviews:
+            env_vars.append(V1EnvVar(name="WEBVIEWS_HASH", value=self._webviews_hash))
 
         return env_vars
 
     def prepare_kafka_credentials_env_dict(self) -> Dict[str, str]:
         """Prepare kafka credential environment variables. Password secret is handled separately."""
         env_for = self.config.env_for
-        # TODO: Support other credential types
-        if self.sasl_credentials:
+        if self.authentication.sasl_enabled:
             credentials = self.sasl_credentials
             return {
                 env_for("kafka_security_protocol"): credentials.protocol.value,
                 env_for("kafka_sasl_mechanism"): credentials.mechanism.value,
                 env_for("kafka_auth_username"): credentials.username,
             }
+        if self.authentication.authentication_tls:
+            # TODO: Support TLS authentication
+            raise kopf.PermanentError("TLS authentication is not supported.")
+
+        return {
+            env_for(
+                "kafka_security_protocol"
+            ): self.authentication.security_protocol.value
+        }
 
     def prepare_env_dict(self) -> Dict[str, str]:
         """Prepare a dict of environment variables to be used for KMS app."""
@@ -285,20 +378,58 @@ class KafkaMessageScheduler(BaseResource):
             env_for("kafka_bootstrap_servers"): self.bootstrap_servers,
             **self.prepare_kafka_credentials_env_dict(),
             env_for("web_port"): str(self.web_port),
+            env_for("data_dir"): self.data_dir_path,
             env_for("table_dir"): self.table_dir_path,
-            env_for("kms_enabled"): "true",
+            env_for("definitions_dir"): self.definitions_dir_path,
             env_for("topic_prefix"): self.topic_prefix,
         }
         _envs = {**config_envs}
         _envs.update(overrides)
         return _envs
 
+    def prepare_agent_volume_mounts(self) -> List[V1VolumeMount]:
+        volume_mounts = []
+        for agent in self.agents if self.agents else []:
+            volume_mounts.append(
+                V1VolumeMount(
+                    name=agent.volume_mount_name,
+                    mount_path=self.prepare_agent_mount_path(agent),
+                    read_only=True,
+                    sub_path=agent.file_name,
+                )
+            )
+        return volume_mounts
+
+    def prepare_webview_volume_mounts(self) -> List[V1VolumeMount]:
+        volume_mounts = []
+        for webview in self.webviews if self.webviews else []:
+            volume_mounts.append(
+                V1VolumeMount(
+                    name=webview.volume_mount_name,
+                    mount_path=self.prepare_webview_mount_path(webview),
+                    read_only=True,
+                    sub_path=webview.file_name,
+                )
+            )
+        return volume_mounts
+
+    def prepare_agent_mount_path(self, agent: KasprAgent) -> str:
+        return f"{self.definitions_dir_path}/{agent.file_name}"
+
+    def prepare_webview_mount_path(self, webview: KasprWebView) -> str:
+        return f"{self.definitions_dir_path}/{webview.file_name}"
+
     def prepare_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
-        volume_mounts.append(
-            V1VolumeMount(
-                name=self.persistent_volume_claim_name, mount_path=self.table_dir_path
-            )
+        volume_mounts.extend(
+            [
+                V1VolumeMount(
+                    name=self.persistent_volume_claim_name,
+                    mount_path=self.table_dir_path,
+                ),
+                *self.prepare_agent_volume_mounts(),
+                *self.prepare_webview_volume_mounts(),
+            ]
         )
         return volume_mounts
 
@@ -314,7 +445,7 @@ class KafkaMessageScheduler(BaseResource):
 
     def prepare_container_probes(self) -> Dict[str, V1Probe]:
         probes = {}
-        # Not applying probes for now...
+        # TODO
         # probes.update({
         #     "readiness_probe": self.readiness_probe,
         #     "liveness_probe": self.liveness_probe
@@ -329,7 +460,43 @@ class KafkaMessageScheduler(BaseResource):
         )
         return ports
 
-    def prepare_kms_container(self) -> V1Container:
+    def prepare_volumes(self) -> List[V1Volume]:
+        volumes = []
+        volumes.extend(self.prepare_agent_volumes())
+        volumes.extend(self.prepare_webview_volumes())
+        return volumes
+
+    def prepare_agent_volumes(self) -> List[V1Volume]:
+        volumes = []
+        for agent in self.agents if self.agents else []:
+            volumes.append(
+                V1Volume(
+                    name=agent.volume_mount_name,
+                    config_map=V1ConfigMapVolumeSource(
+                        name=agent.config_map_name,
+                        items=[V1KeyToPath(key=agent.file_name, path=agent.file_name)],
+                    ),
+                )
+            )
+        return volumes
+
+    def prepare_webview_volumes(self) -> List[V1Volume]:
+        volumes = []
+        for webview in self.webviews if self.webviews else []:
+            volumes.append(
+                V1Volume(
+                    name=webview.volume_mount_name,
+                    config_map=V1ConfigMapVolumeSource(
+                        name=webview.config_map_name,
+                        items=[
+                            V1KeyToPath(key=webview.file_name, path=webview.file_name)
+                        ],
+                    ),
+                )
+            )
+        return volumes
+
+    def prepare_kaspr_container(self) -> V1Container:
         return V1Container(
             name=self.KASPR_CONTAINER_NAME,
             image=self.image,
@@ -344,9 +511,7 @@ class KafkaMessageScheduler(BaseResource):
     def prepare_pod_template(self) -> V1PodTemplateSpec:
         return V1PodTemplateSpec(
             metadata=V1ObjectMeta(labels=self.labels.as_dict()),
-            spec=V1PodSpec(
-                containers=[self.kms_container],
-            ),
+            spec=V1PodSpec(containers=[self.kaspr_container], volumes=self.volumes),
         )
 
     def prepare_statefulset(self) -> V1StatefulSetSpec:
@@ -386,6 +551,9 @@ class KafkaMessageScheduler(BaseResource):
     def create(self):
         """Create KMS resources."""
         self.unite()
+        self.create_service_account(
+            self.core_v1_api, self.namespace, self.service_account
+        )
         self.create_config_map(
             self.core_v1_api, self.namespace, self.settings_config_map
         )
@@ -499,10 +667,68 @@ class KafkaMessageScheduler(BaseResource):
                 self.core_v1_api, pvc.metadata.name, self.namespace, pvc
             )
 
+    def patch_volume_mounted_resources(self):
+        patch = [
+            {
+                "op": "replace",
+                "path": "/spec/template/spec/containers/0/volumeMounts",
+                "value": self.volume_mounts,
+            },
+            {
+                "op": "replace",
+                "path": "/spec/template/spec/volumes",
+                "value": self.volumes,
+            },
+            {
+                "op": "replace",
+                "path": "/spec/template/spec/containers/0/env",
+                "value": self.env_vars,
+            },
+        ]
+        self.patch_stateful_set(
+            self.apps_v1_api,
+            self.stateful_set_name,
+            self.namespace,
+            stateful_set=patch,
+        )
+
+    def patch_template_service_account(self):
+        patch = [
+            {
+                "op": "replace",
+                "path": "/metadata/labels",
+                "value": self.service_account.metadata.labels,
+            },
+            {
+                "op": "replace",
+                "path": "/metadata/annotations",
+                "value": self.service_account.metadata.annotations,
+            }            
+        ]
+        self.patch_service_account(
+            self.core_v1_api,
+            self.service_account_name,
+            self.namespace,
+            patch,
+        )
+
     def unite(self):
         """Ensure all child resources are owned by the root resource"""
-        children = [self.settings_config_map, self.service, self.stateful_set]
+        children = [
+            self.service_account,
+            self.settings_config_map,
+            self.service,
+            self.stateful_set,
+        ]
         kopf.adopt(children)
+
+    def agents_status(self) -> Dict:
+        """Return status of all agents."""
+        return [agent.info() for agent in self.agents]
+
+    def webviews_status(self) -> Dict:
+        """Return status of all webviews."""
+        return [webview.info() for webview in self.webviews]
 
     @cached_property
     def version(self) -> KasprVersion:
@@ -517,8 +743,16 @@ class KafkaMessageScheduler(BaseResource):
         return getattr(self.config, "web_port", self.DEFAULT_WEB_PORT)
 
     @cached_property
+    def data_dir_path(self):
+        return getattr(self.config, "data_dir", self.DEFAULT_DATA_DIR)
+
+    @cached_property
     def table_dir_path(self):
         return getattr(self.config, "table_dir", self.DEFAULT_TABLE_DIR)
+
+    @cached_property
+    def definitions_dir_path(self):
+        return getattr(self.config, "definitions_dir", self.DEFAULT_DEFINITIONS_DIR)
 
     @cached_property
     def topic_prefix(self):
@@ -537,10 +771,22 @@ class KafkaMessageScheduler(BaseResource):
         return self._core_v1_api
 
     @cached_property
+    def custom_objects_api(self) -> CustomObjectsApi:
+        if self._custom_objects_api is None:
+            self._custom_objects_api = CustomObjectsApi()
+        return self._custom_objects_api
+
+    @cached_property
     def service(self) -> V1Service:
         if self._service is None:
             self._service = self.prepare_service()
         return self._service
+
+    @cached_property
+    def service_account(self) -> V1ServiceAccount:
+        if self._service_account is None:
+            self._service_account = self.prepare_service_account()
+        return self._service_account
 
     @cached_property
     def settings_config_map(self) -> V1ConfigMap:
@@ -562,7 +808,7 @@ class KafkaMessageScheduler(BaseResource):
 
     @cached_property
     def sasl_credentials(self) -> SASLCredentials:
-        return self.authentication.sasl_credentials(tls=self.tls)
+        return self.authentication.sasl_credentials
 
     @cached_property
     def env_vars(self) -> List[V1EnvVar]:
@@ -597,10 +843,16 @@ class KafkaMessageScheduler(BaseResource):
         return self._volume_mounts
 
     @cached_property
-    def kms_container(self) -> V1Container:
-        if self._kms_container is None:
-            self._kms_container = self.prepare_kms_container()
-        return self._kms_container
+    def volumes(self) -> List[V1Volume]:
+        if self._volumes is None:
+            self._volumes = self.prepare_volumes()
+        return self._volumes
+
+    @cached_property
+    def kaspr_container(self) -> V1Container:
+        if self._kaspr_container is None:
+            self._kaspr_container = self.prepare_kaspr_container()
+        return self._kaspr_container
 
     @cached_property
     def pod_template(self) -> V1PodTemplateSpec:
@@ -613,3 +865,37 @@ class KafkaMessageScheduler(BaseResource):
         if self._stateful_set is None:
             self._stateful_set = self.prepare_statefulset()
         return self._stateful_set
+
+    @cached_property
+    def agent_pod_volumes(self) -> List[V1Volume]:
+        if self._agent_pod_volumes is None:
+            self._agent_pod_volumes = self.prepare_agent_volumes()
+        return self._agent_pod_volumes
+
+    @cached_property
+    def webview_pod_volumes(self) -> List[V1Volume]:
+        if self._webview_pod_volumes is None:
+            self._webview_pod_volumes = self.prepare_webview_volumes()
+        return self._webview_pod_volumes
+
+    @cached_property
+    def agents_hash(self) -> str:
+        """Hash of all agents."""
+        if self._agents_hash is None:
+            self._agents_hash = (
+                self.compute_hash("".join(agent.hash for agent in self.agents))
+                if self.agents
+                else None
+            )
+        return self._agents_hash
+
+    @cached_property
+    def webviews_hash(self) -> str:
+        """Hash of all webviews."""
+        if self._webviews_hash is None:
+            self._webviews_hash = (
+                self.compute_hash("".join(webview.hash for webview in self.webviews))
+                if self.webviews
+                else None
+            )
+        return self._webviews_hash

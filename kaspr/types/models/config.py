@@ -14,15 +14,15 @@ class KasprAppConfig(BaseModel):
     topic_allow_declare: bool
 
     # kafka message scheduler
-    kms_enabled: bool
-    kms_debug_stats_enabled: bool
-    kms_topic_partitions: int
-    kms_checkpoint_save_interval_seconds: float
-    kms_dispatcher_default_checkpoint_lookback_days: int
-    kms_dispatcher_checkpoint_interval: float
-    kms_janitor_checkpoint_interval: float
-    kms_janitor_clean_interval_seconds: float
-    kms_janitor_highwater_offset_seconds: float
+    scheduler_enabled: bool
+    scheduler_debug_stats_enabled: bool
+    scheduler_topic_partitions: int
+    scheduler_checkpoint_save_interval_seconds: float
+    scheduler_dispatcher_default_checkpoint_lookback_days: int
+    scheduler_dispatcher_checkpoint_interval: float
+    scheduler_janitor_checkpoint_interval: float
+    scheduler_janitor_clean_interval_seconds: float
+    scheduler_janitor_highwater_offset_seconds: float
 
     # rocksdb
     store_rocksdb_write_buffer_size: int

@@ -1,5 +1,5 @@
 apiVersion: kaspr.io/v1alpha1
-kind: KafkaMessageScheduler
+kind: KasprScheduler
 metadata:
   name: my-scheduler
 spec:

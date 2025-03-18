@@ -20,7 +20,6 @@ class KafkaClientAuthenticationTlsCertificateAndKeySchema(BaseSchema):
 
 class KafkaClientAuthenticationTlsSchema(BaseSchema):
     __model__ = KafkaClientAuthenticationTls
-    type = fields.Str(data_key="type")
     certificate_and_key = fields.Nested(
         KafkaClientAuthenticationTlsCertificateAndKeySchema(),
         data_key="certificateAndKey",
@@ -30,10 +29,12 @@ class KafkaClientAuthenticationTlsSchema(BaseSchema):
 
 class KafkaClientAuthenticationPlainSchema(BaseSchema):
     __model__ = KafkaClientAuthenticationPlain
-    type = fields.Str(data_key="type")
-    username = fields.Str(data_key="username", required=True)
+    username = fields.Str(data_key="username", default=None, load_default=None)
     password_secret = fields.Nested(
-        PasswordSecretSchema(), data_key="passwordSecret", required=True
+        PasswordSecretSchema(),
+        data_key="passwordSecret",
+        default=None,
+        load_default=None,
     )
 
 
@@ -52,16 +53,16 @@ class KafkaClientAuthenticationSchema(BaseSchema):
 
     type = fields.Str(required=True)
     authentication_plain = fields.Nested(
-        KafkaClientAuthenticationPlainSchema(), default=None
+        KafkaClientAuthenticationPlainSchema(), default=None, load_default=None
     )
     authentication_scram_sha_256 = fields.Nested(
-        KafkaClientAuthenticationScramSha256Schema(), default=None
+        KafkaClientAuthenticationScramSha256Schema(), default=None, load_default=None
     )
     authentication_scram_sha_512 = fields.Nested(
-        KafkaClientAuthenticationScramSha512Schema(), default=None
+        KafkaClientAuthenticationScramSha512Schema(), default=None, load_default=None
     )
     authentication_tls = fields.Nested(
-        KafkaClientAuthenticationTlsSchema(), default=None
+        KafkaClientAuthenticationTlsSchema(), default=None, load_default=None
     )
 
     @pre_load
