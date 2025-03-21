@@ -20,6 +20,12 @@ from .kasprwebview_spec import (
     KasprWebViewRequestSpecSchema,
     KasprWebViewSpecSchema
 )
+from .kasprtable_spec import (
+    KasprTableWindowTumblingSpecSchema,
+    KasprTableWindowHoppingSpecSchema,
+    KasprTableWindowSpecSchema,
+    KasprTableSpecSchema
+)
 
 __all__ = [
     "KasprAgentSpecSchema",
@@ -41,4 +47,8 @@ __all__ = [
     "KasprWebViewResponseSpecSchema",
     "KasprWebViewRequestSpecSchema",
     "KasprWebViewSpecSchema",
+    "KasprTableWindowTumblingSpecSchema",
+    "KasprTableWindowHoppingSpecSchema",
+    "KasprTableWindowSpecSchema",
+    "KasprTableSpecSchema"
 ]

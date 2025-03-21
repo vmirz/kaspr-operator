@@ -53,7 +53,7 @@ from kubernetes.client import (
 )
 
 from kaspr.resources.base import BaseResource
-from kaspr.resources import KasprAgent, KasprWebView
+from kaspr.resources import KasprAgent, KasprWebView, KasprTable
 from kaspr.common.models.labels import Labels
 
 
@@ -114,12 +114,15 @@ class KasprApp(BaseResource):
     _pod_template: V1PodTemplateSpec = None
     _agent_pod_volumes: List[V1Volume] = None
     _webview_pod_volumes: List[V1Volume] = None
+    _table_pod_volumes: List[V1Volume] = None
 
     # Reference to agent resources
     agents: List[KasprAgent] = None
     webviews: List[KasprWebView] = None
+    tables: List[KasprTable] = None
     _webviews_hash: str = None
     _agents_hash: str = None
+    _tables_hash: str = None
 
     # TODO: Templates allow customizing k8s behavior
     template_service_account: ResourceTemplate
@@ -199,6 +202,11 @@ class KasprApp(BaseResource):
         """Apply webview resources to the app."""
         self.webviews = webviews
         self._webviews_hash = None  # reset hash
+
+    def with_tables(self, tables: List[KasprTable]):
+        """Apply table resources to the app."""
+        self.tables = tables
+        self._tables_hash = None # reset hash
 
     def fetch(self, name: str, namespace: str):
         """Fetch actual KasprApp in kubernetes."""
@@ -347,6 +355,10 @@ class KasprApp(BaseResource):
         if self.webviews:
             env_vars.append(V1EnvVar(name="WEBVIEWS_HASH", value=self._webviews_hash))
 
+        # include tables hash
+        if self.tables:
+            env_vars.append(V1EnvVar(name="TABLES_HASH", value=self._tables_hash))
+
         return env_vars
 
     def prepare_kafka_credentials_env_dict(self) -> Dict[str, str]:
@@ -412,12 +424,27 @@ class KasprApp(BaseResource):
                 )
             )
         return volume_mounts
+    
+    def prepare_table_volume_mounts(self) -> List[V1VolumeMount]:
+        volume_mounts = []
+        for table in self.tables if self.tables else []:
+            volume_mounts.append(
+                V1VolumeMount(
+                    name=table.volume_mount_name,
+                    mount_path=self.prepare_table_mount_path(table),
+                    read_only=True,
+                    sub_path=table.file_name,
+                )
+            )
 
     def prepare_agent_mount_path(self, agent: KasprAgent) -> str:
         return f"{self.definitions_dir_path}/{agent.file_name}"
 
     def prepare_webview_mount_path(self, webview: KasprWebView) -> str:
         return f"{self.definitions_dir_path}/{webview.file_name}"
+    
+    def prepare_table_mount_path(self, table: KasprTable) -> str:
+        return f"{self.definitions_dir_path}/{table.file_name}"
 
     def prepare_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
@@ -429,6 +456,7 @@ class KasprApp(BaseResource):
                 ),
                 *self.prepare_agent_volume_mounts(),
                 *self.prepare_webview_volume_mounts(),
+                *self.prepare_table_volume_mounts()
             ]
         )
         return volume_mounts
@@ -464,6 +492,7 @@ class KasprApp(BaseResource):
         volumes = []
         volumes.extend(self.prepare_agent_volumes())
         volumes.extend(self.prepare_webview_volumes())
+        volumes.extend(self.prepare_table_volumes())
         return volumes
 
     def prepare_agent_volumes(self) -> List[V1Volume]:
@@ -490,6 +519,22 @@ class KasprApp(BaseResource):
                         name=webview.config_map_name,
                         items=[
                             V1KeyToPath(key=webview.file_name, path=webview.file_name)
+                        ],
+                    ),
+                )
+            )
+        return volumes
+    
+    def prepare_table_volumes(self) -> List[V1Volume]:
+        volumes = []
+        for table in self.tables if self.tables else []:
+            volumes.append(
+                V1Volume(
+                    name=table.volume_mount_name,
+                    config_map=V1ConfigMapVolumeSource(
+                        name=table.config_map_name,
+                        items=[
+                            V1KeyToPath(key=table.file_name, path=table.file_name)
                         ],
                     ),
                 )
@@ -729,6 +774,10 @@ class KasprApp(BaseResource):
     def webviews_status(self) -> Dict:
         """Return status of all webviews."""
         return [webview.info() for webview in self.webviews]
+    
+    def tables_status(self) -> Dict:
+        """Return status of all tables."""
+        return [table.info() for table in self.tables]
 
     @cached_property
     def version(self) -> KasprVersion:
@@ -879,6 +928,12 @@ class KasprApp(BaseResource):
         return self._webview_pod_volumes
 
     @cached_property
+    def table_pod_volumes(self) -> List[V1Volume]:
+        if self._table_pod_volumes is None:
+            self._table_pod_volumes = self.prepare_table_volumes()
+        return self._table_pod_volumes
+    
+    @cached_property
     def agents_hash(self) -> str:
         """Hash of all agents."""
         if self._agents_hash is None:
@@ -899,3 +954,14 @@ class KasprApp(BaseResource):
                 else None
             )
         return self._webviews_hash
+    
+    @cached_property
+    def tables_hash(self) -> str:
+        """Hash of all tables."""
+        if self._tables_hash is None:
+            self._tables_hash = (
+                self.compute_hash("".join(table.hash for table in self.tables))
+                if self.tables
+                else None
+            )
+        return self._tables_hash

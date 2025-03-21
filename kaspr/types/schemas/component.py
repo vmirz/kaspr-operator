@@ -3,6 +3,7 @@ from kaspr.types.base import BaseSchema
 from kaspr.types.models import KasprAppComponents
 from kaspr.types.schemas.kaspragent_spec import KasprAgentSpecSchema
 from kaspr.types.schemas.kasprwebview_spec import KasprWebViewSpecSchema
+from kaspr.types.schemas.kasprtable_spec import KasprTableSpecSchema
 
 
 class KasprAppComponentsSchema(BaseSchema):
@@ -17,6 +18,12 @@ class KasprAppComponentsSchema(BaseSchema):
     webviews = fields.List(
         fields.Nested(KasprWebViewSpecSchema()),
         data_key="webviews",
+        required=False,
+        load_default=[],
+    )
+    tables = fields.List(
+        fields.Nested(KasprTableSpecSchema()),
+        data_key="tables",
         required=False,
         load_default=[],
     )

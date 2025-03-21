@@ -15,7 +15,7 @@ from .code import CodeSpec
 from .operation import MapOperation, FilterOperation
 from .component import KasprAppComponents
 from .topicout import TopicOutSpec
-from.kasprwebview_resources import KasprWebViewResources
+from .kasprwebview_resources import KasprWebViewResources
 from .kasprwebview_spec import (
     KasprWebViewProcessorTopicSendOperator,
     KasprWebViewProcessorMapOperator,
@@ -26,6 +26,13 @@ from .kasprwebview_spec import (
     KasprWebViewResponseSelector,
     KasprWebViewResponseSpec,
     KasprWebViewSpec,
+)
+from .kasprtable_resources import KasprTableResources
+from .kasprtable_spec import (
+    KasprTableWindowTumblingSpec,
+    KasprTableWindowHoppingSpec,
+    KasprTableWindowSpec,
+    KasprTableSpec
 )
 
 __all__ = [
@@ -58,4 +65,9 @@ __all__ = [
     "KasprWebViewResponseSelector",
     "KasprWebViewResponseSpec",
     "KasprWebViewSpec",
+    "KasprTableResources",
+    "KasprTableWindowTumblingSpec",
+    "KasprTableWindowHoppingSpec",
+    "KasprTableWindowSpec",
+    "KasprTableSpec"
 ]

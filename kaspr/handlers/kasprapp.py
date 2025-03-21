@@ -6,14 +6,15 @@ from kaspr.types.schemas.kasprapp_spec import (
     KasprAppSpecSchema,
 )
 from kaspr.types.models import KasprAppSpec
-from kaspr.types.schemas import KasprAgentSpecSchema, KasprWebViewSpecSchema
-from kaspr.resources import KasprApp, KasprAgent, KasprWebView
+from kaspr.types.schemas import KasprAgentSpecSchema, KasprWebViewSpecSchema, KasprTableSpecSchema
+from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable
 from kaspr.utils.helpers import utc_now
 
 APP_KIND = "KasprApp"
 
 AGENTS_UPDATED = "AgentsUpdated"
 WEBVIEWS_UPDATED = "WebviewsUpdated"
+TABLES_UPDATED = "TablesUpdated"
 
 # Queue of requests to patch KasprApps
 patch_request_queues: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
@@ -184,7 +185,7 @@ async def monitor_app(
     logger,
     **kwargs,
 ):
-    """Monitor app's agents, webviews, etc.
+    """Monitor app's agents, webviews, and tables.
 
     On every iteration, the handler:
     1. Finds all agents, webviews, etc. related to the app.
@@ -198,8 +199,10 @@ async def monitor_app(
             app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
             agents: List[KasprAgent] = []
             webviews: List[KasprWebView] = []
+            tables: List[KasprTable] = []
             agent_resources = KasprAgent.default().search(namespace, apps=[name])
             webview_resources = KasprWebView.default().search(namespace, apps=[name])
+            table_resources = KasprTable.default().search(namespace, apps=[name])
             for agent in agent_resources.get("items", []) if agent_resources else []:
                 agents.append(
                     KasprAgent.from_spec(
@@ -222,8 +225,21 @@ async def monitor_app(
                         dict(webview["metadata"]["labels"]),
                     )
                 )
+            for table in (
+                table_resources.get("items", []) if table_resources else []
+            ):
+                tables.append(
+                    KasprTable.from_spec(
+                        table["metadata"]["name"],
+                        KasprTable.KIND,
+                        namespace,
+                        KasprTableSpecSchema().load(table["spec"]),
+                        dict(table["metadata"]["labels"]),
+                    )
+            )
             app.with_agents(agents)
             app.with_webviews(webviews)
+            app.with_tables(tables)
             current_agents_hash, desired_agents_hash = (
                 annotations.get("kaspr.io/last-applied-agents-hash"),
                 app.agents_hash,
@@ -231,6 +247,10 @@ async def monitor_app(
             current_webviews_hash, desired_webviews_hash = (
                 annotations.get("kaspr.io/last-applied-webviews-hash"),
                 app.webviews_hash,
+            )
+            current_tables_hash, desired_tables_hash = (
+                annotations.get("kaspr.io/last-applied-tables-hash"),
+                app.tables_hash,
             )
             app.patch_volume_mounted_resources()
             await patch_request_queues[name].put(
@@ -245,6 +265,12 @@ async def monitor_app(
                         "field": "metadata.annotations",
                         "value": {
                             "kaspr.io/last-applied-webviews-hash": desired_webviews_hash
+                        },
+                    },
+                    {
+                        "field": "metadata.annotations",
+                        "value": {
+                            "kaspr.io/last-applied-tables-hash": desired_tables_hash
                         },
                     },
                     {
@@ -269,6 +295,17 @@ async def monitor_app(
                             },
                         },
                     },
+                    {
+                        "field": "status",
+                        "value": {
+                            "version": str(app.version),
+                            "tables": {
+                                "registered": app.tables_status(),
+                                "lastTransitionTime": utc_now().isoformat(),
+                                "hash": app.tables_hash,
+                            },
+                        },
+                    }
                 ]
             )
 
@@ -286,6 +323,14 @@ async def monitor_app(
                     type="Normal",
                     reason=WEBVIEWS_UPDATED,
                     message=f"Webviews were updated for `{name}` in `{namespace or 'default'}` namespace.",
+                )
+
+            if current_tables_hash != desired_tables_hash:
+                kopf.event(
+                    body,
+                    type="Normal",
+                    reason=TABLES_UPDATED,
+                    message=f"Tables were updated for `{name}` in `{namespace or 'default'}` namespace.",
                 )
 
             await asyncio.sleep(10)
