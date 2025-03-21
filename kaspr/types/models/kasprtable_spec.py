@@ -18,7 +18,7 @@ class KasprTableWindowSpec(BaseModel):
     tumbling: Optional[KasprTableWindowTumblingSpec]
     hopping: Optional[KasprTableWindowHoppingSpec]
     relative_to: Optional[str]
-    relative_to_field_selector: Optional[CodeSpec]
+    relative_to_selector: Optional[CodeSpec]
 
 
 class KasprTableSpec(BaseModel):
@@ -30,4 +30,5 @@ class KasprTableSpec(BaseModel):
     value_serializer: Optional[str]
     partitions: Optional[int]
     extra_topic_configs: Optional[Mapping[str, str]]
+    options: Optional[Mapping[str, str]]
     window: Optional[KasprTableWindowSpec]

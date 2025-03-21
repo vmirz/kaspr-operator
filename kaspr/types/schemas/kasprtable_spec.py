@@ -39,7 +39,7 @@ class KasprTableWindowSpecSchema(BaseSchema):
         load_default=None,
     )
     relative_to = fields.Str(data_key="relativeTo", allow_none=True, load_default=None)
-    relative_to_field_selector = fields.Nested(
+    relative_to_selector = fields.Nested(
         CodeSpecSchema(),
         data_key="relativeToFieldSelector",
         allow_none=True,
@@ -65,10 +65,21 @@ class KasprTableSpecSchema(BaseSchema):
     partitions = fields.Int(data_key="partitions", required=False, load_default=None)
     extra_topic_configs = fields.Mapping(
         keys=fields.Str(required=True),
+        values=fields.Str(required=True),
         data_key="extraTopicConfigs",
         allow_none=True,
         load_default=dict,
     )
+    options = fields.Mapping(
+        keys=fields.Str(required=True),
+        values=fields.Str(required=True),
+        data_key="options",
+        allow_none=True,
+        load_default=dict,
+    )
     window = fields.Nested(
-        KasprTableWindowSpecSchema(), data_key="window", allow_none=True, load_default=None
+        KasprTableWindowSpecSchema(),
+        data_key="window",
+        allow_none=True,
+        load_default=None,
     )
