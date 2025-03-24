@@ -6,7 +6,7 @@ metadata:
   labels:
     # The kaspr.io/app label identifies the KasprApp instance
     # which hosts this webview
-    kaspr.io/app: my-app
+    kaspr.io/app: demo1
 spec:
   name: grafana-webhook-receiver
   description: A webview that receives Grafana webhook alerts and forwards them to a Kafka topic.

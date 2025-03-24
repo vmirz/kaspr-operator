@@ -1,4 +1,5 @@
 from marshmallow import fields, post_dump
+from kaspr.utils.helpers import camel_to_snake
 from kaspr.types.base import BaseSchema
 from kaspr.types.models import (
     KasprWebViewSpec,
@@ -41,9 +42,9 @@ class KasprWebViewProcessorOperationSchema(BaseSchema):
     )
 
     @post_dump
-    def map_fields(self, data, **kwargs):
-        data["topic_send"] = data.pop("topicSend")
-        return data
+    def camelto_to_snake_dump(self, data, **kwargs):
+        """Convert data keys from camelCase to snake_case."""
+        return camel_to_snake(data)
 
 
 class KasprWebViewProcessorInitSchema(BaseSchema):
@@ -90,10 +91,9 @@ class KasprWebViewResponseSelectorSchema(BaseSchema):
     )
 
     @post_dump
-    def map_fields(self, data, **kwargs):
-        data["on_success"] = data.pop("onSuccess")
-        data["on_error"] = data.pop("onError")
-        return data
+    def camelto_to_snake_dump(self, data, **kwargs):
+        """Convert data keys from camelCase to snake_case."""
+        return camel_to_snake(data)
 
 
 class KasprWebViewResponseSpecSchema(BaseSchema):
@@ -130,13 +130,9 @@ class KasprWebViewResponseSpecSchema(BaseSchema):
     )
 
     @post_dump
-    def map_fields(self, data, **kwargs):
-        data["content_type"] = data.pop("contentType")
-        data["status_code"] = data.pop("statusCode")
-        data["body_selector"] = data.pop("bodySelector")
-        data["status_code_selector"] = data.pop("statusCodeSelector")
-        data["headers_selector"] = data.pop("headersSelector")
-        return data
+    def camelto_to_snake_dump(self, data, **kwargs):
+        """Convert data keys from camelCase to snake_case."""
+        return camel_to_snake(data)
 
 
 class KasprWebViewRequestSpecSchema(BaseSchema):

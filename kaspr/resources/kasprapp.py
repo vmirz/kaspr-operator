@@ -61,8 +61,11 @@ class KasprApp(BaseResource):
     """Kaspr App kubernetes resource."""
 
     KIND = "KasprApp"
+    GROUP_NAME = "kaspr.io"
     GROUP_VERSION = "v1alpha1"
     COMPONENT_TYPE = "app"
+    PLURAL_NAME = "kasprapps"
+    KASPR_APP_NAME_LABEL = "kaspr.io/app"
     WEB_PORT_NAME = "http"
     KASPR_CONTAINER_NAME = "kaspr"
 
@@ -141,20 +144,23 @@ class KasprApp(BaseResource):
         kind: str,
         namespace: str,
         component_type: str,
+        labels: Optional[Dict[str, str]] = None,
     ):
         component_name = KasprAppResources.component_name(name)
-        labels = Labels.generate_default_labels(
+        _labels = Labels.generate_default_labels(
             name,
             kind,
             component_name,
             component_type,
             self.KASPR_OPERATOR_NAME,
         )
+        _labels.update(labels or {})
+        _labels.update({self.KASPR_APP_NAME_LABEL: name})
         super().__init__(
             cluster=name,
             namespace=namespace,
             component_name=component_name,
-            labels=labels,
+            labels=_labels,
         )
 
     @classmethod
@@ -392,8 +398,7 @@ class KasprApp(BaseResource):
             env_for("web_port"): str(self.web_port),
             env_for("data_dir"): self.data_dir_path,
             env_for("table_dir"): self.table_dir_path,
-            env_for("definitions_dir"): self.definitions_dir_path,
-            env_for("topic_prefix"): self.topic_prefix,
+            env_for("definitions_dir"): self.definitions_dir_path
         }
         _envs = {**config_envs}
         _envs.update(overrides)
@@ -436,6 +441,7 @@ class KasprApp(BaseResource):
                     sub_path=table.file_name,
                 )
             )
+        return volume_mounts
 
     def prepare_agent_mount_path(self, agent: KasprAgent) -> str:
         return f"{self.definitions_dir_path}/{agent.file_name}"
@@ -767,6 +773,20 @@ class KasprApp(BaseResource):
         ]
         kopf.adopt(children)
 
+    def search(self, namespace: str, apps: List[str] = None):
+        """Search for KasprApps in kubernetes."""
+        label_selector = (
+            ",".join(f"{self.KASPR_APP_NAME_LABEL}={app}" for app in apps) if apps else None
+        )
+        return self.list_custom_objects(
+            self.custom_objects_api,
+            namespace=namespace,
+            group=self.GROUP_NAME,
+            version=self.GROUP_VERSION,
+            plural=self.PLURAL_NAME,
+            label_selector=label_selector,
+        )
+    
     def agents_status(self) -> Dict:
         """Return status of all agents."""
         return [agent.info() for agent in self.agents]
@@ -802,10 +822,6 @@ class KasprApp(BaseResource):
     @cached_property
     def definitions_dir_path(self):
         return getattr(self.config, "definitions_dir", self.DEFAULT_DEFINITIONS_DIR)
-
-    @cached_property
-    def topic_prefix(self):
-        return getattr(self.config, "topic_prefix", f"{self.cluster}.")
 
     @cached_property
     def apps_v1_api(self) -> AppsV1Api:

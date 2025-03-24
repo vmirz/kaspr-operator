@@ -1,4 +1,5 @@
 from marshmallow import fields, post_dump
+from kaspr.utils.helpers import camel_to_snake
 from kaspr.types.base import BaseSchema
 from kaspr.types.models import (
     KasprAgentSpec,
@@ -27,10 +28,9 @@ class KasprAgentInputTopicSchema(BaseSchema):
     )
 
     @post_dump
-    def map_fields(self, data, **kwargs):
-        data["key_serializer"] = data.pop("keySerializer")
-        data["value_serializer"] = data.pop("valueSerializer")
-        return data
+    def camelto_to_snake_dump(self, data, **kwargs):
+        """Convert data keys from camelCase to snake_case."""
+        return camel_to_snake(data)
 
 
 class KasprAgentChannelSchema(BaseSchema):

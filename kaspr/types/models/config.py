@@ -8,7 +8,6 @@ class KasprAppConfig(BaseModel):
     table_dir: str
 
     # topics
-    topic_prefix: str
     topic_replication_factor: int
     topic_partitions: int
     topic_allow_declare: bool

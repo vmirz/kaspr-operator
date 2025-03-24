@@ -1,4 +1,5 @@
-from marshmallow import fields
+from marshmallow import fields, post_dump
+from kaspr.utils.helpers import camel_to_snake
 from kaspr.types.base import BaseSchema
 from kaspr.types.models import (
     KasprTableWindowTumblingSpec,
@@ -46,6 +47,11 @@ class KasprTableWindowSpecSchema(BaseSchema):
         load_default=None,
     )
 
+    @post_dump
+    def camelto_to_snake_dump(self, data, **kwargs):
+        """Convert data keys from camelCase to snake_case."""
+        return camel_to_snake(data)    
+
 
 class KasprTableSpecSchema(BaseSchema):
     __model__ = KasprTableSpec
@@ -83,3 +89,8 @@ class KasprTableSpecSchema(BaseSchema):
         allow_none=True,
         load_default=None,
     )
+
+    @post_dump
+    def camelto_to_snake_dump(self, data, **kwargs):
+        """Convert data keys from camelCase to snake_case."""
+        return camel_to_snake(data)    

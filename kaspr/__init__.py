@@ -1,6 +1,7 @@
 from kaspr.handlers import (
     kaspragent,
     kasprwebview,
+    kasprtable,
     probes, 
     kasprapp,
 )
@@ -10,6 +11,7 @@ __all__ = [
     "kasprapp",
     "kaspragent",
     "kasprwebview",
+    "kasprtable",
 ]
 
-__version__ = "0.3.8"
+__version__ = "0.4.0"

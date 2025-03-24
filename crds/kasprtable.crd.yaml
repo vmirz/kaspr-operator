@@ -36,14 +36,12 @@ spec:
                 defaultSelector:
                   type: object
                   description: Initializing data type used for default values when a key is not found.
-                  keySelector:
-                    type: object
-                    properties:
-                      python:
-                        type: string
-                        description: Python code to run. Must return a type class.
-                    required:
-                      - python
+                  properties:
+                    python:
+                      type: string
+                      description: Python code to run.
+                  required:
+                    - python
                 keySerializer:
                   type: string
                   description: Serializer for the key of the table. Possible options are raw, json.

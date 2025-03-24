@@ -6,7 +6,11 @@ from kaspr.types.schemas.kasprapp_spec import (
     KasprAppSpecSchema,
 )
 from kaspr.types.models import KasprAppSpec
-from kaspr.types.schemas import KasprAgentSpecSchema, KasprWebViewSpecSchema, KasprTableSpecSchema
+from kaspr.types.schemas import (
+    KasprAgentSpecSchema,
+    KasprWebViewSpecSchema,
+    KasprTableSpecSchema,
+)
 from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable
 from kaspr.utils.helpers import utc_now
 
@@ -27,7 +31,6 @@ def on_create(spec, name, namespace, logger, **kwargs):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
     app.create()
-
 
 @kopf.on.update(kind=APP_KIND, field="spec.image")
 @kopf.on.update(kind=APP_KIND, field="spec.version")
@@ -88,6 +91,7 @@ def on_storage_size_update(
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
     app.patch_storage_size()
 
+
 @kopf.on.update(kind=APP_KIND, field="spec.template.serviceAccount")
 def on_template_service_account_updated(
     old, new, diff, spec, name, status, namespace, logger, **kwargs
@@ -96,12 +100,22 @@ def on_template_service_account_updated(
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
     app.patch_template_service_account()
 
+
 @kopf.on.update(kind=APP_KIND, field="spec.config.topic_partitions")
 def immutable_config_updated_00(**kwargs):
     raise kopf.PermanentError(
         "Field 'spec.config.topic_partitions' can't change after creation."
     )
 
+
+@kopf.on.update(kind=APP_KIND, field="spec.config")
+def general_config_update(spec, name, namespace, **kwargs):
+    spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
+    app_resources = KasprApp.default().search(namespace, apps=[name])
+    if app_resources and app_resources.get("items"):
+        current = app_resources["items"][0]
+        # TODO: Patch settings if desired generation # > current generation #
 
 # @kopf.on.validate(kind=APP_KIND, field="spec.storage.deleteClaim")
 # def say_hello(warnings: list[str], **_):
@@ -225,9 +239,7 @@ async def monitor_app(
                         dict(webview["metadata"]["labels"]),
                     )
                 )
-            for table in (
-                table_resources.get("items", []) if table_resources else []
-            ):
+            for table in table_resources.get("items", []) if table_resources else []:
                 tables.append(
                     KasprTable.from_spec(
                         table["metadata"]["name"],
@@ -236,7 +248,7 @@ async def monitor_app(
                         KasprTableSpecSchema().load(table["spec"]),
                         dict(table["metadata"]["labels"]),
                     )
-            )
+                )
             app.with_agents(agents)
             app.with_webviews(webviews)
             app.with_tables(tables)
@@ -253,8 +265,13 @@ async def monitor_app(
                 app.tables_hash,
             )
             app.patch_volume_mounted_resources()
+            # TODO: Update latest applied generation # in status
             await patch_request_queues[name].put(
                 [
+                    {
+                        "field": "metadata.labels",
+                        "value": { app.KASPR_APP_NAME_LABEL: name },
+                    },
                     {
                         "field": "metadata.annotations",
                         "value": {
@@ -305,7 +322,7 @@ async def monitor_app(
                                 "hash": app.tables_hash,
                             },
                         },
-                    }
+                    },
                 ]
             )
 
