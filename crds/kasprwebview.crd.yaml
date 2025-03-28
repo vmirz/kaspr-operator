@@ -157,6 +157,20 @@ spec:
                           name:
                             type: string
                             description: The name of the operation.
+                          tables:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                name:
+                                  type: string
+                                  description: The name of the table.
+                                paramName:
+                                  type: string
+                                  description: The name of the function parameter to use for the table.
+                              required:
+                                - name
+                                - paramName                                   
                           map:
                             type: object
                             properties:

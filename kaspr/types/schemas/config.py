@@ -9,15 +9,6 @@ class KasprAppConfigSchema(BaseSchema):
 
     __model__ = KasprAppConfig
 
-    # kafka_boostrap_servers: str
-    # kafka_security_protocol: str
-    # kafka_sasl_mechanism: str
-    # kafka_auth_username: str
-    # kafka_auth_password: str
-    # kafka_auth_cafile: str
-    # kafka_auth_capath: str
-    # kafka_auth_cadata: str
-
     table_dir: str = fields.Str(data_key="tableDir", default=None)
 
     # topics

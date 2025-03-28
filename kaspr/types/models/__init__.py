@@ -34,6 +34,7 @@ from .kasprtable_spec import (
     KasprTableWindowSpec,
     KasprTableSpec
 )
+from .tableref import TableRefSpec
 
 __all__ = [
     "MetadataTemplate",
@@ -69,5 +70,6 @@ __all__ = [
     "KasprTableWindowTumblingSpec",
     "KasprTableWindowHoppingSpec",
     "KasprTableWindowSpec",
-    "KasprTableSpec"
+    "KasprTableSpec",
+    "TableRefSpec"
 ]

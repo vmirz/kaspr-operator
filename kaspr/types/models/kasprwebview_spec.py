@@ -2,7 +2,7 @@ from typing import Optional, List, Mapping
 from kaspr.types.base import BaseModel
 from kaspr.types.models.code import CodeSpec
 from kaspr.types.models.topicout import TopicOutSpec
-
+from kaspr.types.models.tableref import TableRefSpec
 
 class KasprWebViewProcessorTopicSendOperator(TopicOutSpec): ...
 
@@ -14,6 +14,7 @@ class KasprWebViewProcessorOperation(BaseModel):
     name: str
     topic_send: Optional[KasprWebViewProcessorTopicSendOperator]
     map: Optional[KasprWebViewProcessorMapOperator]
+    tables: Optional[List[TableRefSpec]]
 
 
 class KasprWebViewProcessorsInit(CodeSpec): ...

@@ -13,7 +13,7 @@ from kaspr.types.models import (
 from kaspr.types.schemas.topicout import TopicOutSpecSchema
 from kaspr.types.schemas.code import CodeSpecSchema
 from kaspr.types.schemas.operation import MapOperationSchema, FilterOperationSchema
-
+from kaspr.types.schemas.tableref import TableRefSpecSchema
 
 class KasprAgentInputTopicSchema(BaseSchema):
     __model__ = KasprAgentInputTopic
@@ -83,6 +83,14 @@ class KasprAgentProcessorsOperationSchema(BaseSchema):
         allow_none=True,
         load_default=None,
     )
+    table_refs = fields.List(
+        fields.Nested(
+            TableRefSpecSchema(), required=True
+        ),
+        data_key="tables",
+        allow_none=False,
+        load_default=list,
+    )     
 
 
 class KasprAgentProcessorsInitSchema(CodeSpecSchema):

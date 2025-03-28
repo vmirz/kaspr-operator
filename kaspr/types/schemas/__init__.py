@@ -26,6 +26,7 @@ from .kasprtable_spec import (
     KasprTableWindowSpecSchema,
     KasprTableSpecSchema
 )
+from .tableref import TableRefSpecSchema
 
 __all__ = [
     "KasprAgentSpecSchema",
@@ -50,5 +51,6 @@ __all__ = [
     "KasprTableWindowTumblingSpecSchema",
     "KasprTableWindowHoppingSpecSchema",
     "KasprTableWindowSpecSchema",
-    "KasprTableSpecSchema"
+    "KasprTableSpecSchema",
+    "TableRefSpecSchema"
 ]
