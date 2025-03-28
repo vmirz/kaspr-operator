@@ -3,6 +3,7 @@ from kaspr.types.base import BaseModel
 from kaspr.types.models.code import CodeSpec
 from kaspr.types.models.operation import MapOperation, FilterOperation
 from kaspr.types.models.topicout import TopicOutSpec
+from kaspr.types.models.tableref import TableRefSpec
 
 class KasprAgentInputTopic(BaseModel):
     names: Optional[List[str]]
@@ -24,6 +25,7 @@ class KasprAgentProcessorsOperation(BaseModel):
     name: str
     map: Optional[MapOperation]
     filter: Optional[FilterOperation]
+    tables: Optional[List[TableRefSpec]]
 
 class KasprAgentProcessorsInit(CodeSpec):
     ...

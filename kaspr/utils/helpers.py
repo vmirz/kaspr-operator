@@ -7,6 +7,7 @@ from typing import Optional, Iterator, List, Mapping, OrderedDict
 
 DEFAULT_DATE_FORMAT = "%Y-%m-%d"
 
+
 def utc_now():
     return datetime.now(timezone.utc)
 
@@ -167,9 +168,39 @@ def ensure_date(dtstr, format=DEFAULT_DATE_FORMAT):
     """Converts input datetime string to YYYY-MM-DD format"""
     return datetime.fromisoformat(dtstr).strftime(format)
 
+
 def ordered_dict_to_dict(data):
     if isinstance(data, OrderedDict):
         return dict((k, ordered_dict_to_dict(v)) for k, v in data.items())
     elif isinstance(data, list):
         return [ordered_dict_to_dict(i) for i in data]
     return data
+
+
+def camel_to_snake(data):
+    """
+    Convert all keys in a dictionary from camelCase to snake_case.
+
+    Args:
+        data (dict): Input dictionary with camelCase keys
+
+    Returns:
+        dict: New dictionary with snake_case keys
+    """
+
+    def convert_key(key):
+        result = ""
+        for char in key:
+            if char.isupper():
+                result += "_" + char.lower()
+            else:
+                result += char
+        return result
+
+    if not isinstance(data, dict):
+        return data
+
+    return {
+        convert_key(key): camel_to_snake(value) if isinstance(value, dict) else value
+        for key, value in data.items()
+    }

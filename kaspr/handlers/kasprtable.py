@@ -4,16 +4,16 @@ import logging
 from collections import defaultdict
 from typing import Dict
 from benedict import benedict
-from kaspr.types.schemas import KasprWebViewSpecSchema
-from kaspr.types.models import KasprWebViewSpec
-from kaspr.resources import KasprWebView, KasprApp
+from kaspr.types.schemas import KasprTableSpecSchema
+from kaspr.types.models import KasprTableSpec
+from kaspr.resources import KasprTable, KasprApp
 from kaspr.utils.helpers import utc_now
 
-KIND = "KasprWebView"
+KIND = "KasprTable"
 APP_NOT_FOUND = "AppNotFound"
 APP_FOUND = "AppFound"
 
-# Queue of requests to update KasprWebView status
+# Queue of requests to update KasprTable status
 patch_request_queues: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
 
 
@@ -33,20 +33,20 @@ kopf_logger.addFilter(TimerLogFilter())
 def reconciliation(
     body, spec, name, namespace, logger, labels, patch, annotations, **kwargs
 ):
-    """Reconcile KasprWebView resources."""
-    spec_model: KasprWebViewSpec = KasprWebViewSpecSchema().load(spec)
-    webview = KasprWebView.from_spec(name, KIND, namespace, spec_model, dict(labels))
-    app = KasprApp.default().fetch(webview.app_name, namespace)
-    webview.create()
-    # fetch the webviews's app and update it's status.
+    """Reconcile KasprTable resources."""
+    spec_model: KasprTableSpec = KasprTableSpecSchema().load(spec)
+    table = KasprTable.from_spec(name, KIND, namespace, spec_model, dict(labels))
+    app = KasprApp.default().fetch(table.app_name, namespace)
+    table.create()
+    # fetch the table's app and update it's status.
     patch.status.update(
         {
             "app": {
-                "name": webview.app_name,
+                "name": table.app_name,
                 "status": APP_FOUND if app else APP_NOT_FOUND,
             },
-            "configMap": webview.config_map_name,
-            "hash": webview.hash,
+            "configMap": table.config_map_name,
+            "hash": table.hash,
             "lastUpdateTime": utc_now().isoformat(),
         }
     )
@@ -54,14 +54,14 @@ def reconciliation(
         kopf.warn(
             body,
             reason=APP_NOT_FOUND,
-            message=f"KasprApp `{webview.app_name}` does not exist in `{namespace or 'default'}` namespace.",
+            message=f"KasprApp `{table.app_name}` does not exist in `{namespace or 'default'}` namespace.",
         )
     else:
         kopf.event(
             body,
             type="Normal",
             reason=APP_FOUND,
-            message=f"KasprApp `{webview.app_name}` found in `{namespace or 'default'}` namespace.",
+            message=f"KasprApp `{table.app_name}` found in `{namespace or 'default'}` namespace.",
         )
 
 
@@ -88,25 +88,25 @@ async def patch_resource(name, patch, **kwargs):
 @kopf.daemon(
     kind=KIND, cancellation_backoff=2.0, cancellation_timeout=5.0, initial_delay=5.0
 )
-async def monitor_webview(
+async def monitor_table(
     stopped, name, body, spec, meta, labels, status, namespace, patch, logger, **kwargs
 ):
-    """Monitor webview resources for status updates."""
+    """Monitor table resources for status updates."""
     try:
         while not stopped:
             _status = benedict(status, keyattr_dynamic=True)
             _status_updates = benedict(keyattr_dynamic=True)
-            spec_model: KasprWebViewSpec = KasprWebViewSpecSchema().load(spec)
-            webview = KasprWebView.from_spec(
+            spec_model: KasprTableSpec = KasprTableSpecSchema().load(spec)
+            table = KasprTable.from_spec(
                 name, KIND, namespace, spec_model, dict(labels)
             )
-            # Warn if the webview's app does not exists.
-            app = KasprApp.default().fetch(webview.app_name, namespace)
+            # Warn if the table's app does not exists.
+            app = KasprApp.default().fetch(table.app_name, namespace)
             if app is None and _status.app.status == APP_FOUND:
                 kopf.warn(
                     body,
                     reason=APP_NOT_FOUND,
-                    message=f"KasprApp `{webview.app_name}` does not exist in `{namespace or 'default'}` namespace.",
+                    message=f"KasprApp `{table.app_name}` does not exist in `{namespace or 'default'}` namespace.",
                 )
                 _status_updates.app.status = APP_NOT_FOUND
             elif app and _status.app.status == APP_NOT_FOUND:
@@ -114,7 +114,7 @@ async def monitor_webview(
                     body,
                     type="Normal",
                     reason=APP_FOUND,
-                    message=f"KasprApp `{webview.app_name}` found in `{namespace or 'default'}` namespace.",
+                    message=f"KasprApp `{table.app_name}` found in `{namespace or 'default'}` namespace.",
                 )
                 _status_updates.app.status = APP_FOUND
 

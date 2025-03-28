@@ -3,7 +3,7 @@ import yaml
 from typing import List, Dict, Optional
 from kaspr.utils.objects import cached_property
 from kaspr.utils.helpers import ordered_dict_to_dict
-from kaspr.types.models import KasprWebViewSpec, KasprWebViewResources, KasprAppComponents
+from kaspr.types.models import KasprAppComponents, KasprTableSpec, KasprTableResources
 from kaspr.types.schemas import KasprAppComponentsSchema
 
 from kubernetes.client import (
@@ -17,20 +17,20 @@ from kaspr.resources.base import BaseResource
 from kaspr.common.models.labels import Labels
 
 
-class KasprWebView(BaseResource):
-    """Kaspr WebView kubernetes resource."""
+class KasprTable(BaseResource):
+    """KasprTable resource."""
 
-    KIND = "KasprWebView"
+    KIND = "KasprTable"
     GROUP_NAME = "kaspr.io"
     GROUP_VERSION = "v1alpha1"
     COMPONENT_TYPE = "webview"
-    PLURAL_NAME = "kasprwebviews"
+    PLURAL_NAME = "kasprtables"
     KASPR_APP_NAME_LABEL = "kaspr.io/app"
     OUTPUT_TYPE = "yaml"
 
     config_map_name: str
     volume_mount_name: str
-    spec: KasprWebViewSpec
+    spec: KasprTableSpec
 
     # derived from spec
     _hash: str = None
@@ -50,7 +50,7 @@ class KasprWebView(BaseResource):
         component_type: str,
         labels: Optional[Dict[str, str]] = None,
     ):
-        component_name = KasprWebViewResources.component_name(name)
+        component_name = KasprTableResources.component_name(name)
         _labels = Labels.generate_default_labels(
             name,
             kind,
@@ -73,20 +73,19 @@ class KasprWebView(BaseResource):
         name: str,
         kind: str,
         namespace: str,
-        spec: KasprWebViewSpec,
+        spec: KasprTableSpec,
         labels: Dict[str, str] = None,
-    ) -> "KasprWebView":
-        agent = KasprWebView(name, kind, namespace, self.KIND, labels)
+    ) -> "KasprTable":
+        agent = KasprTable(name, kind, namespace, self.KIND, labels)
         agent.spec = spec
         agent.spec.name = name
-        agent.config_map_name = KasprWebViewResources.config_name(name)
-        agent.volume_mount_name = KasprWebViewResources.volume_mount_name(name)
+        agent.config_map_name = KasprTableResources.config_name(name)
+        agent.volume_mount_name = KasprTableResources.volume_mount_name(name)
         return agent
 
     @classmethod
-    def default(self) -> "KasprWebView":
-        """Create a default KasprWebView resource."""
-        return KasprWebView(
+    def default(self) -> "KasprTable":
+        return KasprTable(
             name="default",
             kind=self.KIND,
             namespace=None,
@@ -94,7 +93,6 @@ class KasprWebView(BaseResource):
         )
 
     def fetch(self, name: str, namespace: str):
-        """Fetch KasprWebView from kubernetes."""
         return self.get_custom_object(
             self.custom_objects_api,
             namespace=namespace,
@@ -105,8 +103,7 @@ class KasprWebView(BaseResource):
         )
 
     def search(self, namespace: str, apps: List[str] = None):
-        """Search for KasprWebView in kubernetes."""
-
+        """Find all tables associated with apps."""
         label_selector = (
             ",".join(f"kaspr.io/app={app}" for app in apps) if apps else None
         )
@@ -120,7 +117,7 @@ class KasprWebView(BaseResource):
         )
 
     def patch_config_map(self):
-        """Update resources as a result of app settings change."""
+        """Update underlying configmap in response to config change."""
         self.patch_config_map(
             self.core_v1_api,
             self.config_map_name,
@@ -129,11 +126,11 @@ class KasprWebView(BaseResource):
         )
 
     def prepare_json_str(self) -> str:
-        """Prepare json string for webview config map data."""
+        """Prepare json string for table config map data."""
         return KasprAppComponentsSchema().dumps(self.wrap_components())
 
     def prepare_yaml_str(self) -> str:
-        """Prepare yaml string for webview config map data."""
+        """Prepare yaml string for table config map data."""
         components = KasprAppComponentsSchema().dump(self.wrap_components())
         components = ordered_dict_to_dict(components)
         return yaml.dump(
@@ -141,8 +138,8 @@ class KasprWebView(BaseResource):
         )
     
     def wrap_components(self) -> KasprAppComponents:
-        """Wrap webview spec in KasprAppComponents."""
-        return KasprAppComponents(webviews=[self.spec])
+        """Wrap table spec in KasprAppComponents."""
+        return KasprAppComponents(tables=[self.spec])
 
     def prepare_config_map(self) -> V1ConfigMap:
         """Prepare config map for webview."""
@@ -160,7 +157,7 @@ class KasprWebView(BaseResource):
         )
 
     def create(self):
-        """Create webview resources."""
+        """Create table resources."""
         # we can remove this once validation admission is implemented
         if not self.app_name:
             raise kopf.PermanentError(
@@ -175,7 +172,7 @@ class KasprWebView(BaseResource):
         kopf.adopt(children)
 
     def info(self) -> Dict:
-        """Return webview info."""
+        """Return table info."""
         return {
             "name": self.cluster,
             "configMap": self.config_map_name,
