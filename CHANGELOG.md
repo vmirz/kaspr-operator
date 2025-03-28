@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+--
+* Improvements to how resource `status` is updated
+* Improvements to reconciliation
+
+* 
 ## 0.4.0
 --
 * Support KasprTable CRD
