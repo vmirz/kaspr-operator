@@ -1,4 +1,5 @@
 from marshmallow import fields, post_dump
+from kaspr.utils.helpers import camel_to_snake
 from kaspr.types.base import BaseSchema
 from kaspr.types.models import TopicOutSpec
 from kaspr.types.schemas.code import CodeSpecSchema
@@ -35,12 +36,6 @@ class TopicOutSpecSchema(BaseSchema):
     )
 
     @post_dump
-    def map_fields(self, data, **kwargs):
-        data["key_serializer"] = data.pop("keySerializer")
-        data["value_serializer"] = data.pop("valueSerializer")
-        data["key_selector"] = data.pop("keySelector")
-        data["value_selector"] = data.pop("valueSelector")
-        data["partition_selector"] = data.pop("partitionSelector")
-        data["headers_selector"] = data.pop("headersSelector")
-        data["predicate"] = data.pop("predicate")
-        return data
+    def camelto_to_snake_dump(self, data, **kwargs):
+        """Convert data keys from camelCase to snake_case."""
+        return camel_to_snake(data)

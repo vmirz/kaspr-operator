@@ -1,0 +1,22 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: products
+  namespace: kaspr
+  labels:
+    # The kaspr.io/app label identifies the KasprApp instance
+    # which hosts this table
+    kaspr.io/app: demo1
+spec:
+  name: products
+  description: A table of items keyed by product ID
+  global: false
+  defaultSelector:
+    python: |
+      def get_default_selector():
+        return dict
+  keySerializer: 'json'
+  valueSerializer: 'json'
+  partitions: 3
+  extraTopicConfigs: {}
+  options: {}

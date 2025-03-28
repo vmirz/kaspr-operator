@@ -1,0 +1,106 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kasprtables.kaspr.io
+spec:
+  scope: Namespaced
+  group: kaspr.io
+  names:
+    kind: KasprTable
+    plural: kasprtables
+    singular: kasprtable
+    shortNames:
+      - ktables
+      - ktable
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                name:
+                  type: string
+                  description: The name of the table.
+                description:
+                  type: string
+                  description: A short description of the table.
+                global: 
+                  type: boolean
+                  description: If true, the table is global. Global table have a full copy of the data in all the nodes.
+                defaultSelector:
+                  type: object
+                  description: Initializing data type used for default values when a key is not found.
+                  properties:
+                    python:
+                      type: string
+                      description: Python code to run.
+                  required:
+                    - python
+                keySerializer:
+                  type: string
+                  description: Serializer for the key of the table. Possible options are raw, json.
+                  enum: ["raw", "json"]
+                valueSerializer:
+                  type: string
+                  description: Serializer for the value of the table. Possible options are raw, json.
+                  enum: ["raw", "json"]
+                partitions:
+                  type: integer
+                  description: Number of partitions in the table.
+                extraTopicConfigs:
+                  type: object
+                  description: Topic configurations to use when creating the table's changelog topic.
+                options:
+                  type: object
+                  description: Advanced table configuration options. See documentation for more information.
+                window:
+                  type: object
+                  description: Window configuration for the table.
+                  properties:
+                    tumbling:
+                      type: object
+                      description: Tumbling window configuration.
+                      properties:
+                        size:
+                          type: string
+                          description: The window (time interval) duration. (e.g. "30s", "1m", "1h", "1d")
+                        expires:
+                          type: string
+                          description: Duration for which we want to store the data allocated to each window. (e.g. "30s", "1m", "1h", "1d")
+                    hopping:
+                      type: object
+                      description: Hopping window configuration.
+                      properties:
+                        size:
+                          type: string
+                          description: The window (time interval) duration. (e.g. "30s", "1m", "1h", "1d")
+                        step:
+                          type: string
+                          description: The time interval used to create new windows. (e.g. "30s", "1m", "1h", "1d")
+                        expires:
+                          type: string
+                          description: Duration for which we want to store the data allocated to each window. (e.g. "30s", "1m", "1h", "1d")
+                    relativeTo:
+                      type: string
+                      description: How events are assigned to windows. Possible values are "stream", "now", "custom". See documentation for more information.
+                      enum: ["stream", "now", "custom"]
+                    relativeToSelector:
+                      type: object 
+                      description: Function to extract a timestamp from the current event to use for window assignment. Applicable only when "relativeTo" is "custom".
+                      properties:
+                        python:
+                          type: string
+                          description: Python code to run.
+                      required:
+                        - python
+              required:
+                - name
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true

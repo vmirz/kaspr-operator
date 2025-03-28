@@ -6,14 +6,19 @@ from kaspr.types.schemas.kasprapp_spec import (
     KasprAppSpecSchema,
 )
 from kaspr.types.models import KasprAppSpec
-from kaspr.types.schemas import KasprAgentSpecSchema, KasprWebViewSpecSchema
-from kaspr.resources import KasprApp, KasprAgent, KasprWebView
+from kaspr.types.schemas import (
+    KasprAgentSpecSchema,
+    KasprWebViewSpecSchema,
+    KasprTableSpecSchema,
+)
+from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable
 from kaspr.utils.helpers import utc_now
 
 APP_KIND = "KasprApp"
 
 AGENTS_UPDATED = "AgentsUpdated"
 WEBVIEWS_UPDATED = "WebviewsUpdated"
+TABLES_UPDATED = "TablesUpdated"
 
 # Queue of requests to patch KasprApps
 patch_request_queues: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
@@ -87,6 +92,7 @@ def on_storage_size_update(
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
     app.patch_storage_size()
 
+
 @kopf.on.update(kind=APP_KIND, field="spec.template.serviceAccount")
 def on_template_service_account_updated(
     old, new, diff, spec, name, status, namespace, logger, **kwargs
@@ -95,11 +101,23 @@ def on_template_service_account_updated(
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
     app.patch_template_service_account()
 
+
 @kopf.on.update(kind=APP_KIND, field="spec.config.topic_partitions")
 def immutable_config_updated_00(**kwargs):
     raise kopf.PermanentError(
         "Field 'spec.config.topic_partitions' can't change after creation."
     )
+
+
+@kopf.on.update(kind=APP_KIND, field="spec.config")
+def general_config_update(spec, name, namespace, **kwargs):
+    spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
+    app.patch_settings()
+    # app_resources = KasprApp.default().search(namespace, apps=[name])
+    # if app_resources and app_resources.get("items"):
+    #     current = app_resources["items"][0]
+    #     # TODO: Patch settings if desired generation # > current generation #
 
 
 # @kopf.on.validate(kind=APP_KIND, field="spec.storage.deleteClaim")
@@ -184,7 +202,7 @@ async def monitor_app(
     logger,
     **kwargs,
 ):
-    """Monitor app's agents, webviews, etc.
+    """Monitor app's agents, webviews, and tables.
 
     On every iteration, the handler:
     1. Finds all agents, webviews, etc. related to the app.
@@ -198,8 +216,10 @@ async def monitor_app(
             app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
             agents: List[KasprAgent] = []
             webviews: List[KasprWebView] = []
+            tables: List[KasprTable] = []
             agent_resources = KasprAgent.default().search(namespace, apps=[name])
             webview_resources = KasprWebView.default().search(namespace, apps=[name])
+            table_resources = KasprTable.default().search(namespace, apps=[name])
             for agent in agent_resources.get("items", []) if agent_resources else []:
                 agents.append(
                     KasprAgent.from_spec(
@@ -222,8 +242,19 @@ async def monitor_app(
                         dict(webview["metadata"]["labels"]),
                     )
                 )
+            for table in table_resources.get("items", []) if table_resources else []:
+                tables.append(
+                    KasprTable.from_spec(
+                        table["metadata"]["name"],
+                        KasprTable.KIND,
+                        namespace,
+                        KasprTableSpecSchema().load(table["spec"]),
+                        dict(table["metadata"]["labels"]),
+                    )
+                )
             app.with_agents(agents)
             app.with_webviews(webviews)
+            app.with_tables(tables)
             current_agents_hash, desired_agents_hash = (
                 annotations.get("kaspr.io/last-applied-agents-hash"),
                 app.agents_hash,
@@ -232,47 +263,40 @@ async def monitor_app(
                 annotations.get("kaspr.io/last-applied-webviews-hash"),
                 app.webviews_hash,
             )
-            app.patch_volume_mounted_resources()
-            await patch_request_queues[name].put(
-                [
-                    {
-                        "field": "metadata.annotations",
-                        "value": {
-                            "kaspr.io/last-applied-agents-hash": desired_agents_hash
-                        },
-                    },
-                    {
-                        "field": "metadata.annotations",
-                        "value": {
-                            "kaspr.io/last-applied-webviews-hash": desired_webviews_hash
-                        },
-                    },
-                    {
-                        "field": "status",
-                        "value": {
-                            "version": str(app.version),
-                            "agents": {
-                                "registered": app.agents_status(),
-                                "lastTransitionTime": utc_now().isoformat(),
-                                "hash": app.agents_hash,
-                            },
-                        },
-                    },
-                    {
-                        "field": "status",
-                        "value": {
-                            "version": str(app.version),
-                            "webviews": {
-                                "registered": app.webviews_status(),
-                                "lastTransitionTime": utc_now().isoformat(),
-                                "hash": app.webviews_hash,
-                            },
-                        },
-                    },
-                ]
+            current_tables_hash, desired_tables_hash = (
+                annotations.get("kaspr.io/last-applied-tables-hash"),
+                app.tables_hash,
             )
-
+            app.patch_volume_mounted_resources()
+            # TODO: Update latest applied generation # in status
+            patch_requests = [
+                {
+                    "field": "metadata.labels",
+                    "value": {app.KASPR_APP_NAME_LABEL: name},
+                }
+            ]
             if current_agents_hash != desired_agents_hash:
+                patch_requests.extend(
+                    [
+                        {
+                            "field": "metadata.annotations",
+                            "value": {
+                                "kaspr.io/last-applied-agents-hash": desired_agents_hash
+                            },
+                        },
+                        {
+                            "field": "status",
+                            "value": {
+                                "version": str(app.version),
+                                "agents": {
+                                    "registered": app.agents_status(),
+                                    "lastTransitionTime": utc_now().isoformat(),
+                                    "hash": app.agents_hash,
+                                },
+                            },
+                        },
+                    ]
+                )
                 kopf.event(
                     body,
                     type="Normal",
@@ -281,6 +305,27 @@ async def monitor_app(
                 )
 
             if current_webviews_hash != desired_webviews_hash:
+                patch_requests.extend(
+                    [
+                        {
+                            "field": "metadata.annotations",
+                            "value": {
+                                "kaspr.io/last-applied-webviews-hash": desired_webviews_hash
+                            },
+                        },
+                        {
+                            "field": "status",
+                            "value": {
+                                "version": str(app.version),
+                                "webviews": {
+                                    "registered": app.webviews_status(),
+                                    "lastTransitionTime": utc_now().isoformat(),
+                                    "hash": app.webviews_hash,
+                                },
+                            },
+                        },
+                    ]
+                )
                 kopf.event(
                     body,
                     type="Normal",
@@ -288,6 +333,36 @@ async def monitor_app(
                     message=f"Webviews were updated for `{name}` in `{namespace or 'default'}` namespace.",
                 )
 
+            if current_tables_hash != desired_tables_hash:
+                patch_requests.extend(
+                    [
+                        {
+                            "field": "metadata.annotations",
+                            "value": {
+                                "kaspr.io/last-applied-tables-hash": desired_tables_hash
+                            },
+                        },
+                        {
+                            "field": "status",
+                            "value": {
+                                "version": str(app.version),
+                                "tables": {
+                                    "registered": app.tables_status(),
+                                    "lastTransitionTime": utc_now().isoformat(),
+                                    "hash": app.tables_hash,
+                                },
+                            },
+                        },
+                    ]
+                )
+                kopf.event(
+                    body,
+                    type="Normal",
+                    reason=TABLES_UPDATED,
+                    message=f"Tables were updated for `{name}` in `{namespace or 'default'}` namespace.",
+                )
+
+            await patch_request_queues[name].put(patch_requests)
             await asyncio.sleep(10)
 
     except asyncio.CancelledError:

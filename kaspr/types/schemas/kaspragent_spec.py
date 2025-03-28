@@ -1,4 +1,5 @@
 from marshmallow import fields, post_dump
+from kaspr.utils.helpers import camel_to_snake
 from kaspr.types.base import BaseSchema
 from kaspr.types.models import (
     KasprAgentSpec,
@@ -12,7 +13,7 @@ from kaspr.types.models import (
 from kaspr.types.schemas.topicout import TopicOutSpecSchema
 from kaspr.types.schemas.code import CodeSpecSchema
 from kaspr.types.schemas.operation import MapOperationSchema, FilterOperationSchema
-
+from kaspr.types.schemas.tableref import TableRefSpecSchema
 
 class KasprAgentInputTopicSchema(BaseSchema):
     __model__ = KasprAgentInputTopic
@@ -27,10 +28,9 @@ class KasprAgentInputTopicSchema(BaseSchema):
     )
 
     @post_dump
-    def map_fields(self, data, **kwargs):
-        data["key_serializer"] = data.pop("keySerializer")
-        data["value_serializer"] = data.pop("valueSerializer")
-        return data
+    def camelto_to_snake_dump(self, data, **kwargs):
+        """Convert data keys from camelCase to snake_case."""
+        return camel_to_snake(data)
 
 
 class KasprAgentChannelSchema(BaseSchema):
@@ -83,6 +83,14 @@ class KasprAgentProcessorsOperationSchema(BaseSchema):
         allow_none=True,
         load_default=None,
     )
+    table_refs = fields.List(
+        fields.Nested(
+            TableRefSpecSchema(), required=True
+        ),
+        data_key="tables",
+        allow_none=False,
+        load_default=list,
+    )     
 
 
 class KasprAgentProcessorsInitSchema(CodeSpecSchema):
