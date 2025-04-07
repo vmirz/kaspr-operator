@@ -27,6 +27,7 @@ from .kasprtable_spec import (
     KasprTableSpecSchema
 )
 from .tableref import TableRefSpecSchema
+from .pod_template import PodTemplateSchema, AdditionalVolumeSchema
 
 __all__ = [
     "KasprAgentSpecSchema",
@@ -52,5 +53,7 @@ __all__ = [
     "KasprTableWindowHoppingSpecSchema",
     "KasprTableWindowSpecSchema",
     "KasprTableSpecSchema",
-    "TableRefSpecSchema"
+    "TableRefSpecSchema",
+    "PodTemplateSchema",
+    "AdditionalVolumeSchema",
 ]
