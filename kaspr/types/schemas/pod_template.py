@@ -1,6 +1,7 @@
-from marshmallow import fields, pre_load
+from marshmallow import fields, pre_load, post_dump
+from kaspr.utils.helpers import camel_to_snake
 from kaspr.types.base import BaseSchema
-from kaspr.types.models import PodTemplate
+from kaspr.types.models import PodTemplate, AdditionalVolume
 from kaspr.types.schemas.resource_template import ResourceTemplateSchema
 
 
@@ -118,3 +119,8 @@ class PodTemplateSchema(ResourceTemplateSchema):
         if "metadata" not in data:
             data["metadata"] = {}
         return data
+    
+    @post_dump
+    def camelto_to_snake_dump(self, data, **kwargs):
+        """Convert data keys from camelCase to snake_case."""
+        return camel_to_snake(data)    

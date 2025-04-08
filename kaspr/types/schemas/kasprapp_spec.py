@@ -11,7 +11,7 @@ from kaspr.types.schemas.resource_requirements import ResourceRequirementsSchema
 from kaspr.types.schemas.probe import ProbeSchema
 from kaspr.types.schemas.storage import KasprAppStorageSchema
 from kaspr.types.schemas.resource_template import ResourceTemplateSchema
-
+from kaspr.types.schemas.pod_template import PodTemplateSchema
 
 class KasprAppTemplateSchema(BaseSchema):
     __model__ = KasprAppTemplate
@@ -21,6 +21,12 @@ class KasprAppTemplateSchema(BaseSchema):
         data_key="serviceAccount",
         allow_none=True,
         load_default=None,
+    )
+    pod = fields.Nested(
+        PodTemplateSchema(),
+        data_key="pod",
+        allow_none=True,
+        load_default=lambda: PodTemplateSchema().load({}),
     )
 
 

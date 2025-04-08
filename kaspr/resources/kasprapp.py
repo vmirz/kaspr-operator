@@ -17,6 +17,7 @@ from kaspr.types.models.authentication import (
 from kaspr.types.models.resource_requirements import ResourceRequirements
 from kaspr.types.models.probe import Probe
 from kaspr.types.models.resource_template import ResourceTemplate
+from kaspr.types.models.pod_template import PodTemplate
 from kubernetes.client import (
     AppsV1Api,
     CoreV1Api,
@@ -129,6 +130,7 @@ class KasprApp(BaseResource):
 
     # TODO: Templates allow customizing k8s behavior
     template_service_account: ResourceTemplate
+    template_pod: PodTemplate
     # PodDisruptionBudgetTemplate templatePodDisruptionBudget;
     # ResourceTemplate templateInitClusterRoleBinding;
     # DeploymentTemplate templateDeployment;
@@ -187,6 +189,7 @@ class KasprApp(BaseResource):
         app.readiness_probe = spec.readiness_probe
         app.storage = spec.storage
         app.template_service_account = spec.template.service_account
+        app.template_pod = spec.template.pod
         return app
 
     @classmethod
@@ -212,7 +215,7 @@ class KasprApp(BaseResource):
     def with_tables(self, tables: List[KasprTable]):
         """Apply table resources to the app."""
         self.tables = tables
-        self._tables_hash = None # reset hash
+        self._tables_hash = None  # reset hash
 
     def fetch(self, name: str, namespace: str):
         """Fetch actual KasprApp in kubernetes."""
@@ -398,7 +401,7 @@ class KasprApp(BaseResource):
             env_for("web_port"): str(self.web_port),
             env_for("data_dir"): self.data_dir_path,
             env_for("table_dir"): self.table_dir_path,
-            env_for("definitions_dir"): self.definitions_dir_path
+            env_for("definitions_dir"): self.definitions_dir_path,
         }
         _envs = {**config_envs}
         _envs.update(overrides)
@@ -429,7 +432,7 @@ class KasprApp(BaseResource):
                 )
             )
         return volume_mounts
-    
+
     def prepare_table_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
         for table in self.tables if self.tables else []:
@@ -448,7 +451,7 @@ class KasprApp(BaseResource):
 
     def prepare_webview_mount_path(self, webview: KasprWebView) -> str:
         return f"{self.definitions_dir_path}/{webview.file_name}"
-    
+
     def prepare_table_mount_path(self, table: KasprTable) -> str:
         return f"{self.definitions_dir_path}/{table.file_name}"
 
@@ -462,7 +465,7 @@ class KasprApp(BaseResource):
                 ),
                 *self.prepare_agent_volume_mounts(),
                 *self.prepare_webview_volume_mounts(),
-                *self.prepare_table_volume_mounts()
+                *self.prepare_table_volume_mounts(),
             ]
         )
         return volume_mounts
@@ -499,6 +502,10 @@ class KasprApp(BaseResource):
         volumes.extend(self.prepare_agent_volumes())
         volumes.extend(self.prepare_webview_volumes())
         volumes.extend(self.prepare_table_volumes())
+        # Additional volumes from template pod
+        if self.template_pod.volumes:
+            for volume in self.template_pod.volumes:
+                volumes.append(V1Volume(**volume.dict()))
         return volumes
 
     def prepare_agent_volumes(self) -> List[V1Volume]:
@@ -530,7 +537,7 @@ class KasprApp(BaseResource):
                 )
             )
         return volumes
-    
+
     def prepare_table_volumes(self) -> List[V1Volume]:
         volumes = []
         for table in self.tables if self.tables else []:
@@ -539,9 +546,7 @@ class KasprApp(BaseResource):
                     name=table.volume_mount_name,
                     config_map=V1ConfigMapVolumeSource(
                         name=table.config_map_name,
-                        items=[
-                            V1KeyToPath(key=table.file_name, path=table.file_name)
-                        ],
+                        items=[V1KeyToPath(key=table.file_name, path=table.file_name)],
                     ),
                 )
             )
@@ -560,9 +565,31 @@ class KasprApp(BaseResource):
         )
 
     def prepare_pod_template(self) -> V1PodTemplateSpec:
+        """Build pod template resource."""
+        annotations = self.template_pod.metadata.annotations or {}
+        labels = self.template_pod.metadata.labels or {}
+        labels.update(self.labels.as_dict())
         return V1PodTemplateSpec(
-            metadata=V1ObjectMeta(labels=self.labels.as_dict()),
+            metadata=V1ObjectMeta(labels=labels, annotations=annotations),
             spec=V1PodSpec(containers=[self.kaspr_container], volumes=self.volumes),
+        )
+
+    def prepare_pod_spec(self) -> V1PodSpec:
+        """Build pod spec for kaspr app."""
+        return V1PodSpec(
+            image_pull_secrets=self.template_pod.image_pull_secrets,
+            security_context=self.template_pod.security_context,
+            termination_grace_period_seconds=self.template_pod.termination_grace_period_seconds,
+            affinity=self.template_pod.affinity,
+            tolerations=self.template_pod.tolerations,
+            topology_spread_constraints=self.template_pod.topology_spread_constraints,
+            priority_class_name=self.template_pod.priority_class_name,
+            scheduler_name=self.template_pod.scheduler_name,
+            host_aliases=self.template_pod.host_aliases,
+            enable_service_links=self.template_pod.enable_service_links,
+            tmp_dir_size_limit=self.template_pod.tmp_dir_size_limit,
+            containers=[self.kaspr_container],
+            volumes=self.volumes,
         )
 
     def prepare_statefulset(self) -> V1StatefulSetSpec:
@@ -754,13 +781,22 @@ class KasprApp(BaseResource):
                 "op": "replace",
                 "path": "/metadata/annotations",
                 "value": self.service_account.metadata.annotations,
-            }            
+            },
         ]
         self.patch_service_account(
             self.core_v1_api,
             self.service_account_name,
             self.namespace,
             patch,
+        )
+
+    def patch_template_pod(self):
+        """Update pod template with new labels."""
+        self.patch_stateful_set(
+            self.apps_v1_api,
+            self.stateful_set_name,
+            self.namespace,
+            stateful_set={"spec": {"template": self.pod_template}},
         )
 
     def unite(self):
@@ -776,7 +812,9 @@ class KasprApp(BaseResource):
     def search(self, namespace: str, apps: List[str] = None):
         """Search for KasprApps in kubernetes."""
         label_selector = (
-            ",".join(f"{self.KASPR_APP_NAME_LABEL}={app}" for app in apps) if apps else None
+            ",".join(f"{self.KASPR_APP_NAME_LABEL}={app}" for app in apps)
+            if apps
+            else None
         )
         return self.list_custom_objects(
             self.custom_objects_api,
@@ -786,7 +824,7 @@ class KasprApp(BaseResource):
             plural=self.PLURAL_NAME,
             label_selector=label_selector,
         )
-    
+
     def agents_status(self) -> Dict:
         """Return status of all agents."""
         return [agent.info() for agent in self.agents]
@@ -794,7 +832,7 @@ class KasprApp(BaseResource):
     def webviews_status(self) -> Dict:
         """Return status of all webviews."""
         return [webview.info() for webview in self.webviews]
-    
+
     def tables_status(self) -> Dict:
         """Return status of all tables."""
         return [table.info() for table in self.tables]
@@ -948,7 +986,7 @@ class KasprApp(BaseResource):
         if self._table_pod_volumes is None:
             self._table_pod_volumes = self.prepare_table_volumes()
         return self._table_pod_volumes
-    
+
     @cached_property
     def agents_hash(self) -> str:
         """Hash of all agents."""
@@ -970,7 +1008,7 @@ class KasprApp(BaseResource):
                 else None
             )
         return self._webviews_hash
-    
+
     @cached_property
     def tables_hash(self) -> str:
         """Hash of all tables."""
