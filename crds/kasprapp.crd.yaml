@@ -189,7 +189,82 @@ spec:
                                 type: string
                               type: object
                               description: Annotations added to the Kubernetes resource.
-                          description: Metadata applied to the resource.                        
+                          description: Metadata applied to the resource.
+                        imagePullSecrets:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                          description: List of references to secrets in the same namespace to use for pulling any of the images used by this Pod.
+                        securityContext:
+                          type: object
+                          properties:
+                            appArmorProfile:
+                              type: object
+                              properties:
+                                localhostProfile:
+                                  type: string
+                                type:
+                                  type: string
+                            fsGroup:
+                              type: integer
+                            fsGroupChangePolicy:
+                              type: string
+                            runAsGroup:
+                              type: integer
+                            runAsNonRoot:
+                              type: boolean
+                            runAsUser:
+                              type: integer
+                            seLinuxOptions:
+                              type: object
+                              properties:
+                                level:
+                                  type: string
+                                role:
+                                  type: string
+                                type:
+                                  type: string
+                                user:
+                                  type: string
+                            seccompProfile:
+                              type: object
+                              properties:
+                                localhostProfile:
+                                  type: string
+                                type:
+                                  type: string
+                            supplementalGroups:
+                              type: array
+                              items:
+                                type: integer
+                            sysctls:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  name:
+                                    type: string
+                                  value:
+                                    type: string
+                            windowsOptions:
+                              type: object
+                              properties:
+                                gmsaCredentialSpec:
+                                  type: string
+                                gmsaCredentialSpecName:
+                                  type: string
+                                hostProcess:
+                                  type: boolean
+                                runAsUserName:
+                                  type: string
+                          description: Configures pod-level security attributes and common container settings.
+                        terminationGracePeriodSeconds:
+                          type: integer
+                          minimum: 0
+                          description: The grace period is the duration in seconds after the processes running in the pod are sent a termination signal, and the time when the processes are forcibly halted with a kill signal. Set this value to longer than the expected cleanup time for your process. Value must be a non-negative integer. A zero value indicates delete immediately. You might need to increase the grace period for very large Kafka clusters, so that the Kafka brokers have enough time to transfer their work to another broker before they are terminated. Defaults to 30 seconds.
                         affinity:
                           type: object
                           properties:
@@ -598,10 +673,6 @@ spec:
                         enableServiceLinks:
                           type: boolean
                           description: Indicates whether information about services should be injected into Pod's environment variables.
-                        tmpDirSizeLimit:
-                          type: string
-                          pattern: "^([0-9.]+)([eEinumkKMGTP]*[-+]?[0-9]*)$"
-                          description: "Defines the total amount of pod memory allocated for the temporary `EmptyDir` volume `/tmp`. Specify the allocation in memory units, for example, `100Mi` for 100 mebibytes. Default value is `5Mi`. The `/tmp` volume is backed by pod memory, not disk storage, so avoid setting a high value as it consumes pod memory resources."
                         volumes:
                           type: array
                           items:

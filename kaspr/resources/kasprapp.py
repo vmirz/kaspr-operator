@@ -116,6 +116,7 @@ class KasprApp(BaseResource):
     _stateful_set: V1StatefulSet = None
     _kaspr_container: V1Container = None
     _pod_template: V1PodTemplateSpec = None
+    _pod_spec: V1PodSpec = None
     _agent_pod_volumes: List[V1Volume] = None
     _webview_pod_volumes: List[V1Volume] = None
     _table_pod_volumes: List[V1Volume] = None
@@ -571,7 +572,7 @@ class KasprApp(BaseResource):
         labels.update(self.labels.as_dict())
         return V1PodTemplateSpec(
             metadata=V1ObjectMeta(labels=labels, annotations=annotations),
-            spec=V1PodSpec(containers=[self.kaspr_container], volumes=self.volumes),
+            spec=self.pod_spec,
         )
 
     def prepare_pod_spec(self) -> V1PodSpec:
@@ -587,7 +588,6 @@ class KasprApp(BaseResource):
             scheduler_name=self.template_pod.scheduler_name,
             host_aliases=self.template_pod.host_aliases,
             enable_service_links=self.template_pod.enable_service_links,
-            tmp_dir_size_limit=self.template_pod.tmp_dir_size_limit,
             containers=[self.kaspr_container],
             volumes=self.volumes,
         )
@@ -962,6 +962,12 @@ class KasprApp(BaseResource):
         if self._pod_template is None:
             self._pod_template = self.prepare_pod_template()
         return self._pod_template
+    
+    @cached_property
+    def pod_spec(self) -> V1PodSpec:
+        if self._pod_spec is None:
+            self._pod_spec = self.prepare_pod_spec()
+        return self._pod_spec
 
     @cached_property
     def stateful_set(self) -> V1StatefulSet:

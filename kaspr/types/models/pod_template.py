@@ -11,7 +11,7 @@ class AdditionalVolume(BaseModel):
     csi: Optional[Dict[str, str]]
 
 class PodTemplate(ResourceTemplate):
-    image_pull_secrets: Optional[Dict[str, str]]
+    image_pull_secrets: Optional[List[Dict[str, str]]]
     security_context: Optional[Dict[str, str]]
     termination_grace_period_seconds: Optional[int]
     affinity: Optional[Dict[str, str]]
@@ -21,5 +21,4 @@ class PodTemplate(ResourceTemplate):
     scheduler_name: Optional[str]
     host_aliases: Optional[List[Dict[str, str]]]
     enable_service_links: Optional[bool]
-    tmp_dir_size_limit: Optional[str]
     volumes: Optional[List[AdditionalVolume]]

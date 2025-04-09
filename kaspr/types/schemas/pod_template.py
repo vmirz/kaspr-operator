@@ -59,15 +59,17 @@ class PodTemplateSchema(ResourceTemplateSchema):
         values=fields.String(),
         data_key="securityContext",
         allow_none=True,
+        load_default=None
     )
     termination_grace_period_seconds = fields.Int(
-        data_key="terminationGracePeriodSeconds", allow_none=True
+        data_key="terminationGracePeriodSeconds", allow_none=True, load_default=None
     )
     affinity = fields.Dict(
         keys=fields.String(),
         values=fields.String(),
         data_key="affinity",
         allow_none=True,
+        load_default=None
     )
     tolerations = fields.List(
         fields.Dict(keys=fields.String(), values=fields.String(), allow_none=False),
@@ -79,7 +81,7 @@ class PodTemplateSchema(ResourceTemplateSchema):
         fields.Dict(keys=fields.String(), values=fields.String(), allow_none=False),
         data_key="topologySpreadConstraints",
         allow_none=True,
-        load_default=[],
+        load_default=list,
     )
     priority_class_name = fields.Str(
         data_key="priorityClassName",
@@ -99,11 +101,6 @@ class PodTemplateSchema(ResourceTemplateSchema):
     )
     enable_service_links = fields.Bool(
         data_key="enableServiceLinks",
-        allow_none=True,
-        load_default=None,
-    )
-    tmp_dir_size_limit = fields.Str(
-        data_key="tmpDirSizeLimit",
         allow_none=True,
         load_default=None,
     )
