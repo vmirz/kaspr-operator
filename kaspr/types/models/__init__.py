@@ -35,6 +35,7 @@ from .kasprtable_spec import (
     KasprTableSpec
 )
 from .tableref import TableRefSpec
+from .pod_template import PodTemplate, AdditionalVolume
 
 __all__ = [
     "MetadataTemplate",
@@ -71,5 +72,7 @@ __all__ = [
     "KasprTableWindowHoppingSpec",
     "KasprTableWindowSpec",
     "KasprTableSpec",
-    "TableRefSpec"
+    "TableRefSpec",
+    "PodTemplate",
+    "AdditionalVolume",
 ]
