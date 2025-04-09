@@ -7,10 +7,12 @@ from kaspr.types.models.storage import KasprAppStorage
 from kaspr.types.models.resource_requirements import ResourceRequirements
 from kaspr.types.models.probe import Probe
 from kaspr.types.models.resource_template import ResourceTemplate
+from kaspr.types.models.pod_template import PodTemplate
 
 class KasprAppTemplate(BaseModel):
     """KasprApp template"""
     service_account: Optional[ResourceTemplate]
+    pod: Optional[PodTemplate]
 
 class KasprAppSpec(BaseModel):
     """KasprApp CRD spec"""
