@@ -35,6 +35,6 @@ class TableRefSpecSchema(BaseSchema):
     param_name = fields.String(data_key="paramName", required=True, validate=valid_param_name)
 
     @post_dump
-    def camelto_to_snake_dump(self, data, **kwargs):
+    def camel_to_snake_dump(self, data, **kwargs):
         """Convert data keys from camelCase to snake_case."""
         return camel_to_snake(data)    

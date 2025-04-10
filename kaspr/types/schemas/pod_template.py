@@ -118,6 +118,6 @@ class PodTemplateSchema(ResourceTemplateSchema):
         return data
     
     @post_dump
-    def camelto_to_snake_dump(self, data, **kwargs):
+    def camel_to_snake_dump(self, data, **kwargs):
         """Convert data keys from camelCase to snake_case."""
         return camel_to_snake(data)    
