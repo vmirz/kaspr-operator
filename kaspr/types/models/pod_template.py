@@ -5,8 +5,8 @@ from kaspr.types.models.resource_template import ResourceTemplate
 class AdditionalVolume(BaseModel):
     name: str
     secret: Optional[Dict[str, str]]
-    config_map = Optional[Dict[str, str]]
-    empty_dir = Optional[Dict[str, str]]
+    config_map: Optional[Dict[str, str]]
+    empty_dir: Optional[Dict[str, str]]
     persistent_volume_claim: Optional[Dict[str, str]]
     csi: Optional[Dict[str, str]]
 
