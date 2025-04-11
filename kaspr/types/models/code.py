@@ -3,3 +3,4 @@ from kaspr.types.base import BaseModel
 
 class CodeSpec(BaseModel):
     python: Optional[str]
+    entrypoint: Optional[str]

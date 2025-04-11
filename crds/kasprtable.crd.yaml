@@ -37,6 +37,9 @@ spec:
                   type: object
                   description: Initializing data type used for default values when a key is not found.
                   properties:
+                    entrypoint:
+                      type: string
+                      description: Name of the function to run.                  
                     python:
                       type: string
                       description: Python code to run.
@@ -94,6 +97,9 @@ spec:
                       type: object 
                       description: Function to extract a timestamp from the current event to use for window assignment. Applicable only when "relativeTo" is "custom".
                       properties:
+                        entrypoint:
+                          type: string
+                          description: Name of the function to run.                         
                         python:
                           type: string
                           description: Python code to run.
