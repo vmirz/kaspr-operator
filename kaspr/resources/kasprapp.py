@@ -18,6 +18,7 @@ from kaspr.types.models.resource_requirements import ResourceRequirements
 from kaspr.types.models.probe import Probe
 from kaspr.types.models.resource_template import ResourceTemplate
 from kaspr.types.models.pod_template import PodTemplate
+from kaspr.types.models.service_template import ServiceTemplate
 from kubernetes.client import (
     AppsV1Api,
     CoreV1Api,
@@ -132,6 +133,8 @@ class KasprApp(BaseResource):
     # TODO: Templates allow customizing k8s behavior
     template_service_account: ResourceTemplate
     template_pod: PodTemplate
+    template_service: ServiceTemplate
+
     # PodDisruptionBudgetTemplate templatePodDisruptionBudget;
     # ResourceTemplate templateInitClusterRoleBinding;
     # DeploymentTemplate templateDeployment;
@@ -191,6 +194,7 @@ class KasprApp(BaseResource):
         app.storage = spec.storage
         app.template_service_account = spec.template.service_account
         app.template_pod = spec.template.pod
+        app.template_service = spec.template.service
         return app
 
     @classmethod
@@ -255,11 +259,15 @@ class KasprApp(BaseResource):
 
     def prepare_service(self) -> V1Service:
         """Build service resource."""
-        labels = self.labels.as_dict()
+        annotations = self.template_service.metadata.annotations or {}
+        labels = self.template_service.metadata.labels or {}
+        labels.update(self.labels.as_dict())
         service = V1Service(
             api_version="v1",
             kind="Service",
-            metadata=V1ObjectMeta(name=self.service_name, labels=labels),
+            metadata=V1ObjectMeta(
+                name=self.service_name, labels=labels, annotations=annotations
+            ),
             spec=V1ServiceSpec(
                 selector=self.labels.kasper_label_selectors().as_dict(),
                 type="ClusterIP",
@@ -791,12 +799,40 @@ class KasprApp(BaseResource):
         )
 
     def patch_template_pod(self):
-        """Update pod template with new labels."""
+        """Update pod template."""
+        patch = [
+            {
+                "op": "replace",
+                "path": "/spec/template",
+                "value": self.pod_template,
+            },
+        ]        
         self.patch_stateful_set(
             self.apps_v1_api,
             self.stateful_set_name,
             self.namespace,
-            stateful_set={"spec": {"template": self.pod_template}},
+            stateful_set=patch
+        )
+
+    def patch_template_service(self):
+        """Update pod template with new labels."""
+        patch = [
+            {
+                "op": "replace",
+                "path": "/metadata/labels",
+                "value": self.service.metadata.labels,
+            },
+            {
+                "op": "replace",
+                "path": "/metadata/annotations",
+                "value": self.service.metadata.annotations,
+            },
+        ]
+        self.patch_service(
+            self.core_v1_api,
+            self.service_name,
+            self.namespace,
+            patch,
         )
 
     def unite(self):
@@ -962,7 +998,7 @@ class KasprApp(BaseResource):
         if self._pod_template is None:
             self._pod_template = self.prepare_pod_template()
         return self._pod_template
-    
+
     @cached_property
     def pod_spec(self) -> V1PodSpec:
         if self._pod_spec is None:
