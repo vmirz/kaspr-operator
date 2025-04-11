@@ -63,6 +63,9 @@ spec:
                           type: object
                           description: Python code to transform response on success.
                           properties:
+                            entrypoint:
+                              type: string
+                              description: Name of the function to run.                             
                             python:
                               type: string
                               description: Python code to run.
@@ -72,6 +75,9 @@ spec:
                           type: object
                           description: Python code to transform response on error.
                           properties:
+                            entrypoint:
+                              type: string
+                              description: Name of the function to run.                             
                             python:
                               type: string
                               description: Python code to run.
@@ -88,6 +94,9 @@ spec:
                           type: object
                           description: Python code to determine status code on success.
                           properties:
+                            entrypoint:
+                              type: string
+                              description: Name of the function to run.                     
                             python:
                               type: string
                               description: Python code to run.
@@ -97,6 +106,9 @@ spec:
                           type: object
                           description: Python code to determine status code on error.
                           properties:
+                            entrypoint:
+                              type: string
+                              description: Name of the function to run.                             
                             python:
                               type: string
                               description: Python code to run.
@@ -113,6 +125,9 @@ spec:
                           type: object
                           description: Python code to determine headers on success.
                           properties:
+                            entrypoint:
+                              type: string
+                              description: Name of the function to run.                             
                             python:
                               type: string
                               description: Python code to run.
@@ -122,6 +137,9 @@ spec:
                           type: object
                           description: Python code to determine headers on error.
                           properties:
+                            entrypoint:
+                              type: string
+                              description: Name of the function to run.                             
                             python:
                               type: string
                               description: Python code to run.
@@ -143,6 +161,9 @@ spec:
                       description: Initialization code to run once per webview instance. It's scope is available to all operations.
                       type: object
                       properties:
+                        entrypoint:
+                          type: string
+                          description: Name of the function to run.                         
                         python:
                           type: string
                           description: Python code to run.
@@ -174,6 +195,9 @@ spec:
                           map:
                             type: object
                             properties:
+                              entrypoint:
+                                type: string
+                                description: Name of the function to run.                               
                               python:
                                 type: string
                                 description: Python code to run.
@@ -201,6 +225,9 @@ spec:
                                 type: object
                                 description: Python code to determine the key of the message
                                 properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.                                   
                                   python:
                                     type: string
                                     description: Python code to run.
@@ -210,6 +237,9 @@ spec:
                                 type: object
                                 description: Python code to determine the value of the message
                                 properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.                                   
                                   python:
                                     type: string
                                     description: Python code to run.
@@ -219,6 +249,9 @@ spec:
                                 type: object
                                 description: Python code to determine the topic partition of the message
                                 properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.
                                   python:
                                     type: string
                                     description: Python code to run.
@@ -228,6 +261,9 @@ spec:
                                 type: object
                                 description: Python code to determine the headers of the message
                                 properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.
                                   python:
                                     type: string
                                     description: Python code to run.
@@ -237,6 +273,9 @@ spec:
                                 type: object
                                 description: Python code to determine if the message should be sent
                                 properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.
                                   python:
                                     type: string
                                     description: Python code to run.
