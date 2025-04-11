@@ -28,6 +28,7 @@ from .kasprtable_spec import (
 )
 from .tableref import TableRefSpecSchema
 from .pod_template import PodTemplateSchema, AdditionalVolumeSchema
+from .service_template import ServiceTemplateSchema
 
 __all__ = [
     "KasprAgentSpecSchema",
@@ -56,4 +57,5 @@ __all__ = [
     "TableRefSpecSchema",
     "PodTemplateSchema",
     "AdditionalVolumeSchema",
+    "ServiceTemplateSchema",
 ]

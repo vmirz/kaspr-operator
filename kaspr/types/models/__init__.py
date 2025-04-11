@@ -36,6 +36,7 @@ from .kasprtable_spec import (
 )
 from .tableref import TableRefSpec
 from .pod_template import PodTemplate, AdditionalVolume
+from .service_template import ServiceTemplate
 
 __all__ = [
     "MetadataTemplate",
@@ -75,4 +76,5 @@ __all__ = [
     "TableRefSpec",
     "PodTemplate",
     "AdditionalVolume",
+    "ServiceTemplate"
 ]

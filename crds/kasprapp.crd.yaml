@@ -771,6 +771,23 @@ spec:
                                 persistentVolumeClaim: {}
                                 csi: {}
                           description: Additional volumes that can be mounted to the pod.
+                    service:
+                      type: object
+                      properties:
+                        metadata:
+                          type: object
+                          properties:
+                            labels:
+                              additionalProperties:
+                                type: string
+                              type: object
+                              description: Labels added to the Kubernetes resource.
+                            annotations:
+                              additionalProperties:
+                                type: string
+                              type: object
+                              description: Annotations added to the Kubernetes resource.
+                          description: Metadata applied to the resource.
               required:
                 - bootstrapServers
                 - authentication

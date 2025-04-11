@@ -109,6 +109,14 @@ def on_template_pod_updated(
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
     app.patch_template_pod()
 
+@kopf.on.update(kind=APP_KIND, field="spec.template.service")
+def on_template_service_updated(
+    old, new, diff, spec, name, status, namespace, logger, **kwargs
+):
+    spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
+    app.patch_template_service()    
+
 @kopf.on.update(kind=APP_KIND, field="spec.config.topic_partitions")
 def immutable_config_updated_00(**kwargs):
     raise kopf.PermanentError(
