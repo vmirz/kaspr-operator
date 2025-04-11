@@ -88,6 +88,9 @@ spec:
                           keySelector:
                             type: object
                             properties:
+                              entrypoint:
+                                type: string
+                                description: Name of the function to run.                            
                               python:
                                 type: string
                                 description: Python code to run.
@@ -96,6 +99,9 @@ spec:
                           valueSelector:
                             type: object
                             properties:
+                              entrypoint:
+                                type: string
+                                description: Name of the function to run.                               
                               python:
                                 type: string
                                 description: Python code to run.
@@ -104,6 +110,9 @@ spec:
                           partitionSelector:
                             type: object
                             properties:
+                              entrypoint:
+                                type: string
+                                description: Name of the function to run.                               
                               python:
                                 type: string
                                 description: Python code to run.
@@ -112,6 +121,9 @@ spec:
                           headersSelector:
                             type: object
                             properties:
+                              entrypoint:
+                                type: string
+                                description: Name of the function to run.                            
                               python:
                                 type: string
                                 description: Python code to run.
@@ -120,6 +132,9 @@ spec:
                           predicate:
                             type: object
                             properties:
+                              entrypoint:
+                                type: string
+                                description: Name of the function to run.                               
                               python:
                                 type: string
                                 description: Python code to run.
@@ -140,6 +155,9 @@ spec:
                       description: Initialization code to run.
                       type: object
                       properties:
+                        entrypoint:
+                          type: string
+                          description: Name of the function to run.                         
                         python:
                           type: string
                           description: Python code to run.
@@ -167,10 +185,13 @@ spec:
                                   description: The name of the function parameter to use for the table.
                               required:
                                 - name
-                                - paramName                            
+                                - paramName
                           map:
                             type: object
                             properties:
+                              entrypoint:
+                                type: string
+                                description: Name of the function to run.                               
                               python:
                                 type: string
                                 description: Python code to run.
@@ -179,6 +200,9 @@ spec:
                           filter:
                             type: object
                             properties:
+                              entrypoint:
+                                type: string
+                                description: Name of the function to run.                               
                               python:
                                 type: string
                                 description: Python code to run.

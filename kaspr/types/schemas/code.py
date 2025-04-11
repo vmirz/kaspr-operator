@@ -7,3 +7,4 @@ class CodeSpecSchema(BaseSchema):
     __model__ = CodeSpec
 
     python = fields.Str(data_key="python", required=False, load_default=None)
+    entrypoint = fields.Str(data_key="entrypoint", required=False, load_default=None)
