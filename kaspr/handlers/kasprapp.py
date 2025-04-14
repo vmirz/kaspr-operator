@@ -101,6 +101,7 @@ def on_template_service_account_updated(
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
     app.patch_template_service_account()
 
+
 @kopf.on.update(kind=APP_KIND, field="spec.template.pod")
 def on_template_pod_updated(
     old, new, diff, spec, name, status, namespace, logger, **kwargs
@@ -109,13 +110,15 @@ def on_template_pod_updated(
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
     app.patch_template_pod()
 
+
 @kopf.on.update(kind=APP_KIND, field="spec.template.service")
 def on_template_service_updated(
     old, new, diff, spec, name, status, namespace, logger, **kwargs
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
-    app.patch_template_service()    
+    app.patch_template_service()
+
 
 @kopf.on.update(kind=APP_KIND, field="spec.config.topic_partitions")
 def immutable_config_updated_00(**kwargs):
@@ -383,9 +386,10 @@ async def monitor_related_resources(
     except asyncio.CancelledError:
         print("We are done. Bye.")
 
-@kopf.timer(APP_KIND, interval=1)
+
+@kopf.timer(APP_KIND, initial_delay=5.0, idle=30.0)
 async def reconcile(name, spec, namespace, **kwargs):
     """Reconcile KasprApp resources."""
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
-    app.reconcile()
+    app.synchronize()

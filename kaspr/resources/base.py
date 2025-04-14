@@ -1,8 +1,6 @@
 import kaspr
-import json
-import hashlib
 import mmh3
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Union
 from kaspr.utils.objects import cached_property
 from kaspr.utils.helpers import canonicalize_dict
 from kaspr.common.models.labels import Labels
@@ -94,6 +92,10 @@ class BaseResource:
             raise ValueError(f"Hash of {type(data)} is not supporetd.")        
         # Compute the hash by encoding the string to bytes.
         return str(mmh3.hash128(_data))
+    
+    def prepare_hash_annotation(self, hash: Union[str, int]) -> Dict[str, str]:
+        """Prepare hash annotation for k8s resources."""
+        return {"kaspr.io/resource-hash": str(hash)}    
 
     def fetch_service(
         self, core_v1_api: CoreV1Api, name: str, namespace: str
@@ -244,6 +246,16 @@ class BaseResource:
     ):
         apps_v1_api.delete_namespaced_stateful_set(name, namespace, body=delete_options)
 
+    def fetch_secret(
+        self, core_v1_api: CoreV1Api, name: str, namespace: str
+    ) -> V1Service:
+        return core_v1_api.read_namespaced_secret(name=name, namespace=namespace)
+    
+    def fetch_config_map(
+        self, core_v1_api: CoreV1Api, name: str, namespace: str
+    ) -> V1ConfigMap:
+        return core_v1_api.read_namespaced_config_map(name=name, namespace=namespace)
+
     def create_config_map(
         self, core_v1_api: CoreV1Api, namespace: str, config_map: V1ConfigMap
     ):
@@ -278,6 +290,47 @@ class BaseResource:
             name=name,
             namespace=namespace,
             body=config_map,
+        )
+
+    def create_persistent_volume_claim(
+        self,
+        core_v1_api: CoreV1Api,
+        namespace: str,
+        pvc: V1PersistentVolumeClaim,
+    ):
+        try:
+            core_v1_api.create_namespaced_persistent_volume_claim(
+                namespace=namespace, body=pvc
+            )
+        except ApiException as ex:
+            if already_exists_error(ex):
+                self.replace_persistent_volume_claim(
+                    core_v1_api,
+                    name=pvc.metadata.name,
+                    namespace=namespace,
+                    pvc=pvc,
+                )
+            else:
+                raise
+        
+    def fetch_persistent_volume_claim(
+        self, core_v1_api: CoreV1Api, name: str, namespace: str
+    ) -> V1PersistentVolumeClaim:
+        return core_v1_api.read_namespaced_persistent_volume_claim(
+            name=name, namespace=namespace
+        )
+    
+    def replace_persistent_volume_claim(
+        self,
+        core_v1_api: CoreV1Api,
+        name: str,
+        namespace: str,
+        pvc: V1PersistentVolumeClaim,
+    ):
+        core_v1_api.replace_namespaced_persistent_volume_claim(
+            name=name,
+            namespace=namespace,
+            body=pvc,
         )
 
     def list_persistent_volume_claims(

@@ -134,6 +134,14 @@ async def monitor_table(
         print("We are done. Bye.")
 
 
+@kopf.timer(KIND, initial_delay=5.0, idle=30.0)
+async def reconcile(name, spec, namespace, labels, **kwargs):
+    """Full sync."""
+    spec_model: KasprTableSpec = KasprTableSpecSchema().load(spec)
+    table = KasprTable.from_spec(name, KIND, namespace, spec_model, dict(labels))
+    table.synchronize()
+
+
 # @kopf.on.validate(kind=KIND)
 # def includes_valid_app(spec, **_):
 #     raise kopf.AdmissionError("Missing required label `kaspr.io/app`", code=429)
