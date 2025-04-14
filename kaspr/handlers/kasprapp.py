@@ -203,7 +203,7 @@ async def patch_resource(name, patch, **kwargs):
 @kopf.daemon(
     kind=APP_KIND, cancellation_backoff=2.0, cancellation_timeout=5.0, initial_delay=5.0
 )
-async def monitor_app(
+async def monitor_related_resources(
     stopped,
     name,
     body,
@@ -382,3 +382,10 @@ async def monitor_app(
 
     except asyncio.CancelledError:
         print("We are done. Bye.")
+
+@kopf.timer(APP_KIND, interval=1)
+async def reconcile(name, spec, namespace, **kwargs):
+    """Reconcile KasprApp resources."""
+    spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
+    app.reconcile()

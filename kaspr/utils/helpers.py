@@ -1,6 +1,7 @@
 import re
 import math
 import inspect
+import json
 from functools import wraps
 from datetime import datetime, timezone
 from typing import Optional, Iterator, List, Mapping, OrderedDict
@@ -204,3 +205,13 @@ def camel_to_snake(data):
         convert_key(key): camel_to_snake(value) if isinstance(value, dict) else value
         for key, value in data.items()
     }
+
+def canonicalize_dict(data):
+    """
+    Returns a canonical JSON representation of a dictionary.
+    
+    The JSON string uses sorted keys and compact separators, which ensures that
+    the representation of the dictionary remains consistent even when key order varies.
+    This function works recursively for nested dictionaries and handles lists too.
+    """
+    return json.dumps(data, sort_keys=True, separators=(',', ':'))

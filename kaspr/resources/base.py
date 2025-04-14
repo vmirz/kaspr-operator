@@ -1,8 +1,10 @@
 import kaspr
 import json
 import hashlib
-from typing import Any, List
+import mmh3
+from typing import Any, List, Dict
 from kaspr.utils.objects import cached_property
+from kaspr.utils.helpers import canonicalize_dict
 from kaspr.common.models.labels import Labels
 from kaspr.common.models.version import Version
 from kaspr.utils.errors import already_exists_error
@@ -81,16 +83,17 @@ class BaseResource:
 
     def generate_service_account(self) -> V1ServiceAccount:
         raise NotImplementedError()
-
+    
     def compute_hash(self, data: Any) -> str:
-        """Compute a hash of the config map data."""
+        """Compute a murmur3 hash."""
         if isinstance(data, dict):
-            hash_input = json.dumps(data, sort_keys=True).encode()
+            _data = canonicalize_dict(data)
         elif isinstance(data, str):
-            hash_input = data.encode()
+            _data = data.encode()
         else:
-            raise ValueError(f"Hash of {type(data)} is not supporetd.")
-        return hashlib.sha256(hash_input).hexdigest()
+            raise ValueError(f"Hash of {type(data)} is not supporetd.")        
+        # Compute the hash by encoding the string to bytes.
+        return str(mmh3.hash128(_data))
 
     def fetch_service(
         self, core_v1_api: CoreV1Api, name: str, namespace: str

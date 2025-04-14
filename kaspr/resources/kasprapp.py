@@ -1,8 +1,8 @@
 import kopf
 import time
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 from kaspr.utils.objects import cached_property
-from kaspr.types.models.kasprapp_spec import KasprAppSpec, KasprAppTemplate
+from kaspr.types.models.kasprapp_spec import KasprAppSpec
 from kaspr.types.models.storage import KasprAppStorage
 from kaspr.types.models.config import KasprAppConfig
 from kaspr.types.models.tls import ClientTls
@@ -106,6 +106,7 @@ class KasprApp(BaseResource):
     _core_v1_api: CoreV1Api = None
     _custom_objects_api: CustomObjectsApi = None
     _service: V1Service = None
+    _service_hash: str = None
     _service_account: V1ServiceAccount = None
     _persistent_volume_claim: V1PersistentVolumeClaim = None
     _persistent_volume_claim_retention_policy: V1StatefulSetPersistentVolumeClaimRetentionPolicy = None
@@ -207,6 +208,35 @@ class KasprApp(BaseResource):
             component_type=self.COMPONENT_TYPE,
         )
 
+    def reconcile(self) -> "KasprApp":
+        """Reconcile desired state of child resources with actual.
+           Reconciliation process:
+            1. fetch current state of resource
+            2. Does the resource exist?
+                |--> Yes: Does current state hash equal desired state hash?
+                    |--> Yes: Do nothing
+                    |--> No: patch (replace) resource
+                |--> No: create resource        
+        """
+        # self.reconcile_service_account()
+        # self.reconcile_config_map()
+        # self.reconcile_stateful_set()
+        # self.reconcile_persistent_volume_claim()
+        self.reconcile_service()
+        
+
+    def reconcile_service(self):
+        """Check current state of service and create/patch if needed."""
+        service: V1Service = self.fetch_service(
+            self.core_v1_api, self.service_name, self.namespace
+        )
+        if not service:
+            self.create_service(self.core_v1_api, self.namespace, self.service)
+        elif self.prepare_service_hash(service) != self.service_hash:
+            self.replace_service(
+                self.core_v1_api, self.service_name, self.namespace, self.service
+            )
+
     def with_agents(self, agents: List[KasprAgent]):
         """Apply agent resources to the app."""
         self.agents = agents
@@ -281,7 +311,33 @@ class KasprApp(BaseResource):
                 ],
             ),
         )
+        annotations.update(
+            self.prepare_hash_annotation(self.prepare_service_hash(service))
+        )
         return service
+
+    def prepare_service_hash(self, service: V1Service) -> str:
+        """Compute hash for app's service resource."""
+        return self.compute_hash(
+            {
+                "metadata": {
+                    "name": service.metadata.name,
+                    "labels": service.metadata.labels,
+                    "annotations": service.metadata.annotations,
+                },
+                "spec": {
+                    "ports": [
+                        {
+                            "name": port.name,
+                            "protocol": port.protocol,
+                            "port": port.port,
+                            "targetPort": port.target_port,
+                        }
+                        for port in service.spec.ports
+                    ],
+                },
+            }
+        )
 
     def prepare_service_account(self) -> V1ServiceAccount:
         """Build service account resource."""
@@ -619,6 +675,10 @@ class KasprApp(BaseResource):
             ),
         )
 
+    def prepare_hash_annotation(self, hash: Union[str, int]) -> Dict[str, str]:
+        """Prepare hash annotation for k8s resources."""
+        return {"kaspr.io/resource-hash": str(hash)}
+
     def patch_settings(self):
         """Update resources as a result of app settings change."""
         self.patch_config_map(
@@ -806,12 +866,9 @@ class KasprApp(BaseResource):
                 "path": "/spec/template",
                 "value": self.pod_template,
             },
-        ]        
+        ]
         self.patch_stateful_set(
-            self.apps_v1_api,
-            self.stateful_set_name,
-            self.namespace,
-            stateful_set=patch
+            self.apps_v1_api, self.stateful_set_name, self.namespace, stateful_set=patch
         )
 
     def patch_template_service(self):
@@ -920,6 +977,12 @@ class KasprApp(BaseResource):
         if self._service is None:
             self._service = self.prepare_service()
         return self._service
+
+    @cached_property
+    def service_hash(self) -> str:
+        if self._service_hash is None:
+            self._service_hash = self.prepare_service_hash(self.service)
+        return self._service_hash
 
     @cached_property
     def service_account(self) -> V1ServiceAccount:
