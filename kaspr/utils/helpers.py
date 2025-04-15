@@ -1,7 +1,7 @@
 import re
 import math
 import inspect
-import json
+import jsonpickle
 from functools import wraps
 from datetime import datetime, timezone
 from typing import Optional, Iterator, List, Mapping, OrderedDict
@@ -206,6 +206,11 @@ def camel_to_snake(data):
         for key, value in data.items()
     }
 
+def datetime_converter(o):
+    if isinstance(o, datetime):
+        return o.isoformat()  # Convert datetime to ISO 8601 string
+    raise TypeError("Type not serializable")
+
 def canonicalize_dict(data):
     """
     Returns a canonical JSON representation of a dictionary.
@@ -214,4 +219,4 @@ def canonicalize_dict(data):
     the representation of the dictionary remains consistent even when key order varies.
     This function works recursively for nested dictionaries and handles lists too.
     """
-    return json.dumps(data, sort_keys=True, separators=(',', ':'))
+    return jsonpickle.dumps(data, unpicklable=False)

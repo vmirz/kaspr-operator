@@ -301,13 +301,16 @@ class KasprApp(BaseResource):
             self.create_stateful_set(
                 self.apps_v1_api, self.namespace, self.stateful_set
             )
-        elif self.prepare_statefulset_hash(stateful_set) != self.stateful_set_hash:
-            self.replace_stateful_set(
-                self.apps_v1_api,
-                self.stateful_set_name,
-                self.namespace,
-                stateful_set=self.stateful_set,
-            )
+        # TODO: 
+        # hash based approach to detect diff is not working here
+        # simplify the approach and go with field by field comparison instead
+        # elif self.prepare_statefulset_hash(stateful_set) != self.stateful_set_hash:
+        #     self.patch_stateful_set(
+        #         self.apps_v1_api,
+        #         self.stateful_set_name,
+        #         self.namespace,
+        #         stateful_set=self.prepare_statefulset_patch(self.stateful_set),
+        #     )
 
     def sync_auth_credentials(self):
         """Sync credentials secret; We only need to check that password secret exists."""
@@ -319,7 +322,8 @@ class KasprApp(BaseResource):
             )
             if not secret:
                 raise kopf.TemporaryError(
-                    f"Secret `{self.sasl_credentials.password.secret_name}` not found in `{self.namespace}` namespace.")
+                    f"Secret `{self.sasl_credentials.password.secret_name}` not found in `{self.namespace}` namespace."
+                )
 
     def with_agents(self, agents: List[KasprAgent]):
         """Apply agent resources to the app."""
@@ -402,7 +406,7 @@ class KasprApp(BaseResource):
 
     def prepare_service_hash(self, service: V1Service) -> str:
         """Compute hash for app's service resource."""
-        return self.compute_hash(self.service.to_dict())
+        return self.compute_hash(service.to_dict())
 
     def prepare_service_account(self) -> V1ServiceAccount:
         """Build service account resource."""
@@ -429,7 +433,7 @@ class KasprApp(BaseResource):
 
     def prepare_service_account_hash(self, service_account: V1ServiceAccount) -> str:
         """Compute hash for service account resource."""
-        return self.compute_hash(self.service_account.to_dict())
+        return self.compute_hash(service_account.to_dict())
 
     def prepare_settings_config_map(self) -> V1ConfigMap:
         """Build a config map resource."""
@@ -443,12 +447,16 @@ class KasprApp(BaseResource):
             ),
             data=self.prepare_env_dict(),
         )
-        annotations.update(self.prepare_settings_config_map_hash(config_map))
+        annotations.update(
+            self.prepare_hash_annotation(
+                self.prepare_settings_config_map_hash(config_map)
+            )
+        )
         return config_map
 
     def prepare_settings_config_map_hash(self, config_map: V1ConfigMap) -> str:
         """Compute hash for config map resource."""
-        return self.compute_hash(self.settings_config_map.to_dict())
+        return self.compute_hash(config_map.to_dict())
 
     def prepare_persistent_volume_claim(self) -> V1PersistentVolumeClaim:
         """Build a PVC resource for statefulset."""
@@ -465,12 +473,14 @@ class KasprApp(BaseResource):
                 storage_class_name=self.storage.storage_class,
             ),
         )
-        annotations.update(self.prepare_persistent_volume_claim_hash(pvc))
+        annotations.update(
+            self.prepare_hash_annotation(self.prepare_persistent_volume_claim_hash(pvc))
+        )
         return pvc
 
     def prepare_persistent_volume_claim_hash(self, pvc: V1PersistentVolumeClaim) -> str:
         """Compute hash for PVC resource."""
-        return self.compute_hash(self.persistent_volume_claim.to_dict())
+        return self.compute_hash(pvc.to_dict())
 
     def prepare_persistent_volume_claim_retention_policy(self):
         return V1StatefulSetPersistentVolumeClaimRetentionPolicy(
@@ -775,7 +785,79 @@ class KasprApp(BaseResource):
 
     def prepare_statefulset_hash(self, stateful_set: V1StatefulSet) -> str:
         """Compute hash for stateful set resource."""
-        return self.compute_hash(self.stateful_set.to_dict())
+        return self.compute_hash(stateful_set.to_dict())
+
+    def prepare_statefulset_patch(self, stateful_set: V1StatefulSet) -> Dict:
+        """Prepare patch for stateful set resource.
+        A statefulset can only have certain fields updated via patch.
+        This method should be used to prepare the patch.
+        """
+        patch = []
+
+        if stateful_set.metadata.labels:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/metadata/labels",
+                    "value": stateful_set.metadata.labels,
+                }
+            )
+
+        if stateful_set.metadata.annotations:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/metadata/annotations",
+                    "value": stateful_set.metadata.annotations,
+                }
+            )
+
+        if stateful_set.spec.replicas is not None:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/replicas",
+                    "value": stateful_set.spec.replicas,
+                }
+            )
+
+        if stateful_set.spec.template:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/template",
+                    "value": stateful_set.spec.template,
+                }
+            )
+
+        if stateful_set.spec.update_strategy:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/updateStrategy",
+                    "value": stateful_set.spec.update_strategy,
+                }
+            )
+
+        if stateful_set.spec.min_ready_seconds is not None:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/minReadySeconds",
+                    "value": stateful_set.spec.min_ready_seconds,
+                }
+            )
+
+        if stateful_set.spec.persistent_volume_claim_retention_policy:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/persistentVolumeClaimRetentionPolicy",
+                    "value": stateful_set.spec.persistent_volume_claim_retention_policy,
+                }
+            )
+
+        return patch
 
     def patch_settings(self):
         """Update resources as a result of app settings change."""
@@ -795,14 +877,10 @@ class KasprApp(BaseResource):
     def create(self):
         """Create KMS resources."""
         self.unite()
-        self.create_service_account(
-            self.core_v1_api, self.namespace, self.service_account
-        )
-        self.create_config_map(
-            self.core_v1_api, self.namespace, self.settings_config_map
-        )
-        self.create_service(self.core_v1_api, self.namespace, self.service)
-        self.create_stateful_set(self.apps_v1_api, self.namespace, self.stateful_set)
+        self.sync_service_account()
+        self.sync_config_map()
+        self.sync_service()
+        self.sync_stateful_set()
 
     def patch_replicas(self):
         self.patch_stateful_set(
@@ -912,29 +990,8 @@ class KasprApp(BaseResource):
             )
 
     def patch_volume_mounted_resources(self):
-        patch = [
-            {
-                "op": "replace",
-                "path": "/spec/template/spec/containers/0/volumeMounts",
-                "value": self.volume_mounts,
-            },
-            {
-                "op": "replace",
-                "path": "/spec/template/spec/volumes",
-                "value": self.volumes,
-            },
-            {
-                "op": "replace",
-                "path": "/spec/template/spec/containers/0/env",
-                "value": self.env_vars,
-            },
-        ]
-        self.patch_stateful_set(
-            self.apps_v1_api,
-            self.stateful_set_name,
-            self.namespace,
-            stateful_set=patch,
-        )
+        """Update resources as a result of volume mounted resources change."""
+        self.sync_stateful_set()
 
     def patch_template_service_account(self):
         patch = [
@@ -958,16 +1015,7 @@ class KasprApp(BaseResource):
 
     def patch_template_pod(self):
         """Update pod template."""
-        patch = [
-            {
-                "op": "replace",
-                "path": "/spec/template",
-                "value": self.pod_template,
-            },
-        ]
-        self.patch_stateful_set(
-            self.apps_v1_api, self.stateful_set_name, self.namespace, stateful_set=patch
-        )
+        self.sync_stateful_set()
 
     def patch_template_service(self):
         """Update pod template with new labels."""

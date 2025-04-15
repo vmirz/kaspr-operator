@@ -191,7 +191,12 @@ class BaseResource:
     def fetch_stateful_set(
         self, apps_v1_api: AppsV1Api, name: str, namespace: str
     ) -> V1StatefulSet:
-        return apps_v1_api.read_namespaced_stateful_set(name=name, namespace=namespace)
+        try:
+            return apps_v1_api.read_namespaced_stateful_set(name=name, namespace=namespace)
+        except ApiException as ex:
+            if ex.status == 404:
+                return None
+            raise
 
     def create_stateful_set(
         self,
@@ -206,7 +211,7 @@ class BaseResource:
             )
         except ApiException as ex:
             if already_exists_error(ex):
-                self.patch_stateful_set(
+                self.replace_stateful_set(
                     apps_v1_api,
                     name=stateful_set.metadata.name,
                     namespace=namespace,
