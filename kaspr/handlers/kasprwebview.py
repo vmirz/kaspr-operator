@@ -133,13 +133,19 @@ async def monitor_webview(
     except asyncio.CancelledError:
         print("We are done. Bye.")
 
-
-@kopf.timer(KIND, initial_delay=5.0, idle=30.0)
-async def reconcile(name, spec, namespace, labels, **kwargs):
+@kopf.timer(KIND, initial_delay=5.0, interval=60.0)
+async def reconcile(name, spec, namespace, labels, logger: logging.Logger, **kwargs):
     """Full sync."""
     spec_model: KasprWebViewSpec = KasprWebViewSpecSchema().load(spec)
     webview = KasprWebView.from_spec(name, KIND, namespace, spec_model, dict(labels))
-    webview.synchronize()
+    try:
+        logger.debug(f"Reconciling {KIND}/{name} in {namespace} namespace.")
+        webview.synchronize()
+        logger.debug(f"Reconciled {KIND}/{name} in {namespace} namespace.")
+    except Exception as e:
+        logger.error(f"Unexpected error during reconcilation: {e}")
+        logger.exception(e)
+        raise e
 
 
 # @kopf.on.validate(kind=KIND)

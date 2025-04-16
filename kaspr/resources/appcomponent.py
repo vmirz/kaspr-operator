@@ -63,7 +63,7 @@ class BaseAppComponent(BaseResource):
             component_name=component_name,
             labels=_labels,
         )
-    
+
     def synchronize(self):
         """Compare current state with desired state for all child resources and create/patch as needed."""
         self.sync_config_map()
@@ -75,10 +75,16 @@ class BaseAppComponent(BaseResource):
         )
         if not config_map:
             self.create_config_map(self.core_v1_api, self.namespace, self.config_map)
-        elif self.prepare_config_map_hash(config_map) != self.hash:
-            self.replace_config_map(
-                self.core_v1_api, self.namespace, self.config_map_name, self.config_map
-            )    
+        else:
+            actual = self.prepare_config_map_watch_fields(config_map)
+            desired = self.prepare_config_map_watch_fields(self.config_map)
+            if self.compute_hash(actual) != self.compute_hash(desired):
+                self.patch_config_map(
+                    self.core_v1_api,
+                    self.config_map_name,
+                    self.namespace,
+                    config_map=self.prepare_config_map_patch(self.config_map),
+                )
 
     def fetch(self, name: str, namespace: str):
         """Fetch KasprAgent from kubernetes."""
@@ -123,10 +129,8 @@ class BaseAppComponent(BaseResource):
         """Prepare yaml string for agent config map data."""
         components = KasprAppComponentsSchema().dump(self.wrap_components())
         components = ordered_dict_to_dict(components)
-        return yaml.dump(
-            components, default_flow_style=False
-        )
-    
+        return yaml.dump(components, default_flow_style=False)
+
     def wrap_components(self) -> KasprAppComponents:
         """Wrap agent spec in KasprAppComponents."""
         return KasprAppComponents(agents=[self.spec])
@@ -151,10 +155,38 @@ class BaseAppComponent(BaseResource):
             self.prepare_hash_annotation(self.prepare_config_map_hash(configmap))
         )
         return configmap
-    
+
     def prepare_config_map_hash(self, config_map: V1ConfigMap) -> str:
         """Prepare config map hash."""
-        return self.compute_hash(config_map.to_dict())    
+        return self.compute_hash(config_map.to_dict())
+
+    def prepare_config_map_patch(self, config_map: V1ConfigMap) -> Dict:
+        """Prepare patch for config map resource.
+        A config map can only have certain fields updated via patch.
+        This method should be used to prepare the patch.
+        """
+        patch = []
+
+        if config_map.data:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/data",
+                    "value": config_map.data,
+                }
+            )
+
+        return patch
+
+    def prepare_config_map_watch_fields(self, config_map: V1ConfigMap) -> Dict:
+        """
+        Prepare fields of interest when comparing actual vs desired state.
+        These fields are tracked for changes made outside the operator and are used to
+        determine if a patch is needed.
+        """
+        return {
+            "data": config_map.data,
+        }
 
     def create(self):
         """Create component resources."""

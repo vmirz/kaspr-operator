@@ -217,8 +217,7 @@ class KasprApp(BaseResource):
         self.sync_auth_credentials()
         self.sync_service()
         self.sync_service_account()
-        self.sync_config_map()
-        self.sync_persistent_volume_claim()
+        self.sync_settings_config_map()
         self.sync_stateful_set()
 
     def sync_service(self):
@@ -228,10 +227,16 @@ class KasprApp(BaseResource):
         )
         if not service:
             self.create_service(self.core_v1_api, self.namespace, self.service)
-        elif self.prepare_service_hash(service) != self.service_hash:
-            self.replace_service(
-                self.core_v1_api, self.service_name, self.namespace, self.service
-            )
+        else:
+            actual = self.prepare_service_watch_fields(service)
+            desired = self.prepare_service_watch_fields(self.service)
+            if self.compute_hash(actual) != self.compute_hash(desired):
+                self.patch_service(
+                    self.core_v1_api,
+                    self.service_name,
+                    self.namespace,
+                    service=self.prepare_service_patch(self.service),
+                )
 
     def sync_service_account(self):
         """Check current state of service account and create/patch if needed."""
@@ -242,55 +247,33 @@ class KasprApp(BaseResource):
             self.create_service_account(
                 self.core_v1_api, self.namespace, self.service_account
             )
-        elif (
-            self.prepare_service_account_hash(service_account)
-            != self.service_account_hash
-        ):
-            self.replace_service_account(
-                self.core_v1_api,
-                self.service_account_name,
-                self.namespace,
-                self.service_account,
-            )
+        else:
+            ...
+            # not much to patch for a service account
 
-    def sync_config_map(self):
+    def sync_settings_config_map(self):
         """Check current state of config map and create/patch if needed."""
-        config_map: V1ConfigMap = self.fetch_config_map(
+        settings_config_map: V1ConfigMap = self.fetch_config_map(
             self.core_v1_api, self.config_map_name, self.namespace
         )
-        if not config_map:
+        if not settings_config_map:
             self.create_config_map(
                 self.core_v1_api, self.namespace, self.settings_config_map
             )
-        elif self.prepare_settings_config_map_hash(config_map) != self.config_hash:
-            self.replace_config_map(
-                self.core_v1_api,
-                self.config_map_name,
-                self.namespace,
-                self.settings_config_map,
+        else:
+            actual = self.prepare_settings_config_map_watch_fields(settings_config_map)
+            desired = self.prepare_settings_config_map_watch_fields(
+                self.settings_config_map
             )
-
-    def sync_persistent_volume_claim(self):
-        """Check current state of persistent volume claim and create/patch if needed."""
-        pvc: V1PersistentVolumeClaim = self.fetch_persistent_volume_claim(
-            self.core_v1_api,
-            self.persistent_volume_claim_name,
-            self.namespace,
-        )
-        if not pvc:
-            self.create_persistent_volume_claim(
-                self.core_v1_api, self.namespace, self.persistent_volume_claim
-            )
-        elif (
-            self.prepare_persistent_volume_claim_hash(pvc)
-            != self.persistent_volume_claim_hash
-        ):
-            self.replace_persistent_volume_claim(
-                self.core_v1_api,
-                self.persistent_volume_claim_name,
-                self.namespace,
-                self.persistent_volume_claim,
-            )
+            if self.compute_hash(actual) != self.compute_hash(desired):
+                self.patch_config_map(
+                    self.core_v1_api,
+                    self.config_map_name,
+                    self.namespace,
+                    config_map=self.prepare_settings_config_map_patch(
+                        self.settings_config_map
+                    ),
+                )
 
     def sync_stateful_set(self):
         """Check current state of stateful set and create/patch if needed."""
@@ -301,16 +284,16 @@ class KasprApp(BaseResource):
             self.create_stateful_set(
                 self.apps_v1_api, self.namespace, self.stateful_set
             )
-        # TODO: 
-        # hash based approach to detect diff is not working here
-        # simplify the approach and go with field by field comparison instead
-        # elif self.prepare_statefulset_hash(stateful_set) != self.stateful_set_hash:
-        #     self.patch_stateful_set(
-        #         self.apps_v1_api,
-        #         self.stateful_set_name,
-        #         self.namespace,
-        #         stateful_set=self.prepare_statefulset_patch(self.stateful_set),
-        #     )
+        else:
+            actual = self.prepare_statefulset_watch_fields(stateful_set)
+            desired = self.prepare_statefulset_watch_fields(self.stateful_set)
+            if self.compute_hash(actual) != self.compute_hash(desired):
+                self.patch_stateful_set(
+                    self.apps_v1_api,
+                    self.stateful_set_name,
+                    self.namespace,
+                    stateful_set=self.prepare_statefulset_patch(self.stateful_set),
+                )
 
     def sync_auth_credentials(self):
         """Sync credentials secret; We only need to check that password secret exists."""
@@ -408,6 +391,44 @@ class KasprApp(BaseResource):
         """Compute hash for app's service resource."""
         return self.compute_hash(service.to_dict())
 
+    def prepare_service_patch(self, service: V1Service) -> Dict:
+        """Prepare patch for service resource.
+        A service can only have certain fields updated via patch.
+        This method should be used to prepare the patch.
+        """
+        patch = []
+
+        patch.append(
+            {
+                "op": "replace",
+                "path": "/spec/type",
+                "value": service.spec.type,
+            }
+        )
+
+        if service.spec.ports:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/ports",
+                    "value": service.spec.ports,
+                }
+            )
+
+        return patch
+
+    def prepare_service_watch_fields(self, service: V1Service) -> Dict:
+        """
+        Prepare fields of interest when comparing actual vs desired state.
+        These fields are tracked for changes made outside the operator and are used to
+        determine if a patch is needed.
+        """
+        return {
+            "spec": {
+                "ports": service.spec.ports,
+            },
+        }
+
     def prepare_service_account(self) -> V1ServiceAccount:
         """Build service account resource."""
         labels, annotations = self.labels.as_dict(), {}
@@ -457,6 +478,34 @@ class KasprApp(BaseResource):
     def prepare_settings_config_map_hash(self, config_map: V1ConfigMap) -> str:
         """Compute hash for config map resource."""
         return self.compute_hash(config_map.to_dict())
+
+    def prepare_settings_config_map_patch(self, config_map: V1ConfigMap) -> Dict:
+        """Prepare patch for config map resource.
+        A config map can only have certain fields updated via patch.
+        This method should be used to prepare the patch.
+        """
+        patch = []
+
+        if config_map.data:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/data",
+                    "value": config_map.data,
+                }
+            )
+
+        return patch
+
+    def prepare_settings_config_map_watch_fields(self, config_map: V1ConfigMap) -> Dict:
+        """
+        Prepare fields of interest when comparing actual vs desired state.
+        These fields are tracked for changes made outside the operator and are used to
+        determine if a patch is needed.
+        """
+        return {
+            "data": config_map.data,
+        }
 
     def prepare_persistent_volume_claim(self) -> V1PersistentVolumeClaim:
         """Build a PVC resource for statefulset."""
@@ -794,24 +843,6 @@ class KasprApp(BaseResource):
         """
         patch = []
 
-        if stateful_set.metadata.labels:
-            patch.append(
-                {
-                    "op": "replace",
-                    "path": "/metadata/labels",
-                    "value": stateful_set.metadata.labels,
-                }
-            )
-
-        if stateful_set.metadata.annotations:
-            patch.append(
-                {
-                    "op": "replace",
-                    "path": "/metadata/annotations",
-                    "value": stateful_set.metadata.annotations,
-                }
-            )
-
         if stateful_set.spec.replicas is not None:
             patch.append(
                 {
@@ -859,6 +890,16 @@ class KasprApp(BaseResource):
 
         return patch
 
+    def prepare_statefulset_watch_fields(self, stateful_set: V1StatefulSet) -> Dict:
+        """
+        Prepare fields of interest when comparing actual vs desired state.
+        These fields are tracked for changes made outside the operator and are used to
+        determine if a patch is needed.
+        """            
+        return {
+            "spec": {"replicas": stateful_set.spec.replicas},
+        }
+
     def patch_settings(self):
         """Update resources as a result of app settings change."""
         self.patch_config_map(
@@ -878,7 +919,7 @@ class KasprApp(BaseResource):
         """Create KMS resources."""
         self.unite()
         self.sync_service_account()
-        self.sync_config_map()
+        self.sync_settings_config_map()
         self.sync_service()
         self.sync_stateful_set()
 
@@ -911,6 +952,12 @@ class KasprApp(BaseResource):
 
     def patch_web_port(self):
         """Update resources to change app web port."""
+        if not self.fetch_config_map(
+            self.core_v1_api, self.config_map_name, self.namespace
+        ):
+            raise kopf.TemporaryError(
+                f"ConfigMap `{self.config_map_name}` not found in `{self.namespace}` namespace."
+            )
         self.patch_config_map(
             self.core_v1_api,
             self.config_map_name,
@@ -920,25 +967,31 @@ class KasprApp(BaseResource):
         service = self.fetch_service(
             self.core_v1_api, self.service_name, self.namespace
         )
-        if service:
-            service.spec.ports[0].port = self.web_port
-            service.spec.ports[0].target_port = self.web_port
-            self.replace_service(
-                self.core_v1_api, self.service_name, self.namespace, service
+        if not service:
+            raise kopf.TemporaryError(
+                f"Service `{self.service_name}` not found in `{self.namespace}` namespace."
             )
+        service.spec.ports[0].port = self.web_port
+        service.spec.ports[0].target_port = self.web_port
+        self.replace_service(
+            self.core_v1_api, self.service_name, self.namespace, service
+        )
         stateful_set = self.fetch_stateful_set(
             self.apps_v1_api, self.stateful_set_name, self.namespace
         )
-        if stateful_set:
-            stateful_set.spec.template.spec.containers[0].ports[
-                0
-            ].container_port = self.web_port
-            self.replace_stateful_set(
-                self.apps_v1_api,
-                self.stateful_set_name,
-                self.namespace,
-                stateful_set=stateful_set,
+        if not stateful_set:
+            raise kopf.TemporaryError(
+                f"StatefulSet `{self.stateful_set_name}` not found in `{self.namespace}` namespace."
             )
+        stateful_set.spec.template.spec.containers[0].ports[
+            0
+        ].container_port = self.web_port
+        self.replace_stateful_set(
+            self.apps_v1_api,
+            self.stateful_set_name,
+            self.namespace,
+            stateful_set=stateful_set,
+        )
 
     def patch_storage_retention_policy(self):
         patch = {
@@ -946,8 +999,17 @@ class KasprApp(BaseResource):
                 "persistentVolumeClaimRetentionPolicy": self.persistent_volume_claim_retention_policy
             }
         }
+        if not self.fetch_stateful_set(
+            self.apps_v1_api, self.stateful_set_name, self.namespace
+        ):
+            raise kopf.TemporaryError(
+                f"StatefulSet `{self.stateful_set_name}` not found in `{self.namespace}` namespace."
+            )
         self.patch_stateful_set(
-            self.apps_v1_api, self.stateful_set_name, self.namespace, stateful_set=patch
+            self.apps_v1_api,
+            self.stateful_set_name,
+            self.namespace,
+            stateful_set=patch,
         )
 
     def patch_storage_size(self):
@@ -976,22 +1038,51 @@ class KasprApp(BaseResource):
         pvcs = self.list_persistent_volume_claims(
             self.core_v1_api, namespace=self.namespace
         )
-        app_labels = self.labels.kasper_label_selectors()
-        statefulset_pvc_list = [
-            pvc
-            for pvc in pvcs.items
-            if Labels(pvc.metadata.labels).contains(app_labels)
-        ]
-        for pvc in statefulset_pvc_list:
-            pvc: V1PersistentVolumeClaim
-            pvc.spec.resources.requests["storage"] = self.storage.size
-            self.patch_persistent_volume_claim(
-                self.core_v1_api, pvc.metadata.name, self.namespace, pvc
-            )
+        if pvcs and pvcs.items:
+            app_labels = self.labels.kasper_label_selectors()
+            statefulset_pvc_list = [
+                pvc
+                for pvc in pvcs.items
+                if Labels(pvc.metadata.labels).contains(app_labels)
+            ]
+            for pvc in statefulset_pvc_list:
+                pvc: V1PersistentVolumeClaim
+                pvc.spec.resources.requests["storage"] = self.storage.size
+                self.patch_persistent_volume_claim(
+                    self.core_v1_api, pvc.metadata.name, self.namespace, pvc
+                )
 
     def patch_volume_mounted_resources(self):
         """Update resources as a result of volume mounted resources change."""
-        self.sync_stateful_set()
+        patch = [
+            {
+                "op": "replace",
+                "path": "/spec/template/spec/containers/0/volumeMounts",
+                "value": self.volume_mounts,
+            },
+            {
+                "op": "replace",
+                "path": "/spec/template/spec/volumes",
+                "value": self.volumes,
+            },
+            {
+                "op": "replace",
+                "path": "/spec/template/spec/containers/0/env",
+                "value": self.env_vars,
+            },
+        ]
+        if not self.fetch_stateful_set(
+            self.apps_v1_api, self.stateful_set_name, self.namespace
+        ):
+            raise kopf.TemporaryError(
+                f"StatefulSet `{self.stateful_set_name}` not found in `{self.namespace}` namespace."
+            )
+        self.patch_stateful_set(
+            self.apps_v1_api,
+            self.stateful_set_name,
+            self.namespace,
+            stateful_set=patch,
+        )
 
     def patch_template_service_account(self):
         patch = [
@@ -1006,6 +1097,12 @@ class KasprApp(BaseResource):
                 "value": self.service_account.metadata.annotations,
             },
         ]
+        if not self.fetch_service_account(
+            self.core_v1_api, self.service_account_name, self.namespace
+        ):
+            raise kopf.TemporaryError(
+                f"ServiceAccount `{self.service_account_name}` not found in `{self.namespace}` namespace."
+            )
         self.patch_service_account(
             self.core_v1_api,
             self.service_account_name,
@@ -1015,7 +1112,25 @@ class KasprApp(BaseResource):
 
     def patch_template_pod(self):
         """Update pod template."""
-        self.sync_stateful_set()
+        patch = [
+            {
+                "op": "replace",
+                "path": "/spec/template",
+                "value": self.pod_template,
+            },
+        ]
+        if not self.fetch_stateful_set(
+            self.apps_v1_api, self.stateful_set_name, self.namespace
+        ):
+            raise kopf.TemporaryError(
+                f"StatefulSet `{self.stateful_set_name}` not found in `{self.namespace}` namespace."
+            )
+        self.patch_stateful_set(
+            self.apps_v1_api,
+            self.stateful_set_name,
+            self.namespace,
+            stateful_set=patch,
+        )
 
     def patch_template_service(self):
         """Update pod template with new labels."""
@@ -1031,6 +1146,10 @@ class KasprApp(BaseResource):
                 "value": self.service.metadata.annotations,
             },
         ]
+        if not self.fetch_service(self.core_v1_api, self.service_name, self.namespace):
+            raise kopf.TemporaryError(
+                f"Service `{self.service_name}` not found in `{self.namespace}` namespace."
+            )
         self.patch_service(
             self.core_v1_api,
             self.service_name,

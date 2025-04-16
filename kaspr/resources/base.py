@@ -101,7 +101,12 @@ class BaseResource:
         self, core_v1_api: CoreV1Api, name: str, namespace: str
     ) -> V1Service:
         """Retrieve the latest state of a service"""
-        return core_v1_api.read_namespaced_service(name=name, namespace=namespace)
+        try:
+            return core_v1_api.read_namespaced_service(name=name, namespace=namespace)
+        except ApiException as ex:
+            if ex.status == 404:
+                return None
+            raise
 
     def create_service(
         self, core_v1_api: CoreV1Api, namespace: str, service: V1Service
@@ -140,9 +145,14 @@ class BaseResource:
     def fetch_service_account(
         self, core_v1_api: CoreV1Api, name: str, namespace: str
     ) -> V1ServiceAccount:
-        return core_v1_api.read_namespaced_service_account(
-            name=name, namespace=namespace
-        )
+        try:
+            return core_v1_api.read_namespaced_service_account(
+                name=name, namespace=namespace
+            )
+        except ApiException as ex:
+            if ex.status == 404:
+                return None
+            raise
 
     def create_service_account(
         self, core_v1_api: CoreV1Api, namespace: str, service_account: V1ServiceAccount
@@ -259,7 +269,12 @@ class BaseResource:
     def fetch_config_map(
         self, core_v1_api: CoreV1Api, name: str, namespace: str
     ) -> V1ConfigMap:
-        return core_v1_api.read_namespaced_config_map(name=name, namespace=namespace)
+        try:
+            return core_v1_api.read_namespaced_config_map(name=name, namespace=namespace)
+        except ApiException as ex:
+            if ex.status == 404:
+                return None
+            raise
 
     def create_config_map(
         self, core_v1_api: CoreV1Api, namespace: str, config_map: V1ConfigMap
@@ -321,9 +336,14 @@ class BaseResource:
     def fetch_persistent_volume_claim(
         self, core_v1_api: CoreV1Api, name: str, namespace: str
     ) -> V1PersistentVolumeClaim:
-        return core_v1_api.read_namespaced_persistent_volume_claim(
-            name=name, namespace=namespace
-        )
+        try:
+            return core_v1_api.read_namespaced_persistent_volume_claim(
+                name=name, namespace=namespace
+            )
+        except ApiException as ex:
+            if ex.status == 404:
+                return None
+            raise
     
     def replace_persistent_volume_claim(
         self,

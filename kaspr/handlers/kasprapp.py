@@ -1,5 +1,6 @@
 import asyncio
 import kopf
+from logging import Logger
 from collections import defaultdict
 from typing import List, Dict
 from kaspr.types.schemas.kasprapp_spec import (
@@ -387,9 +388,17 @@ async def monitor_related_resources(
         print("We are done. Bye.")
 
 
-@kopf.timer(APP_KIND, initial_delay=5.0, idle=30.0)
-async def reconcile(name, spec, namespace, **kwargs):
+@kopf.timer(APP_KIND, initial_delay=5.0, interval=30.0)
+async def reconcile(name, spec, namespace, logger: Logger, **kwargs):
     """Reconcile KasprApp resources."""
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
-    app.synchronize()
+    try:
+        logger.debug(f"Reconciling {APP_KIND}/{name} in {namespace} namespace.")
+        app.synchronize()
+        logger.debug(f"Reconciled {APP_KIND}/{name} in {namespace} namespace.")
+    except Exception as e:
+        logger.error(f"Unexpected error during reconcilation: {e}")
+        logger.exception(e)
+        raise e
+

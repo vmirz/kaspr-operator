@@ -134,14 +134,20 @@ async def monitor_table(
         print("We are done. Bye.")
 
 
-@kopf.timer(KIND, initial_delay=5.0, idle=30.0)
-async def reconcile(name, spec, namespace, labels, **kwargs):
+@kopf.timer(KIND, initial_delay=5.0, interval=60.0)
+async def reconcile(name, spec, namespace, labels, logger: logging.Logger, **kwargs):
     """Full sync."""
     spec_model: KasprTableSpec = KasprTableSpecSchema().load(spec)
     table = KasprTable.from_spec(name, KIND, namespace, spec_model, dict(labels))
-    table.synchronize()
-
-
+    try:
+        logger.debug(f"Reconciling {KIND}/{name} in {namespace} namespace.")
+        table.synchronize()
+        logger.debug(f"Reconciled {KIND}/{name} in {namespace} namespace.")
+    except Exception as e:
+        logger.error(f"Unexpected error during reconcilation: {e}")
+        logger.exception(e)
+        raise e
+    
 # @kopf.on.validate(kind=KIND)
 # def includes_valid_app(spec, **_):
 #     raise kopf.AdmissionError("Missing required label `kaspr.io/app`", code=429)

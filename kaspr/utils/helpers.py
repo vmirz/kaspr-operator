@@ -206,17 +206,31 @@ def camel_to_snake(data):
         for key, value in data.items()
     }
 
+
 def datetime_converter(o):
     if isinstance(o, datetime):
         return o.isoformat()  # Convert datetime to ISO 8601 string
     raise TypeError("Type not serializable")
 
+
+def sort_dict_keys(d):
+    if isinstance(d, dict):
+        return {
+            key: sort_dict_keys(value) if isinstance(value, dict) else value
+            for key, value in sorted(d.items())
+        }
+    elif isinstance(d, list):
+        return [sort_dict_keys(item) if isinstance(item, dict) else item for item in d]
+    else:
+        return d
+
+
 def canonicalize_dict(data):
     """
     Returns a canonical JSON representation of a dictionary.
-    
+
     The JSON string uses sorted keys and compact separators, which ensures that
     the representation of the dictionary remains consistent even when key order varies.
     This function works recursively for nested dictionaries and handles lists too.
     """
-    return jsonpickle.dumps(data, unpicklable=False)
+    return jsonpickle.dumps(sort_dict_keys(data), unpicklable=False)
