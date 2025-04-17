@@ -2,13 +2,35 @@ from typing import Optional, Dict, List
 from kaspr.types.base import BaseModel
 from kaspr.types.models.resource_template import ResourceTemplate
 
+
+class KeyToPath(BaseModel):
+    key: str
+    path: str
+    mode: Optional[int]
+
+
+class SecretVolumeSource(BaseModel):
+    default_mode: Optional[int]
+    optional: Optional[bool]
+    secret_name: str
+    items: Optional[List[KeyToPath]]
+
+
+class ConfigMapVolumeSource(BaseModel):
+    default_mode: Optional[int]
+    optional: Optional[bool]
+    name: str
+    items: Optional[List[KeyToPath]]
+
+
 class AdditionalVolume(BaseModel):
     name: str
-    secret: Optional[Dict[str, str]]
-    config_map: Optional[Dict[str, str]]
+    secret: Optional[SecretVolumeSource]
+    config_map: Optional[ConfigMapVolumeSource]
     empty_dir: Optional[Dict[str, str]]
     persistent_volume_claim: Optional[Dict[str, str]]
     csi: Optional[Dict[str, str]]
+
 
 class PodTemplate(ResourceTemplate):
     image_pull_secrets: Optional[List[Dict[str, str]]]
