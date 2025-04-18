@@ -95,7 +95,7 @@ class BaseResource:
     
     def prepare_hash_annotation(self, hash: Union[str, int]) -> Dict[str, str]:
         """Prepare hash annotation for k8s resources."""
-        return {"kaspr.io/resource-hash": str(hash)}    
+        return {"kaspr.io/resource-hash": str(hash)}
 
     def fetch_service(
         self, core_v1_api: CoreV1Api, name: str, namespace: str

@@ -19,6 +19,7 @@ from kaspr.types.models.probe import Probe
 from kaspr.types.models.resource_template import ResourceTemplate
 from kaspr.types.models.pod_template import PodTemplate
 from kaspr.types.models.service_template import ServiceTemplate
+from kaspr.types.models.container_template import ContainerTemplate
 from kubernetes.client import (
     AppsV1Api,
     CoreV1Api,
@@ -52,6 +53,7 @@ from kubernetes.client import (
     V1Probe,
     V1DeleteOptions,
     V1ServiceAccount,
+    V1SecretVolumeSource,
 )
 
 from kaspr.resources.base import BaseResource
@@ -139,6 +141,7 @@ class KasprApp(BaseResource):
     template_service_account: ResourceTemplate
     template_pod: PodTemplate
     template_service: ServiceTemplate
+    template_container: ContainerTemplate
 
     # PodDisruptionBudgetTemplate templatePodDisruptionBudget;
     # ResourceTemplate templateInitClusterRoleBinding;
@@ -200,6 +203,7 @@ class KasprApp(BaseResource):
         app.template_service_account = spec.template.service_account
         app.template_pod = spec.template.pod
         app.template_service = spec.template.service
+        app.template_container = spec.template.kaspr_container
         return app
 
     @classmethod
@@ -680,8 +684,26 @@ class KasprApp(BaseResource):
                 *self.prepare_agent_volume_mounts(),
                 *self.prepare_webview_volume_mounts(),
                 *self.prepare_table_volume_mounts(),
+                *self.prepare_container_template_volume_mounts(),
             ]
         )
+        return volume_mounts
+
+    def prepare_container_template_volume_mounts(self) -> List[V1VolumeMount]:
+        """Prepare additional volume mounts from template."""
+        volume_mounts = []
+        if self.template_container.volume_mounts:
+            for vm in self.template_container.volume_mounts:
+                volume_mounts.append(
+                    V1VolumeMount(
+                        name=vm.name,
+                        mount_path=vm.mount_path,
+                        sub_path=vm.sub_path,
+                        read_only=vm.read_only,
+                        mount_propagation=vm.mount_propagation,
+                        sub_path_expr=vm.sub_path_expr,
+                    )
+                )
         return volume_mounts
 
     def prepare_container_resource_requirements(
@@ -716,10 +738,50 @@ class KasprApp(BaseResource):
         volumes.extend(self.prepare_agent_volumes())
         volumes.extend(self.prepare_webview_volumes())
         volumes.extend(self.prepare_table_volumes())
-        # Additional volumes from template pod
+        volumes.extend(self.prepare_pod_template_volumes())
+        return volumes
+
+    def prepare_pod_template_volumes(self) -> List[V1Volume]:
+        """Prepare an additional volumes from the template pod."""
+        volumes = []
         if self.template_pod.volumes:
             for volume in self.template_pod.volumes:
-                volumes.append(V1Volume(**volume.dict()))
+                if volume.secret:
+                    volumes.append(
+                        V1Volume(
+                            name=volume.name,
+                            secret=V1SecretVolumeSource(
+                                secret_name=volume.secret.secret_name,
+                                items=[
+                                    V1KeyToPath(
+                                        key=item.key, path=item.path, mode=item.mode
+                                    )
+                                    for item in volume.secret.items
+                                ],
+                            ),
+                        )
+                    )
+                elif volume.config_map:
+                    volumes.append(
+                        V1Volume(
+                            name=volume.name,
+                            config_map=V1ConfigMapVolumeSource(
+                                name=volume.config_map.name,
+                                items=[
+                                    V1KeyToPath(
+                                        key=item.key, path=item.path, mode=item.mode
+                                    )
+                                    for item in volume.config_map.items
+                                ],
+                            ),
+                        )
+                    )
+                elif volume.empty_dir:
+                    volumes.append(
+                        V1Volume(name=volume.name, empty_dir=volume.empty_dir)
+                    )
+                else:
+                    raise kopf.PermanentError("Unsupported volume type.")
         return volumes
 
     def prepare_agent_volumes(self) -> List[V1Volume]:
@@ -895,7 +957,7 @@ class KasprApp(BaseResource):
         Prepare fields of interest when comparing actual vs desired state.
         These fields are tracked for changes made outside the operator and are used to
         determine if a patch is needed.
-        """            
+        """
         return {
             "spec": {"replicas": stateful_set.spec.replicas},
         }

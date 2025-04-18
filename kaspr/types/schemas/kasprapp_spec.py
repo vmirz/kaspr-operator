@@ -13,6 +13,8 @@ from kaspr.types.schemas.storage import KasprAppStorageSchema
 from kaspr.types.schemas.resource_template import ResourceTemplateSchema
 from kaspr.types.schemas.pod_template import PodTemplateSchema
 from kaspr.types.schemas.service_template import ServiceTemplateSchema
+from kaspr.types.schemas.container_template import ContainerTemplateSchema
+
 
 class KasprAppTemplateSchema(BaseSchema):
     __model__ = KasprAppTemplate
@@ -34,6 +36,12 @@ class KasprAppTemplateSchema(BaseSchema):
         data_key="service",
         allow_none=True,
         load_default=lambda: ServiceTemplateSchema().load({}),
+    )
+    kaspr_container = fields.Nested(
+        ContainerTemplateSchema(),
+        data_key="kasprContainer",
+        allow_none=True,
+        load_default=lambda: ContainerTemplateSchema().load({}),
     )
 
 
