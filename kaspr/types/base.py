@@ -45,6 +45,20 @@ class BaseModel(SimpleNamespace):
             return repr_[:MAX_REPR_LEN] + " ...)"
         else:
             return repr_
+        
+    def as_dict(self) -> Dict[str, Any]:
+        result = {}
+        for key, value in self.__dict__.items():
+            if isinstance(value, BaseModel):
+                result[key] = value.as_dict()
+            elif isinstance(value, list):
+                result[key] = [
+                    item.as_dict() if isinstance(item, BaseModel) else item
+                    for item in value
+                ]
+            else:
+                result[key] = value
+        return result   
 
 class UnknownModel(BaseModel):
     """A convenience class that inherits from `BaseModel`."""

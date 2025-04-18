@@ -43,6 +43,14 @@ from .pod_template import (
     ConfigMapVolumeSource,
 )
 from .service_template import ServiceTemplate
+from .container_template import (
+    ConfigMapKeySelector,
+    SecretKeySelector,    
+    ContainerEnvVarSource,
+    ContainerEnvVar,
+    VolumeMount,
+    ContainerTemplate
+)
 
 __all__ = [
     "MetadataTemplate",
@@ -86,4 +94,10 @@ __all__ = [
     "ConfigMapVolumeSource",
     "AdditionalVolume",
     "ServiceTemplate",
+    "ConfigMapKeySelector",
+    "SecretKeySelector",
+    "ContainerEnvVarSource",
+    "ContainerEnvVar",
+    "VolumeMount",
+    "ContainerTemplate",
 ]

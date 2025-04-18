@@ -9,12 +9,14 @@ from kaspr.types.models.probe import Probe
 from kaspr.types.models.resource_template import ResourceTemplate
 from kaspr.types.models.pod_template import PodTemplate
 from kaspr.types.models.service_template import ServiceTemplate
+from kaspr.types.models.container_template import ContainerTemplate
 
 class KasprAppTemplate(BaseModel):
     """KasprApp template"""
     service_account: Optional[ResourceTemplate]
     pod: Optional[PodTemplate]
     service: Optional[ServiceTemplate]
+    kaspr_container: Optional[ContainerTemplate]
 
 class KasprAppSpec(BaseModel):
     """KasprApp CRD spec"""

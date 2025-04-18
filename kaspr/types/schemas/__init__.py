@@ -35,6 +35,14 @@ from .pod_template import (
     ConfigMapVolumeSourceSchema,
 )
 from .service_template import ServiceTemplateSchema
+from .container_template import (
+    ConfigMapKeySelectorSchema,
+    SecretKeySelectorSchema,
+    ContainerEnvVarSourceSchema,
+    ContainerEnvVarSchema,
+    VolumeMountSchema,
+    ContainerTemplateSchema
+)
 
 __all__ = [
     "KasprAgentSpecSchema",
@@ -67,4 +75,10 @@ __all__ = [
     "ConfigMapVolumeSourceSchema",
     "AdditionalVolumeSchema",
     "ServiceTemplateSchema",
+    "ContainerEnvVarSchema",
+    "ContainerEnvVarSourceSchema",
+    "VolumeMountSchema",
+    "ContainerTemplateSchema",
+    "ConfigMapKeySelectorSchema",
+    "SecretKeySelectorSchema"
 ]
