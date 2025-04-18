@@ -3,7 +3,7 @@ import yaml
 from typing import List, Dict, Optional
 from kaspr.utils.objects import cached_property
 from kaspr.utils.helpers import ordered_dict_to_dict
-from kaspr.types.models import KasprAppComponents
+from kaspr.types.models import KasprAppComponents, KasprResourceT
 from kaspr.types.schemas import KasprAppComponentsSchema
 
 from kubernetes.client import (
@@ -25,6 +25,12 @@ class BaseAppComponent(BaseResource):
     KASPR_APP_NAME_LABEL = "kaspr.io/app"
     OUTPUT_TYPE = "yaml"
 
+    # The are defined by subclass
+    KIND = None
+    COMPONENT_TYPE = None
+    PLURAL_NAME = None
+
+    kaspr_resource: KasprResourceT
     config_map_name: str
     volume_mount_name: str
 
@@ -47,7 +53,7 @@ class BaseAppComponent(BaseResource):
         component_type: str,
         labels: Optional[Dict[str, str]] = None,
     ):
-        component_name = self.component_name
+        component_name = self.kaspr_resource.component_name(name)
         _labels = Labels.generate_default_labels(
             name,
             kind,
@@ -259,12 +265,7 @@ class BaseAppComponent(BaseResource):
             return self.yaml_str
         else:
             return self.json_str
-
-    @cached_property
-    def component_name(self) -> str:
-        """Return the component name."""
-        ...
-
+        
     @cached_property
     def app_components(self) -> KasprAppComponents:
         """Return the app components."""
