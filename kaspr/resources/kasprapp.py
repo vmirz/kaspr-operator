@@ -586,6 +586,45 @@ class KasprApp(BaseResource):
         if self.tables:
             env_vars.append(V1EnvVar(name="TABLES_HASH", value=self._tables_hash))
 
+        # template environment variables
+        env_vars.extend(self.prepare_container_template_env_vars())
+
+        return env_vars
+
+    def prepare_container_template_env_vars(self) -> List[V1EnvVar]:
+        """Prepare additional environment variables from template."""
+        env_vars = []
+        if self.template_container.env:
+            for cev in self.template_container.env:
+                if cev.value:
+                    env_vars.append(V1EnvVar(name=cev.name, value=cev.value))
+                elif cev.value_from:
+                    if cev.value_from.config_map_key_ref:
+                        env_vars.append(
+                            V1EnvVar(
+                                name=cev.name,
+                                value_from=V1EnvVarSource(
+                                    config_map_key_ref=V1ConfigMapKeySelector(
+                                        key=cev.value_from.config_map_key_ref.key,
+                                        name=cev.value_from.config_map_key_ref.name,
+                                        optional=cev.value_from.config_map_key_ref.optional,
+                                    )
+                                ),
+                            )
+                        )
+                    elif cev.value_from.secret_key_ref:
+                        env_vars.append(
+                            V1EnvVar(
+                                name=cev.name,
+                                value_from=V1EnvVarSource(
+                                    secret_key_ref=V1SecretKeySelector(
+                                        key=cev.value_from.secret_key_ref.key,
+                                        name=cev.value_from.secret_key_ref.name,
+                                        optional=cev.value_from.secret_key_ref.optional,
+                                    )
+                                ),
+                            )
+                        )
         return env_vars
 
     def prepare_kafka_credentials_env_dict(self) -> Dict[str, str]:
