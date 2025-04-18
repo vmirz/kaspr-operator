@@ -1,5 +1,6 @@
 from .resource_template import MetadataTemplate, ResourceTemplate
 from .kasprapp_spec import KasprAppSpec, KasprAppConfig, KasprAppStorage
+from .resource import KasprResourceT
 from .kaspragent_resources import KasprAgentResources
 from .kaspragent_spec import (
     KasprAgentSpec,
@@ -58,6 +59,7 @@ __all__ = [
     "KasprAppSpec",
     "KasprAppConfig",
     "KasprAppStorage",
+    "KasprResourceT",
     "KasprAgentResources",
     "KasprAgentSpec",
     "KasprAgentInput",

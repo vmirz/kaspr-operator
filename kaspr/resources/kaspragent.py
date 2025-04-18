@@ -1,7 +1,8 @@
 from typing import Dict
 from kaspr.types.models import KasprAgentSpec, KasprAgentResources
+from kaspr.utils.objects import cached_property
 from kaspr.resources.appcomponent import BaseAppComponent
-
+from kaspr.types.models import KasprAppComponents
 
 class KasprAgent(BaseAppComponent):
     """Kaspr App kubernetes resource."""
@@ -9,22 +10,24 @@ class KasprAgent(BaseAppComponent):
     KIND = "KasprAgent"
     COMPONENT_TYPE = "agent"
     PLURAL_NAME = "kaspragents"
+    kaspr_resource = KasprAgentResources
+
     spec: KasprAgentSpec
 
     @classmethod
     def from_spec(
-        self,
+        cls,
         name: str,
         kind: str,
         namespace: str,
         spec: KasprAgentSpec,
         labels: Dict[str, str] = None,
     ) -> "KasprAgent":
-        agent = KasprAgent(name, kind, namespace, self.KIND, labels)
+        agent = KasprAgent(name, kind, namespace, cls.KIND, labels)
         agent.spec = spec
         agent.spec.name = name
-        agent.config_map_name = KasprAgentResources.config_name(name)
-        agent.volume_mount_name = KasprAgentResources.volume_mount_name(name)
+        agent.config_map_name = cls.kaspr_resource.config_name(name)
+        agent.volume_mount_name = cls.kaspr_resource.volume_mount_name(name)
         return agent
 
     @classmethod
@@ -36,3 +39,8 @@ class KasprAgent(BaseAppComponent):
             namespace=None,
             component_type=self.COMPONENT_TYPE,
         )
+    
+    @cached_property
+    def app_components(self) -> KasprAppComponents:
+        """Return the app components."""
+        return KasprAppComponents(agents=[self.spec])
