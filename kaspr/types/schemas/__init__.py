@@ -4,7 +4,7 @@ from .kaspragent_spec import (
     KasprAgentInputTopicSchema,
     KasprAgentChannelSchema,
     KasprAgentOutputSchema,
-    KasprAgentProcessorsSchema
+    KasprAgentProcessorsSchema,
 )
 from .code import CodeSpecSchema
 from .operation import MapOperationSchema, FilterOperationSchema
@@ -18,17 +18,31 @@ from .kasprwebview_spec import (
     KasprWebViewResponseSelectorSchema,
     KasprWebViewResponseSpecSchema,
     KasprWebViewRequestSpecSchema,
-    KasprWebViewSpecSchema
+    KasprWebViewSpecSchema,
 )
 from .kasprtable_spec import (
     KasprTableWindowTumblingSpecSchema,
     KasprTableWindowHoppingSpecSchema,
     KasprTableWindowSpecSchema,
-    KasprTableSpecSchema
+    KasprTableSpecSchema,
 )
 from .tableref import TableRefSpecSchema
-from .pod_template import PodTemplateSchema, AdditionalVolumeSchema
+from .pod_template import (
+    PodTemplateSchema,
+    AdditionalVolumeSchema,
+    KeyToPathSchema,
+    SecretVolumeSourceSchema,
+    ConfigMapVolumeSourceSchema,
+)
 from .service_template import ServiceTemplateSchema
+from .container_template import (
+    ConfigMapKeySelectorSchema,
+    SecretKeySelectorSchema,
+    ContainerEnvVarSourceSchema,
+    ContainerEnvVarSchema,
+    VolumeMountSchema,
+    ContainerTemplateSchema
+)
 
 __all__ = [
     "KasprAgentSpecSchema",
@@ -56,6 +70,15 @@ __all__ = [
     "KasprTableSpecSchema",
     "TableRefSpecSchema",
     "PodTemplateSchema",
+    "KeyToPathSchema",
+    "SecretVolumeSourceSchema",
+    "ConfigMapVolumeSourceSchema",
     "AdditionalVolumeSchema",
     "ServiceTemplateSchema",
+    "ContainerEnvVarSchema",
+    "ContainerEnvVarSourceSchema",
+    "VolumeMountSchema",
+    "ContainerTemplateSchema",
+    "ConfigMapKeySelectorSchema",
+    "SecretKeySelectorSchema"
 ]

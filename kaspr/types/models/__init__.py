@@ -9,7 +9,7 @@ from .kaspragent_spec import (
     KasprAgentOutput,
     KasprAgentProcessors,
     KasprAgentProcessorsInit,
-    KasprAgentProcessorsOperation
+    KasprAgentProcessorsOperation,
 )
 from .code import CodeSpec
 from .operation import MapOperation, FilterOperation
@@ -32,11 +32,25 @@ from .kasprtable_spec import (
     KasprTableWindowTumblingSpec,
     KasprTableWindowHoppingSpec,
     KasprTableWindowSpec,
-    KasprTableSpec
+    KasprTableSpec,
 )
 from .tableref import TableRefSpec
-from .pod_template import PodTemplate, AdditionalVolume
+from .pod_template import (
+    PodTemplate,
+    AdditionalVolume,
+    KeyToPath,
+    SecretVolumeSource,
+    ConfigMapVolumeSource,
+)
 from .service_template import ServiceTemplate
+from .container_template import (
+    ConfigMapKeySelector,
+    SecretKeySelector,    
+    ContainerEnvVarSource,
+    ContainerEnvVar,
+    VolumeMount,
+    ContainerTemplate
+)
 
 __all__ = [
     "MetadataTemplate",
@@ -75,6 +89,15 @@ __all__ = [
     "KasprTableSpec",
     "TableRefSpec",
     "PodTemplate",
+    "KeyToPath",
+    "SecretVolumeSource",
+    "ConfigMapVolumeSource",
     "AdditionalVolume",
-    "ServiceTemplate"
+    "ServiceTemplate",
+    "ConfigMapKeySelector",
+    "SecretKeySelector",
+    "ContainerEnvVarSource",
+    "ContainerEnvVar",
+    "VolumeMount",
+    "ContainerTemplate",
 ]
