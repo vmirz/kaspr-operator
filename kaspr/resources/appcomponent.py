@@ -3,7 +3,7 @@ import yaml
 from typing import List, Dict, Optional
 from kaspr.utils.objects import cached_property
 from kaspr.utils.helpers import ordered_dict_to_dict
-from kaspr.types.models import KasprAgentResources, KasprAppComponents
+from kaspr.types.models import KasprAppComponents
 from kaspr.types.schemas import KasprAppComponentsSchema
 
 from kubernetes.client import (
@@ -47,7 +47,7 @@ class BaseAppComponent(BaseResource):
         component_type: str,
         labels: Optional[Dict[str, str]] = None,
     ):
-        component_name = KasprAgentResources.component_name(name)
+        component_name = self.component_name
         _labels = Labels.generate_default_labels(
             name,
             kind,
@@ -87,7 +87,7 @@ class BaseAppComponent(BaseResource):
                 )
 
     def fetch(self, name: str, namespace: str):
-        """Fetch KasprAgent from kubernetes."""
+        """Fetch kaspr resource from kubernetes."""
         return self.get_custom_object(
             self.custom_objects_api,
             namespace=namespace,
@@ -122,21 +122,16 @@ class BaseAppComponent(BaseResource):
         )
 
     def prepare_json_str(self) -> str:
-        """Prepare json string for agent config map data."""
-        return KasprAppComponentsSchema().dumps(self.wrap_components())
+        """Prepare json string for config map data."""
+        return KasprAppComponentsSchema().dumps(self.app_components)
 
     def prepare_yaml_str(self) -> str:
-        """Prepare yaml string for agent config map data."""
-        components = KasprAppComponentsSchema().dump(self.wrap_components())
+        """Prepare yaml string for config map data."""
+        components = KasprAppComponentsSchema().dump(self.app_components)
         components = ordered_dict_to_dict(components)
         return yaml.dump(components, default_flow_style=False)
 
-    def wrap_components(self) -> KasprAppComponents:
-        """Wrap agent spec in KasprAppComponents."""
-        return KasprAppComponents(agents=[self.spec])
-
     def prepare_config_map(self) -> V1ConfigMap:
-        """Prepare config map for agent."""
         labels, annotations = self.labels.as_dict(), {}
         configmap = V1ConfigMap(
             api_version="v1",
@@ -204,7 +199,7 @@ class BaseAppComponent(BaseResource):
         kopf.adopt(children)
 
     def info(self) -> Dict:
-        """Return agent info."""
+        """Return kaspr resource info."""
         return {
             "name": self.cluster,
             "configMap": self.config_map_name,
@@ -264,3 +259,13 @@ class BaseAppComponent(BaseResource):
             return self.yaml_str
         else:
             return self.json_str
+
+    @cached_property
+    def component_name(self) -> str:
+        """Return the component name."""
+        ...
+
+    @cached_property
+    def app_components(self) -> KasprAppComponents:
+        """Return the app components."""
+        ...

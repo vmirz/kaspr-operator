@@ -1,6 +1,8 @@
 from typing import Dict
 from kaspr.types.models import KasprTableSpec, KasprTableResources
+from kaspr.utils.objects import cached_property
 from kaspr.resources.appcomponent import BaseAppComponent
+from kaspr.types.models import KasprAppComponents
 
 
 class KasprTable(BaseAppComponent):
@@ -35,3 +37,13 @@ class KasprTable(BaseAppComponent):
             namespace=None,
             component_type=self.COMPONENT_TYPE,
         )
+
+    @cached_property
+    def component_name(self) -> str:
+        """Return the component name."""
+        return KasprTableResources.component_name(self.spec.name)
+
+    @cached_property
+    def app_components(self) -> KasprAppComponents:
+        """Return the app components."""
+        return KasprAppComponents(tables=[self.spec])

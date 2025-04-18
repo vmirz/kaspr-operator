@@ -1,6 +1,8 @@
 from typing import Dict
 from kaspr.types.models import KasprWebViewSpec, KasprWebViewResources
+from kaspr.utils.objects import cached_property
 from kaspr.resources.appcomponent import BaseAppComponent
+from kaspr.types.models import KasprAppComponents
 
 
 class KasprWebView(BaseAppComponent):
@@ -36,3 +38,13 @@ class KasprWebView(BaseAppComponent):
             namespace=None,
             component_type=self.COMPONENT_TYPE,
         )
+
+    @cached_property
+    def component_name(self) -> str:
+        """Return the component name."""
+        return KasprWebViewResources.component_name(self.spec.name)
+
+    @cached_property
+    def app_components(self) -> KasprAppComponents:
+        """Return the app components."""
+        return KasprAppComponents(webviews=[self.spec])
