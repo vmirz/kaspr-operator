@@ -30,7 +30,7 @@ kopf_logger.addFilter(TimerLogFilter())
 @kopf.on.resume(kind=KIND)
 @kopf.on.create(kind=KIND)
 @kopf.on.update(kind=KIND)
-def reconciliation(
+async def reconciliation(
     body, spec, name, namespace, logger, labels, patch, annotations, **kwargs
 ):
     """Reconcile KasprAgent resources."""
@@ -47,8 +47,7 @@ def reconciliation(
                 "status": APP_FOUND if app else APP_NOT_FOUND,
             },
             "configMap": agent.config_map_name,
-            "hash": agent.hash,
-            "lastUpdateTime": utc_now().isoformat(),
+            "hash": agent.hash
         }
     )
     if app is None:
@@ -86,15 +85,24 @@ async def patch_resource(name, patch, **kwargs):
             set_patch(request)
 
 
-@kopf.daemon(
-    kind=KIND, cancellation_backoff=2.0, cancellation_timeout=5.0, initial_delay=5.0
-)
+@kopf.daemon(kind=KIND, initial_delay=5.0)
 async def monitor_agent(
-    stopped, name, body, spec, meta, labels, status, namespace, patch, logger, **kwargs
+    stopped,
+    name,
+    body,
+    spec,
+    meta,
+    labels,
+    status,
+    namespace,
+    patch,
+    logger: logging.Logger,
+    **kwargs,
 ):
     """Monitor agent resources for status updates."""
-    try:
-        while not stopped:
+
+    while not stopped:
+        try:
             _status = benedict(status, keyattr_dynamic=True)
             _status_updates = benedict(keyattr_dynamic=True)
             spec_model: KasprAgentSpec = KasprAgentSpecSchema().load(spec)
@@ -122,19 +130,19 @@ async def monitor_agent(
             if _status_updates:
                 await patch_request_queues[name].put(
                     [
-                        {"field": "status", "value": _status_updates},
-                        {
-                            "field": "status",
-                            "value": {"lastUpdateTime": utc_now().isoformat()},
-                        },
+                        {"field": "status", "value": _status_updates}
                     ]
                 )
-
             await asyncio.sleep(10)
-    except asyncio.CancelledError:
-        print("We are done. Bye.")
+        except asyncio.CancelledError:
+            logger.info("Monitoring stopped.")
+            break
+        except Exception as e:
+            logger.error("Unexpected error during monitoring: {e}")
+            logger.exception(e)
 
-@kopf.timer(KIND, initial_delay=5.0, interval=60.0)
+
+@kopf.timer(KIND, initial_delay=5.0, interval=60.0, backoff=10.0)
 async def reconcile(name, spec, namespace, labels, logger: logging.Logger, **kwargs):
     """Full sync."""
     spec_model: KasprAgentSpec = KasprAgentSpecSchema().load(spec)
@@ -146,7 +154,7 @@ async def reconcile(name, spec, namespace, labels, logger: logging.Logger, **kwa
     except Exception as e:
         logger.error(f"Unexpected error during reconcilation: {e}")
         logger.exception(e)
-        raise e
+
 
 # @kopf.on.validate(kind=KIND)
 # def includes_valid_app(spec, **_):

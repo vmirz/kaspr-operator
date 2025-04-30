@@ -204,9 +204,7 @@ async def patch_resource(name, patch, **kwargs):
             set_patch(request)
 
 
-@kopf.daemon(
-    kind=APP_KIND, cancellation_backoff=2.0, cancellation_timeout=5.0, initial_delay=5.0
-)
+@kopf.daemon(kind=APP_KIND, initial_delay=5.0)
 async def monitor_related_resources(
     stopped,
     name,
@@ -218,7 +216,7 @@ async def monitor_related_resources(
     status,
     namespace,
     patch,
-    logger,
+    logger: Logger,
     **kwargs,
 ):
     """Monitor app's agents, webviews, and tables.
@@ -229,8 +227,9 @@ async def monitor_related_resources(
     3. (Maybe) Patches the app with updated resources.
     4. Update app annotations & status with changes.
     """
-    try:
-        while not stopped:
+
+    while not stopped:
+        try:
             spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
             app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model)
             agents: List[KasprAgent] = []
@@ -288,107 +287,111 @@ async def monitor_related_resources(
             )
             app.patch_volume_mounted_resources()
             # TODO: Update latest applied generation # in status
-            patch_requests = [
-                {
-                    "field": "metadata.labels",
-                    "value": {app.KASPR_APP_NAME_LABEL: name},
-                }
-            ]
-            if current_agents_hash != desired_agents_hash:
-                patch_requests.extend(
-                    [
-                        {
-                            "field": "metadata.annotations",
-                            "value": {
-                                "kaspr.io/last-applied-agents-hash": desired_agents_hash
-                            },
-                        },
-                        {
-                            "field": "status",
-                            "value": {
-                                "version": str(app.version),
-                                "agents": {
-                                    "registered": app.agents_status(),
-                                    "lastTransitionTime": utc_now().isoformat(),
-                                    "hash": app.agents_hash,
-                                },
-                            },
-                        },
-                    ]
-                )
-                kopf.event(
-                    body,
-                    type="Normal",
-                    reason=AGENTS_UPDATED,
-                    message=f"Agents were updated for `{name}` in `{namespace or 'default'}` namespace.",
-                )
+            # patch_requests = [
+            #     {
+            #         "field": "metadata.labels",
+            #         "value": {app.KASPR_APP_NAME_LABEL: name},
+            #     }
+            # ]
+            # if current_agents_hash != desired_agents_hash:
+            #     patch_requests.extend(
+            #         [
+            #             {
+            #                 "field": "metadata.annotations",
+            #                 "value": {
+            #                     "kaspr.io/last-applied-agents-hash": desired_agents_hash
+            #                 },
+            #             },
+            #             {
+            #                 "field": "status",
+            #                 "value": {
+            #                     "version": str(app.version),
+            #                     "agents": {
+            #                         "registered": app.agents_status(),
+            #                         "lastTransitionTime": utc_now().isoformat(),
+            #                         "hash": app.agents_hash,
+            #                     },
+            #                 },
+            #             },
+            #         ]
+            #     )
+            #     kopf.event(
+            #         body,
+            #         type="Normal",
+            #         reason=AGENTS_UPDATED,
+            #         message=f"Agents were updated for `{name}` in `{namespace or 'default'}` namespace.",
+            #     )
 
-            if current_webviews_hash != desired_webviews_hash:
-                patch_requests.extend(
-                    [
-                        {
-                            "field": "metadata.annotations",
-                            "value": {
-                                "kaspr.io/last-applied-webviews-hash": desired_webviews_hash
-                            },
-                        },
-                        {
-                            "field": "status",
-                            "value": {
-                                "version": str(app.version),
-                                "webviews": {
-                                    "registered": app.webviews_status(),
-                                    "lastTransitionTime": utc_now().isoformat(),
-                                    "hash": app.webviews_hash,
-                                },
-                            },
-                        },
-                    ]
-                )
-                kopf.event(
-                    body,
-                    type="Normal",
-                    reason=WEBVIEWS_UPDATED,
-                    message=f"Webviews were updated for `{name}` in `{namespace or 'default'}` namespace.",
-                )
+            # if current_webviews_hash != desired_webviews_hash:
+            #     patch_requests.extend(
+            #         [
+            #             {
+            #                 "field": "metadata.annotations",
+            #                 "value": {
+            #                     "kaspr.io/last-applied-webviews-hash": desired_webviews_hash
+            #                 },
+            #             },
+            #             {
+            #                 "field": "status",
+            #                 "value": {
+            #                     "version": str(app.version),
+            #                     "webviews": {
+            #                         "registered": app.webviews_status(),
+            #                         "lastTransitionTime": utc_now().isoformat(),
+            #                         "hash": app.webviews_hash,
+            #                     },
+            #                 },
+            #             },
+            #         ]
+            #     )
+            #     kopf.event(
+            #         body,
+            #         type="Normal",
+            #         reason=WEBVIEWS_UPDATED,
+            #         message=f"Webviews were updated for `{name}` in `{namespace or 'default'}` namespace.",
+            #     )
 
-            if current_tables_hash != desired_tables_hash:
-                patch_requests.extend(
-                    [
-                        {
-                            "field": "metadata.annotations",
-                            "value": {
-                                "kaspr.io/last-applied-tables-hash": desired_tables_hash
-                            },
-                        },
-                        {
-                            "field": "status",
-                            "value": {
-                                "version": str(app.version),
-                                "tables": {
-                                    "registered": app.tables_status(),
-                                    "lastTransitionTime": utc_now().isoformat(),
-                                    "hash": app.tables_hash,
-                                },
-                            },
-                        },
-                    ]
-                )
-                kopf.event(
-                    body,
-                    type="Normal",
-                    reason=TABLES_UPDATED,
-                    message=f"Tables were updated for `{name}` in `{namespace or 'default'}` namespace.",
-                )
+            # if current_tables_hash != desired_tables_hash:
+            #     patch_requests.extend(
+            #         [
+            #             {
+            #                 "field": "metadata.annotations",
+            #                 "value": {
+            #                     "kaspr.io/last-applied-tables-hash": desired_tables_hash
+            #                 },
+            #             },
+            #             {
+            #                 "field": "status",
+            #                 "value": {
+            #                     "version": str(app.version),
+            #                     "tables": {
+            #                         "registered": app.tables_status(),
+            #                         "lastTransitionTime": utc_now().isoformat(),
+            #                         "hash": app.tables_hash,
+            #                     },
+            #                 },
+            #             },
+            #         ]
+            #     )
+            #     kopf.event(
+            #         body,
+            #         type="Normal",
+            #         reason=TABLES_UPDATED,
+            #         message=f"Tables were updated for `{name}` in `{namespace or 'default'}` namespace.",
+            #     )
 
-            await patch_request_queues[name].put(patch_requests)
+            # await patch_request_queues[name].put(patch_requests)
             await asyncio.sleep(10)
 
-    except asyncio.CancelledError:
-        print("We are done. Bye.")
+        except asyncio.CancelledError:
+            logger.info("Monitoring stopped.")
+            break
+        except Exception as e:
+            logger.error("Unexpected error during monitoring: {e}")
+            logger.exception(e)
 
 
-@kopf.timer(APP_KIND, initial_delay=5.0, interval=30.0)
+@kopf.timer(APP_KIND, initial_delay=5.0, interval=30.0, backoff=10.0)
 async def reconcile(name, spec, namespace, logger: Logger, **kwargs):
     """Reconcile KasprApp resources."""
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
@@ -400,5 +403,3 @@ async def reconcile(name, spec, namespace, logger: Logger, **kwargs):
     except Exception as e:
         logger.error(f"Unexpected error during reconcilation: {e}")
         logger.exception(e)
-        raise e
-
