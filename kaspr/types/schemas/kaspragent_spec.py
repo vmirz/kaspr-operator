@@ -1,4 +1,4 @@
-from marshmallow import fields, post_dump
+from marshmallow import fields, post_dump, validates_schema
 from kaspr.utils.helpers import camel_to_snake
 from kaspr.types.base import BaseSchema
 from kaspr.types.models import (
@@ -18,7 +18,7 @@ from kaspr.types.schemas.tableref import TableRefSpecSchema
 class KasprAgentInputTopicSchema(BaseSchema):
     __model__ = KasprAgentInputTopic
 
-    name = fields.Str(data_key="name", required=True)
+    name = fields.Str(data_key="name", required=False, load_default=None)
     pattern = fields.Str(data_key="pattern", required=False, load_default=None)
     key_serializer = fields.Str(
         data_key="keySerializer", required=False, load_default=None
@@ -31,6 +31,15 @@ class KasprAgentInputTopicSchema(BaseSchema):
     def camel_to_snake_dump(self, data, **kwargs):
         """Convert data keys from camelCase to snake_case."""
         return camel_to_snake(data)
+    
+    @validates_schema
+    def validate_topic(self, data, **kwargs):
+        """Validate that either name or pattern is provided."""
+        if not data.get("name") and not data.get("pattern"):
+            raise ValueError("Either 'name' or 'pattern' must be provided.")
+        if data.get("name") and data.get("pattern"):
+            raise ValueError("Only one of 'name' or 'pattern' can be provided.")
+        
 
 
 class KasprAgentChannelSchema(BaseSchema):
