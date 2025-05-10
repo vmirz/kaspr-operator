@@ -1,4 +1,4 @@
-from marshmallow import fields, post_dump
+from marshmallow import fields, post_dump, validates_schema
 from kaspr.utils.helpers import camel_to_snake
 from kaspr.types.base import BaseSchema
 from kaspr.types.models import TopicOutSpec
@@ -42,3 +42,11 @@ class TopicOutSpecSchema(BaseSchema):
     def camel_to_snake_dump(self, data, **kwargs):
         """Convert data keys from camelCase to snake_case."""
         return camel_to_snake(data)
+    
+    @validates_schema
+    def validate_topic(self, data, **kwargs):
+        """Validate that either name or name_selector is provided."""
+        if not data.get("name") and not data.get("name_selector"):
+            raise ValueError("Either 'name' or 'name_selector' must be provided.")
+        if data.get("name") and data.get("name_selector"):
+            raise ValueError("Only one of 'name' or 'name_selector' can be provided.")
