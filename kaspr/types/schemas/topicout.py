@@ -8,7 +8,10 @@ from kaspr.types.schemas.code import CodeSpecSchema
 class TopicOutSpecSchema(BaseSchema):
     __model__ = TopicOutSpec
 
-    name = fields.Str(data_key="name", required=True)
+    name = fields.Str(data_key="name", required=False, load_default=None)
+    name_selector = fields.Nested(
+        CodeSpecSchema(), data_key="nameSelector", required=False, load_default=None
+    )
     ack = fields.Bool(data_key="ack", required=False, load_default=None)
     key_serializer = fields.Str(
         data_key="keySerializer", required=False, load_default=None
