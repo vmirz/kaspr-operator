@@ -21,13 +21,20 @@ class KasprVersion(NamedTuple):
 class KasprVersionResources:
     #: Mapping of operator version to kaspr application version
     # TODO: This should be moved to a configuration file
-    _VERSIONS = (        
+    _VERSIONS = (
+        KasprVersion(
+            operator_version="0.5.14",
+            version="0.5.14",
+            image="kasprio/kaspr:0.5.13-alpha",
+            supported=True,
+            default=True,
+        ),    
         KasprVersion(
             operator_version="0.5.13",
             version="0.5.13",
             image="kasprio/kaspr:0.5.12-alpha",
             supported=True,
-            default=True,
+            default=False,
         ),          
         KasprVersion(
             operator_version="0.5.11",
