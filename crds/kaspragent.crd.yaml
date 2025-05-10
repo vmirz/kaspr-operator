@@ -151,8 +151,9 @@ spec:
                                 description: Python code to run.
                             required:
                               - python
-                        required:
-                          - name
+                        anyOf:
+                          - required: ["name"]
+                          - required: ["nameSelector"]
                 processors:
                   description: Chain of processors that modify input values
                   type: object
