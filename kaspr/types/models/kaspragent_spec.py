@@ -21,6 +21,7 @@ class KasprAgentInputChannel(BaseModel):
     name: str
 
 class KasprAgentInput(BaseModel):
+    declare: Optional[bool]
     topic: Optional[KasprAgentInputTopic]
     channel: Optional[KasprAgentInputChannel]
 
