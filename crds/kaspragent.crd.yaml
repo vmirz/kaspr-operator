@@ -48,6 +48,24 @@ spec:
                           type: string
                           description: Serializer for the value of the message
                           enum: ["raw", "json", "pickle", "binary"]
+                        partitions:
+                          type: integer
+                          description: Number of partitions for the topic. Optional.
+                        retention:
+                          type: integer
+                          description: Retention period for the topic in seconds. Optional.
+                        compacting:
+                          type: boolean
+                          description: Whether log compaction is enabled for the topic. Optional.
+                        deleting:
+                          type: boolean
+                          description: Whether log deletion is enabled for the topic. Optional.
+                        replicas:
+                          type: integer
+                          description: Number of replicas for the topic. Optional.
+                        config:
+                          type: object
+                          description: Additional configuration for the topic as key-value pairs. Optional.
                       anyOf:
                         - required: ["name"]
                         - required: ["pattern"]

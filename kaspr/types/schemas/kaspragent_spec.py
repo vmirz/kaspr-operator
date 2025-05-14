@@ -15,6 +15,7 @@ from kaspr.types.schemas.code import CodeSpecSchema
 from kaspr.types.schemas.operation import MapOperationSchema, FilterOperationSchema
 from kaspr.types.schemas.tableref import TableRefSpecSchema
 
+
 class KasprAgentInputTopicSchema(BaseSchema):
     __model__ = KasprAgentInputTopic
 
@@ -26,12 +27,24 @@ class KasprAgentInputTopicSchema(BaseSchema):
     value_serializer = fields.Str(
         data_key="valueSerializer", required=False, load_default=None
     )
+    partitions = fields.Int(data_key="partitions", required=False, load_default=None)
+    retention = fields.Int(data_key="retention", required=False, load_default=None)
+    compacting = fields.Bool(data_key="compacting", required=False, load_default=None)
+    deleting = fields.Bool(data_key="deleting", required=False, load_default=None)
+    replicas = fields.Int(data_key="replicas", required=False, load_default=None)
+    config = fields.Dict(
+        keys=fields.Str(required=True),
+        values=fields.Str(required=True),
+        data_key="config",
+        required=False,
+        load_default=None,
+    )
 
     @post_dump
     def camel_to_snake_dump(self, data, **kwargs):
         """Convert data keys from camelCase to snake_case."""
         return camel_to_snake(data)
-    
+
     @validates_schema
     def validate_topic(self, data, **kwargs):
         """Validate that either name or pattern is provided."""
@@ -39,7 +52,6 @@ class KasprAgentInputTopicSchema(BaseSchema):
             raise ValueError("Either 'name' or 'pattern' must be provided.")
         if data.get("name") and data.get("pattern"):
             raise ValueError("Only one of 'name' or 'pattern' can be provided.")
-        
 
 
 class KasprAgentChannelSchema(BaseSchema):
@@ -93,13 +105,11 @@ class KasprAgentProcessorsOperationSchema(BaseSchema):
         load_default=None,
     )
     table_refs = fields.List(
-        fields.Nested(
-            TableRefSpecSchema(), required=True
-        ),
+        fields.Nested(TableRefSpecSchema(), required=True),
         data_key="tables",
         allow_none=False,
         load_default=list,
-    )     
+    )
 
 
 class KasprAgentProcessorsInitSchema(CodeSpecSchema):
