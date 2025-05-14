@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Mapping
 from kaspr.types.base import BaseModel
 from kaspr.types.models.code import CodeSpec
 from kaspr.types.models.operation import MapOperation, FilterOperation
@@ -10,6 +10,12 @@ class KasprAgentInputTopic(BaseModel):
     pattern: Optional[str]
     key_serializer: Optional[str]
     value_serializer: Optional[str]
+    partitions: Optional[int]
+    retention: Optional[int]
+    compacting: Optional[bool]
+    deleting: Optional[bool]
+    replicas: Optional[int]
+    config: Optional[Mapping[str, str]]    
 
 class KasprAgentInputChannel(BaseModel):
     name: str
