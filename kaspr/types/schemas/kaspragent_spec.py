@@ -63,6 +63,12 @@ class KasprAgentChannelSchema(BaseSchema):
 class KasprAgentInputSchema(BaseSchema):
     __model__ = KasprAgentInput
 
+    declare = fields.Boolean(
+        data_key="declare",
+        required=False,
+        allow_none=True,
+        load_default=None,
+    )
     topic = fields.Nested(
         KasprAgentInputTopicSchema(),
         data_key="topic",

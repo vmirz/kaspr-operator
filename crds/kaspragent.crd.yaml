@@ -31,6 +31,9 @@ spec:
                   description: Input to stream processing.
                   type: object
                   properties:
+                    declare:
+                      type: boolean
+                      description: If true, the agent will create the input topic/channel if it does not exist.
                     topic:
                       type: object
                       properties:
