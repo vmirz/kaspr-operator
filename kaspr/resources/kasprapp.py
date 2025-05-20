@@ -573,9 +573,11 @@ class KasprApp(BaseResource):
             )
 
         # include consumer group instance id (for static membership)
+        # the value is derived from the pod name, which is why we configure
+        # here instead of in the config map
         env_vars.append(
             V1EnvVar(
-                name="CONSUMER_GROUP_INSTANCE_ID",
+                name=self.config.env_for("consumer_group_instance_id"),
                 value_from=V1EnvVarSource(
                     field_ref=V1ObjectFieldSelector(
                         field_path="metadata.name"
