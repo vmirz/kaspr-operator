@@ -47,6 +47,7 @@ from kubernetes.client import (
     V1ConfigMap,
     V1EnvVar,
     V1EnvVarSource,
+    V1ObjectFieldSelector,
     V1ConfigMapKeySelector,
     V1SecretKeySelector,
     V1ResourceRequirements,
@@ -571,6 +572,18 @@ class KasprApp(BaseResource):
                 )
             )
 
+        # include consumer group instance id (for static membership)
+        env_vars.append(
+            V1EnvVar(
+                name="CONSUMER_GROUP_INSTANCE_ID",
+                value_from=V1EnvVarSource(
+                    field_ref=V1ObjectFieldSelector(
+                        field_path="metadata.name"
+                    )
+                )
+            )
+        )
+
         # include config hash
         env_vars.append(V1EnvVar(name="CONFIG_HASH", value=self.config_hash))
 
@@ -663,7 +676,7 @@ class KasprApp(BaseResource):
         _envs = {**config_envs}
         _envs.update(overrides)
         return _envs
-
+    
     def prepare_agent_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
         for agent in self.agents if self.agents else []:
@@ -1319,7 +1332,7 @@ class KasprApp(BaseResource):
     @cached_property
     def definitions_dir_path(self):
         return getattr(self.config, "definitions_dir", self.DEFAULT_DEFINITIONS_DIR)
-
+    
     @cached_property
     def apps_v1_api(self) -> AppsV1Api:
         if self._apps_v1_api is None:
