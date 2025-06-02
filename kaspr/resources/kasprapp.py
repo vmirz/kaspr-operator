@@ -910,6 +910,7 @@ class KasprApp(BaseResource):
             image_pull_secrets=self.template_pod.image_pull_secrets,
             security_context=self.template_pod.security_context,
             termination_grace_period_seconds=self.template_pod.termination_grace_period_seconds,
+            node_selector=self.template_pod.node_selector,
             affinity=self.template_pod.affinity,
             tolerations=self.template_pod.tolerations,
             topology_spread_constraints=self.template_pod.topology_spread_constraints,

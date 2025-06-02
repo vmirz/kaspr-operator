@@ -12,7 +12,7 @@ from kaspr.types.schemas.resource_template import ResourceTemplateSchema
 
 
 class KeyToPathSchema(BaseSchema):
-    """Schema for KeyToPath."""  
+    """Schema for KeyToPath."""
 
     __model__ = KeyToPath
     key = fields.String(required=True, allow_none=False)
@@ -145,6 +145,13 @@ class PodTemplateSchema(ResourceTemplateSchema):
     )
     termination_grace_period_seconds = fields.Int(
         data_key="terminationGracePeriodSeconds", allow_none=True, load_default=None
+    )
+    node_selector = fields.Dict(
+        keys=fields.String(),
+        values=fields.String(),
+        data_key="nodeSelector",
+        allow_none=True,
+        load_default=None,
     )
     affinity = fields.Dict(
         keys=fields.String(),
