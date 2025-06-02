@@ -36,6 +36,7 @@ class PodTemplate(ResourceTemplate):
     image_pull_secrets: Optional[List[Dict[str, Any]]]
     security_context: Optional[Dict[str, Any]]
     termination_grace_period_seconds: Optional[int]
+    node_selector: Optional[Dict[str, str]]
     affinity: Optional[Dict[str, Any]]
     tolerations: Optional[List[Dict[str, Any]]]
     topology_spread_constraints: Optional[List[Dict[str, Any]]]
