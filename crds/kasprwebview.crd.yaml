@@ -31,7 +31,7 @@ spec:
                   type: string
                   description: A short description of what this webview does.
                 request:
-                  description: Input to stream processing.
+                  description: Describes the request endpoint.
                   type: object
                   properties:
                     method:
@@ -41,6 +41,9 @@ spec:
                     path:
                       type: string
                       description: Path to listen on
+                  required:
+                    - method
+                    - path
                 response:
                   description: Describe the response of the webview.
                   type: object
