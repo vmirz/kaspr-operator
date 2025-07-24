@@ -5,6 +5,10 @@ from kaspr.types.models.operation import MapOperation, FilterOperation
 from kaspr.types.models.topicout import TopicOutSpec
 from kaspr.types.models.tableref import TableRefSpec
 
+class KasprAgentInputBuffer(BaseModel):
+    max_size: int
+    within: str  # e.g., "10s", "5m", "1h", "2d"
+
 class KasprAgentInputTopic(BaseModel):
     names: Optional[List[str]]
     pattern: Optional[str]
@@ -24,6 +28,7 @@ class KasprAgentInput(BaseModel):
     declare: Optional[bool]
     topic: Optional[KasprAgentInputTopic]
     channel: Optional[KasprAgentInputChannel]
+    buffer: Optional[KasprAgentInputBuffer]
 
 class KasprAgentOutput(BaseModel):
     topics: Optional[List[TopicOutSpec]]

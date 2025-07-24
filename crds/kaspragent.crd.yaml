@@ -80,6 +80,19 @@ spec:
                           description: The name of the channel to write to.
                       required:
                         - name
+                    take:
+                      type: object
+                      description: Buffering configuration for the input.
+                      properties:
+                        max:
+                          type: integer
+                          description: Maximum number of events to buffer
+                        within:
+                          type: string
+                          description: Time window for buffering events (e.g., "10s", "5m")
+                      required:
+                        - max
+                        - within
                   anyOf:
                     - required: ["topic"]
                     - required: ["channel"]
