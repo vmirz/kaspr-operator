@@ -1,9 +1,11 @@
-from marshmallow import fields, post_dump, validates_schema
+import re
+from marshmallow import fields, post_dump, validates_schema, ValidationError
 from kaspr.utils.helpers import camel_to_snake
 from kaspr.types.base import BaseSchema
 from kaspr.types.models import (
     KasprAgentSpec,
     KasprAgentInput,
+    KasprAgentInputBuffer,
     KasprAgentInputChannel,
     KasprAgentInputTopic,
     KasprAgentOutput,
@@ -15,6 +17,42 @@ from kaspr.types.schemas.code import CodeSpecSchema
 from kaspr.types.schemas.operation import MapOperationSchema, FilterOperationSchema
 from kaspr.types.schemas.tableref import TableRefSpecSchema
 
+
+def validate_within(value: str) -> bool:
+    """
+    Validates whether the input string is a valid time delta string.
+    
+    Valid formats: "<number><unit>", where:
+        - number: positive integer
+        - unit: one of "s" (seconds), "m" (minutes), "h" (hours), "d" (days)
+
+    Examples of valid inputs: "10s", "5m", "1h", "2d"
+    
+    Returns True if valid, raises ValueError if invalid.
+    """
+    if not isinstance(value, str):
+        raise ValueError("Value must be a string.")
+
+    pattern = r'^\d+[smhd]$'
+    if not re.match(pattern, value):
+        raise ValidationError(
+            f"Invalid time delta format: '{value}'. Must be a number followed by a unit (s, m, h, d)."
+        )
+    
+class KasprAgentInputBufferSchema(BaseSchema):
+    __model__ = KasprAgentInputBuffer
+
+    max_size = fields.Integer(
+        data_key="max", required=True
+    )
+    within = fields.String(
+        data_key="within", validate=validate_within, required=True
+    )
+
+    @post_dump
+    def camel_to_snake_dump(self, data, **kwargs):
+        """Convert data keys from camelCase to snake_case."""
+        return camel_to_snake(data)    
 
 class KasprAgentInputTopicSchema(BaseSchema):
     __model__ = KasprAgentInputTopic
@@ -81,6 +119,12 @@ class KasprAgentInputSchema(BaseSchema):
         allow_none=True,
         load_default=None,
     )
+    buffer = fields.Nested(
+        KasprAgentInputBufferSchema(),
+        data_key="take",
+        allow_none=True,
+        load_default=None,
+    )    
 
 
 class KasprAgentOutputSchema(BaseSchema):

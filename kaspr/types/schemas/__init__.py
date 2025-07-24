@@ -5,6 +5,7 @@ from .kaspragent_spec import (
     KasprAgentChannelSchema,
     KasprAgentOutputSchema,
     KasprAgentProcessorsSchema,
+    KasprAgentInputBufferSchema,
 )
 from .code import CodeSpecSchema
 from .operation import MapOperationSchema, FilterOperationSchema
@@ -48,6 +49,7 @@ __all__ = [
     "KasprAgentSpecSchema",
     "KasprAgentInputSchema",
     "KasprAgentInputTopicSchema",
+    "KasprAgentInputBufferSchema",
     "KasprAgentChannelSchema",
     "KasprAgentOutputSchema",
     "CodeSpecSchema",
