@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.28
+--
+* New: support pausing KasprApp reconciliation via annotation: `kaspr.io/pause-reconciliation`
+* New: upgrade application's kaspr version upon new operator default.
+
 ## 0.4.2
 --
 * Improvements to how resource `status` is updated
