@@ -89,6 +89,8 @@ class KasprApp(BaseResource):
     stateful_set_name: str
     bootstrap_servers: str
 
+    annotations: Dict[str, str] = None
+
     # CRD spec models
     tls: Optional[ClientTls]
     authentication: KafkaClientAuthentication
@@ -180,9 +182,10 @@ class KasprApp(BaseResource):
 
     @classmethod
     def from_spec(
-        self, name: str, kind: str, namespace: str, spec: KasprAppSpec
+        self, name: str, kind: str, namespace: str, spec: KasprAppSpec, annotations: Optional[Dict[str, str]] = None
     ) -> "KasprApp":
         app = KasprApp(name, kind, namespace, self.KIND)
+        app.annotations = annotations
         app.service_name = KasprAppResources.service_name(name)
         app.service_account_name = KasprAppResources.service_account_name(name)
         app.config_map_name = KasprAppResources.settings_config_name(name)
@@ -1014,7 +1017,14 @@ class KasprApp(BaseResource):
         determine if a patch is needed.
         """
         return {
-            "spec": {"replicas": stateful_set.spec.replicas},
+            "spec": {
+                "replicas": stateful_set.spec.replicas,
+                "template": {
+                    "spec": {
+                        "containers": [{"image": stateful_set.spec.template.spec.containers[0].image}]
+                    }
+                }
+            }
         }
 
     def patch_settings(self):
@@ -1312,6 +1322,12 @@ class KasprApp(BaseResource):
         """Return status of all tables."""
         return [table.info() for table in self.tables]
 
+    @property
+    def reconciliation_paused(self) -> bool:
+        """Check if reconciliation is paused."""
+        return "kaspr.io/pause-reconciliation" in self.annotations \
+            and self.annotations["kaspr.io/pause-reconciliation"].lower() == "true"
+
     @cached_property
     def version(self) -> KasprVersion:
         return self.prepare_version()
@@ -1536,3 +1552,4 @@ class KasprApp(BaseResource):
                 else None
             )
         return self._tables_hash
+    
