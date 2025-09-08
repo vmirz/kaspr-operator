@@ -55,7 +55,7 @@ class KasprWebViewProcessorOperationSchema(BaseSchema):
         return camel_to_snake(data)
 
 
-class KasprWebViewProcessorInitSchema(BaseSchema):
+class KasprWebViewProcessorInitSchema(CodeSpecSchema):
     __model__ = KasprWebViewProcessorsInit
 
 
