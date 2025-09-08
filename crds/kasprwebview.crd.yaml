@@ -213,6 +213,17 @@ spec:
                               name:
                                 type: string
                                 description: Name of the kafka topic to send the message to.
+                              nameSelector:
+                                type: object
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.                            
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python                                
                               ack:
                                 type: boolean
                                 description: Wait for acknoledgement from the broker before considering the message sent
