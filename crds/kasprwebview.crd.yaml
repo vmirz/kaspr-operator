@@ -295,8 +295,9 @@ spec:
                                     description: Python code to run.
                                 required:
                                   - python
-                            required:
-                              - name
+                            anyOf:
+                              - required: ["name"]
+                              - required: ["nameSelector"]
                       required:
                         - pipeline
                         - operations
