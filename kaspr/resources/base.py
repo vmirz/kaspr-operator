@@ -259,7 +259,12 @@ class BaseResource:
         namespace: str,
         delete_options: V1DeleteOptions,
     ):
-        apps_v1_api.delete_namespaced_stateful_set(name, namespace, body=delete_options)
+        try:
+            apps_v1_api.delete_namespaced_stateful_set(name, namespace, body=delete_options)
+        except ApiException as ex:
+            if ex.status == 404:
+                return
+            raise
 
     def fetch_secret(
         self, core_v1_api: CoreV1Api, name: str, namespace: str
