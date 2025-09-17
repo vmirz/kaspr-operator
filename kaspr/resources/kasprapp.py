@@ -598,11 +598,11 @@ class KasprApp(BaseResource):
 
         # include webviews hash
         if self.webviews:
-            env_vars.append(V1EnvVar(name="WEBVIEWS_HASH", value=self._webviews_hash))
+            env_vars.append(V1EnvVar(name="WEBVIEWS_HASH", value=self.webviews_hash))
 
         # include tables hash
         if self.tables:
-            env_vars.append(V1EnvVar(name="TABLES_HASH", value=self._tables_hash))
+            env_vars.append(V1EnvVar(name="TABLES_HASH", value=self.tables_hash))
 
         # template environment variables
         env_vars.extend(self.prepare_container_template_env_vars())
@@ -1321,6 +1321,21 @@ class KasprApp(BaseResource):
     def tables_status(self) -> Dict:
         """Return status of all tables."""
         return [table.info() for table in self.tables]
+    
+    def fetch_app_status(self) -> Dict:
+        """Fetch status of application's statefulset/pods"""
+        stateful_set = self.fetch_stateful_set(self.apps_v1_api, self.stateful_set_name, self.namespace)
+        if not stateful_set:
+            return
+        
+        kaspr_container = next((c for c in stateful_set.spec.template.spec.containers if c.name == "kaspr" and c.image), None)
+        kaspr_ver = kaspr_container.image.split(':')[-1] if kaspr_container else None
+        available_replicas = stateful_set.status.available_replicas if stateful_set.status else 0
+
+        return {
+            "kasprVersion": kaspr_ver,
+            "availableReplicas": available_replicas
+        }
 
     @property
     def reconciliation_paused(self) -> bool:

@@ -8,7 +8,7 @@ class KasprAppStorageSchema(BaseSchema):
 
     __model__ = KasprAppStorage
 
-    type = fields.Str(data_key="type", default=None)
+    type = fields.Str(data_key="type", required=True)
     storage_class = fields.Str(data_key="class", required=True)
     size = fields.Str(data_key="size", required=True)
-    delete_claim = fields.Bool(data_key="deleteClaim", default=None)
+    delete_claim = fields.Bool(data_key="deleteClaim", load_default=None)
