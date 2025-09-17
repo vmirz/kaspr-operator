@@ -1,5 +1,6 @@
 import asyncio
 import kopf
+import time
 from logging import Logger
 from collections import defaultdict
 from typing import List, Dict
@@ -13,7 +14,7 @@ from kaspr.types.schemas import (
     KasprTableSpecSchema,
 )
 from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable
-from kaspr.utils.helpers import utc_now
+from kaspr.utils.helpers import utc_now, upsert_condition
 
 APP_KIND = "KasprApp"
 
@@ -24,134 +25,464 @@ TABLES_UPDATED = "TablesUpdated"
 # Queue of requests to patch KasprApps
 patch_request_queues: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
 
+# Use a set to track which names are already queued
+names_in_queue = set()
+# The actual queue for ordered processing
+reconciliation_queue: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
+
+async def request_reconciliation(name, **kwargs):
+    """Request reconciliation for the KasprApp.
+    
+    Enqueues the request only if it's not already in the queue.
+    This prevents duplicate processing while preserving order.
+    """
+    if name not in names_in_queue:
+        names_in_queue.add(name)
+        await reconciliation_queue[name].put(name)
+
+def on_error(error, spec, meta, status, patch, **_):
+    """Handle errors during reconciliation."""
+    gen = meta.get("generation", 0)
+    conds = (status or {}).get("conditions", [])
+    conds = upsert_condition(
+        conds,
+        {
+            "type": "Progressing",
+            "status": "False",
+            "reason": "Error",
+            "message": error if error else "Reconcile failed; see events/logs",
+            "observedGeneration": gen,
+        },
+    )
+    conds = upsert_condition(
+        conds,
+        {
+            "type": "Ready",
+            "status": "False",
+            "reason": "Error",
+            "message": "Kaspr app not ready",
+            "observedGeneration": gen,
+        },
+    )
+    patch.status["conditions"] = conds
+
+
+async def update_status(
+    name, spec, meta, status, patch, namespace, annotations, logger: Logger, **kwargs
+):
+    """Update KasprApp status based on the actual state of the app."""
+    spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    try:
+        gen = meta.get("generation", 0)
+        cur_gen = status.get("observedGeneration") if status else None
+
+        # Always update observedGeneration to match the current generation
+        patch.status["observedGeneration"] = gen
+
+        # Get the current status of the app
+        _actual_status = app.fetch_app_status()
+        if not _actual_status:
+            return
+
+        # Always update kasprVersion if changed
+        if _actual_status.get("kasprVersion") and _actual_status["kasprVersion"] != (status or {}).get("kasprVersion"):
+            patch.status["kasprVersion"] = _actual_status["kasprVersion"]
+
+        conds = (status or {}).get("conditions", [])
+
+        # If we are reconciling a new generation, set Progressing True, Ready False
+        if cur_gen != gen:
+            conds = upsert_condition(
+                conds,
+                {
+                    "type": "Progressing",
+                    "status": "True",
+                    "reason": "NewSpec",
+                    "message": "Reconciling desired state",
+                    "observedGeneration": gen,
+                },
+            )
+            conds = upsert_condition(
+                conds,
+                {
+                    "type": "Ready",
+                    "status": "False",
+                    "reason": "NotReady",
+                    "message": "Rollout in progress",
+                    "observedGeneration": gen,
+                },
+            )
+        # If everything is healthy, set Progressing False, Ready True
+        elif _actual_status["availableReplicas"] == app.replicas:
+            conds = upsert_condition(
+                conds,
+                {
+                    "type": "Progressing",
+                    "status": "False",
+                    "reason": "ReconcileComplete",
+                    "message": "All resources are in desired state",
+                    "observedGeneration": gen,
+                },
+            )
+            conds = upsert_condition(
+                conds,
+                {
+                    "type": "Ready",
+                    "status": "True",
+                    "reason": "Healthy",
+                    "message": "Kaspr app is ready",
+                    "observedGeneration": gen,
+                },
+            )
+        # If not healthy, keep Progressing True, Ready False
+        else:
+            conds = upsert_condition(
+                conds,
+                {
+                    "type": "Progressing",
+                    "status": "True",
+                    "reason": "Reconciling",
+                    "message": "Waiting for resources to become ready",
+                    "observedGeneration": gen,
+                },
+            )
+            conds = upsert_condition(
+                conds,
+                {
+                    "type": "Ready",
+                    "status": "False",
+                    "reason": "NotReady",
+                    "message": "Kaspr app not ready",
+                    "observedGeneration": gen,
+                },
+            )
+
+        patch.status["conditions"] = conds
+
+    except Exception as e:
+        logger.exception(e)
+
+
+async def reconcile(name, namespace, spec, meta, status, patch, annotations, logger: Logger, **kwargs):
+    """Reconcile the KasprApp."""
+    spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    if app.reconciliation_paused:
+        logger.info("Reconciliation is paused.")
+        return
+    try:
+        logger.debug(f"Reconciling {APP_KIND}/{name} in {namespace} namespace.")
+        app.synchronize()
+        logger.debug(f"Reconciled {APP_KIND}/{name} in {namespace} namespace.")
+        await update_status(name, spec, meta, status, patch, namespace, annotations, logger)
+    except Exception as e:
+        logger.error(f"Unexpected error during reconcilation: {e}")
+        logger.exception(e)
+        on_error(e, spec, meta, status, patch, **kwargs)
 
 @kopf.on.resume(kind=APP_KIND)
 @kopf.on.create(kind=APP_KIND)
-def on_create(spec, name, namespace, annotations, logger: Logger, **kwargs):
+def on_create(
+    spec, name, meta, status, patch, namespace, annotations, logger: Logger, **kwargs
+):
     """Creates KasprApp resources."""
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
-    app.create()
+    try:
+        app.create()
+    except Exception as e:
+        logger.error(f"Failed to create KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        raise
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.image")
 @kopf.on.update(kind=APP_KIND, field="spec.version")
-def on_version_update(old, new, diff, spec, name, status, namespace, annotations, logger: Logger, **kwargs):
+def on_version_update(
+    old,
+    new,
+    diff,
+    spec,
+    name,
+    meta,
+    patch,
+    status,
+    namespace,
+    annotations,
+    logger: Logger,
+    **kwargs,
+):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
-    app.patch_version()
+    try:
+        app.patch_version()
+    except Exception as e:
+        logger.error(f"Failed to patch version for KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        raise
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.replicas")
-def on_replicas_update(old, new, diff, spec, name, status, namespace, annotations, logger: Logger, **kwargs):
+def on_replicas_update(
+    old,
+    new,
+    diff,
+    spec,
+    name,
+    meta,
+    patch,
+    status,
+    namespace,
+    annotations,
+    logger: Logger,
+    **kwargs,
+):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
-    app.patch_replicas()
+    try:
+        app.patch_replicas()
+    except Exception as e:
+        logger.error(f"Failed to patch replicas for KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        raise
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.bootstrapServers")
 @kopf.on.update(kind=APP_KIND, field="spec.tls")
 @kopf.on.update(kind=APP_KIND, field="spec.authentication")
 def on_kafka_credentials_update(
-    old, new, diff, spec, name, status, namespace, annotations, logger: Logger, **kwargs
+    old,
+    new,
+    diff,
+    spec,
+    name,
+    meta,
+    patch,
+    status,
+    namespace,
+    annotations,
+    logger: Logger,
+    **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
-    app.patch_kafka_credentials()
+    try:
+        app.patch_kafka_credentials()
+    except Exception as e:
+        logger.error(f"Failed to patch Kafka credentials for KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        raise
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.resources")
 def on_resource_requirements_update(
-    old, new, diff, spec, name, status, namespace, annotations, logger: Logger, **kwargs
+    old,
+    new,
+    diff,
+    spec,
+    name,
+    meta,
+    patch,
+    status,
+    namespace,
+    annotations,
+    logger: Logger,
+    **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
-    app.patch_resource_requirements()
+    try:
+        app.patch_resource_requirements()
+    except Exception as e:
+        logger.error(f"Failed to patch resource requirements for KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        raise
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.config.web_port")
-def on_web_port_update(old, new, diff, spec, name, status, namespace, annotations, logger: Logger, **kwargs):
+def on_web_port_update(
+    old,
+    new,
+    diff,
+    spec,
+    name,
+    meta,
+    patch,
+    status,
+    namespace,
+    annotations,
+    logger: Logger,
+    **kwargs,
+):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
-    app.patch_web_port()
+    try:
+        app.patch_web_port()
+    except Exception as e:
+        logger.error(f"Failed to patch web port for KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        raise
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.storage.deleteClaim")
 def on_storage_delete_claim_update(
-    old, new, diff, spec, name, status, namespace, annotations, logger: Logger, **kwargs
+    old,
+    new,
+    diff,
+    spec,
+    name,
+    meta,
+    patch,
+    status,
+    namespace,
+    annotations,
+    logger: Logger,
+    **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
-    app.patch_storage_retention_policy()
+    try:
+        app.patch_storage_retention_policy()
+    except Exception as e:
+        logger.error(f"Failed to patch storage retention policy for KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        raise
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.storage.size")
 def on_storage_size_update(
-    old, new, diff, spec, name, status, namespace, annotations, logger: Logger, **kwargs
+    old,
+    new,
+    diff,
+    spec,
+    name,
+    meta,
+    patch,
+    status,
+    namespace,
+    annotations,
+    logger: Logger,
+    **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
-    app.patch_storage_size()
+    try:
+        app.patch_storage_size()
+    except Exception as e:
+        logger.error(f"Failed to patch storage size for KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        raise
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.template.serviceAccount")
 def on_template_service_account_updated(
-    old, new, diff, spec, name, status, namespace, annotations, logger: Logger, **kwargs
+    old,
+    new,
+    diff,
+    spec,
+    name,
+    meta,
+    patch,
+    status,
+    namespace,
+    annotations,
+    logger: Logger,
+    **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
-    app.patch_template_service_account()
+    try:
+        app.patch_template_service_account()
+    except Exception as e:
+        logger.error(f"Failed to patch template service account for KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        raise
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.template.pod")
 def on_template_pod_updated(
-    old, new, diff, spec, name, status, namespace, annotations, logger: Logger, **kwargs
+    old,
+    new,
+    diff,
+    spec,
+    name,
+    meta,
+    patch,
+    status,
+    namespace,
+    annotations,
+    logger: Logger,
+    **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
-    app.patch_template_pod()
+
+    try:
+        app.patch_template_pod()
+    except Exception as e:
+        logger.error(f"Failed to patch template pod for KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        raise
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.template.service")
 def on_template_service_updated(
-    old, new, diff, spec, name, status, namespace, annotations, logger: Logger, **kwargs
+    old,
+    new,
+    diff,
+    spec,
+    name,
+    meta,
+    patch,
+    status,
+    namespace,
+    annotations,
+    logger: Logger,
+    **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
-    app.patch_template_service()
+
+    try:
+        app.patch_template_service()
+    except Exception as e:
+        logger.error(f"Failed to patch template service for KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        raise
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.config.topic_partitions")
@@ -162,17 +493,20 @@ def immutable_config_updated_00(**kwargs):
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.config")
-def general_config_update(spec, name, namespace, annotations, logger: Logger, **kwargs):
+def general_config_update(
+    spec, name, meta, patch, status, namespace, annotations, logger: Logger, **kwargs
+):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
-    app.patch_settings()
-    # app_resources = KasprApp.default().search(namespace, apps=[name])
-    # if app_resources and app_resources.get("items"):
-    #     current = app_resources["items"][0]
-    #     # TODO: Patch settings if desired generation # > current generation #
+    try:
+        app.patch_settings()
+    except Exception as e:
+        logger.error(f"Failed to patch settings for KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        raise
 
 
 # @kopf.on.validate(kind=APP_KIND, field="spec.storage.deleteClaim")
@@ -185,6 +519,12 @@ def general_config_update(spec, name, namespace, annotations, logger: Logger, **
 #         if spec['storage'].get('class') != old['storage'].get('class'):
 #             raise kopf.AdmissionError("Changing the storage.class field is not allowed.")
 
+@kopf.on.delete(kind=APP_KIND)
+async def on_delete(name, **kwargs):
+    """Handle deletion of KasprApp resources."""
+    # remove app name from reconciliation queue
+    if name in reconciliation_queue:
+        del reconciliation_queue[name]
 
 @kopf.timer(APP_KIND, interval=1)
 async def patch_resource(name, patch, **kwargs):
@@ -238,6 +578,32 @@ async def patch_resource(name, patch, **kwargs):
                 set_patch(req)
         else:
             set_patch(request)
+
+@kopf.timer(APP_KIND, initial_delay=3.0, interval=1.5)
+async def process_reconciliation_requests(name, namespace, spec, meta, status, patch, annotations, logger: Logger, stopped, **kwargs):
+    """Process reconciliation requests from the queue.
+    
+    Processes each request exactly once, even if it was 
+    requested multiple times while processing another request.
+    """
+    if stopped:
+        return
+    try:
+        if not reconciliation_queue[name].empty():
+            reconciliation_queue[name].get_nowait()
+            start_time = time.time()
+            await reconcile(name, namespace, spec, meta, status, patch, annotations, logger, **kwargs)
+            execution_time = time.time() - start_time
+            logger.debug(f"Reconcile for {name} completed in {execution_time:.2f} seconds")
+            # Allow this name to be requeued after processing
+            names_in_queue.remove(name)
+            reconciliation_queue[name].task_done()
+    except asyncio.QueueEmpty:
+        pass
+    except Exception as e:
+        logger.error(f"Error processing reconciliation request: {e}")
+        # Ensure we don't get stuck on failed requests
+        names_in_queue.remove(name)
 
 
 @kopf.daemon(kind=APP_KIND, initial_delay=5.0)
@@ -420,7 +786,7 @@ async def monitor_related_resources(
             await asyncio.sleep(10)  # Avoid tight loop
 
         except asyncio.CancelledError:
-            logger.info("Monitoring stopped.")
+            logger.info("Stopping monitoring...")
             break
         except Exception as e:
             logger.error(f"Unexpected error during monitoring: {e}")
@@ -429,17 +795,6 @@ async def monitor_related_resources(
 
 
 @kopf.timer(APP_KIND, initial_delay=5.0, interval=30.0, backoff=10.0)
-async def reconcile(name, spec, namespace, annotations, logger: Logger, **kwargs):
+async def periodic_reconciliation(name, **kwargs):
     """Reconcile KasprApp resources."""
-    spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
-    if app.reconciliation_paused:
-        logger.info("Reconciliation is paused.")
-        return
-    try:
-        logger.debug(f"Reconciling {APP_KIND}/{name} in {namespace} namespace.")
-        app.synchronize()
-        logger.debug(f"Reconciled {APP_KIND}/{name} in {namespace} namespace.")
-    except Exception as e:
-        logger.error(f"Unexpected error during reconcilation: {e}")
-        logger.exception(e)
+    await request_reconciliation(name, **kwargs)

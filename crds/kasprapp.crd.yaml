@@ -959,3 +959,48 @@ spec:
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                kasprVersion:
+                  type: string
+                conditions:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys:
+                    - type
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                      - reason
+                      - lastTransitionTime
+                      - observedGeneration
+                    properties:
+                      type:
+                        type: string
+                        minLength: 1
+                      status:
+                        type: string
+                        enum: ["True","False","Unknown"]
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      observedGeneration:
+                        type: integer
+                        format: int64   
+      subresources:
+        status: {}      
+      additionalPrinterColumns:
+      - name: Ready
+        jsonPath: .status.conditions[?(@.type=="Ready")].status
+        type: string
+      - name: Kaspr
+        jsonPath: .status.kasprVersion
+        type: string

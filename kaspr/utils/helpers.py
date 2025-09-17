@@ -9,9 +9,11 @@ from typing import Optional, Iterator, List, Mapping, OrderedDict
 DEFAULT_DATE_FORMAT = "%Y-%m-%d"
 
 
-def utc_now():
-    return datetime.now(timezone.utc)
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 def iso_datestr_to_datetime(datestr):
     if isinstance(datestr, str) and len(datestr) > 0:
@@ -234,3 +236,18 @@ def canonicalize_dict(data):
     This function works recursively for nested dictionaries and handles lists too.
     """
     return jsonpickle.dumps(sort_dict_keys(data), unpicklable=False)
+
+def upsert_condition(conds, newc):
+    """In-memory merge by .type. Only bump lastTransitionTime when status flips."""
+    conds = list(conds or [])
+    for i, c in enumerate(conds):
+        if c.get("type") == newc["type"]:
+            ltt = c.get("lastTransitionTime") or now()
+            if c.get("status") != newc["status"]:
+                ltt = now()
+            merged = {**c, **newc, "lastTransitionTime": ltt}
+            conds[i] = merged
+            break
+    else:
+        conds.append({**newc, "lastTransitionTime": now()})
+    return conds
