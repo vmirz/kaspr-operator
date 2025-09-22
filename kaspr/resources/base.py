@@ -16,10 +16,12 @@ from kubernetes.client import (
     CustomObjectsApi,
     V1Service,
     AppsV1Api,
+    AutoscalingV2Api,
     V1StatefulSet,
     V1ConfigMap,
     V1PersistentVolumeClaim,
     V1DeleteOptions,
+    V2HorizontalPodAutoscaler
 )
 
 
@@ -419,3 +421,69 @@ class BaseResource:
             plural=plural,
             label_selector=label_selector,
         )
+    
+    def fetch_hpa(
+        self, autoscaling_v2_api: AutoscalingV2Api, name: str, namespace: str
+    ) -> V2HorizontalPodAutoscaler:
+        try:
+            return autoscaling_v2_api.read_namespaced_horizontal_pod_autoscaler(name=name, namespace=namespace)
+        except ApiException as ex:
+            if ex.status == 404:
+                return None
+            raise
+
+    def create_hpa(
+        self,
+        autoscaling_v2_api: AutoscalingV2Api,
+        namespace: str,
+        hpa: V2HorizontalPodAutoscaler,
+    ):
+        try:
+            autoscaling_v2_api.create_namespaced_horizontal_pod_autoscaler(
+                namespace=namespace, body=hpa
+            )
+        except ApiException as ex:
+            if already_exists_error(ex):
+                self.replace_hpa(
+                    autoscaling_v2_api,
+                    name=hpa.metadata.name,
+                    namespace=namespace,
+                    hpa=hpa,
+                )
+            else:
+                raise
+
+    def replace_hpa(
+        self,
+        autoscaling_v2_api: AutoscalingV2Api,
+        name: str,
+        namespace: str,
+        hpa: V2HorizontalPodAutoscaler,
+    ):
+        autoscaling_v2_api.replace_namespaced_horizontal_pod_autoscaler(
+            name=name, namespace=namespace, body=hpa
+        )
+
+    def patch_hpa(
+        self,
+        autoscaling_v2_api: AutoscalingV2Api,
+        name: str,
+        namespace: str,
+        hpa: V2HorizontalPodAutoscaler,
+    ):
+        autoscaling_v2_api.patch_namespaced_horizontal_pod_autoscaler(
+            name=name, namespace=namespace, body=hpa
+        )
+
+    def delete_hpa(
+        self,
+        autoscaling_v2_api: AutoscalingV2Api,
+        name: str,
+        namespace: str
+    ):
+        try:
+            autoscaling_v2_api.delete_namespaced_horizontal_pod_autoscaler(name, namespace)
+        except ApiException as ex:
+            if ex.status == 404:
+                return
+            raise

@@ -24,6 +24,7 @@ from kubernetes.client import (
     AppsV1Api,
     CoreV1Api,
     CustomObjectsApi,
+    AutoscalingV2Api,
     V1ObjectMeta,
     V1Service,
     V1ServiceSpec,
@@ -55,6 +56,15 @@ from kubernetes.client import (
     V1DeleteOptions,
     V1ServiceAccount,
     V1SecretVolumeSource,
+    V2HorizontalPodAutoscaler,
+    V2HorizontalPodAutoscalerSpec,
+    V2CrossVersionObjectReference,
+    V2MetricSpec,
+    V2ResourceMetricSource,
+    V2MetricTarget,
+    V2HorizontalPodAutoscalerBehavior,
+    V2HPAScalingRules,
+    V2HPAScalingPolicy,
 )
 
 from kaspr.resources.base import BaseResource
@@ -79,6 +89,7 @@ class KasprApp(BaseResource):
     DEFAULT_TABLE_DIR = "/var/lib/data/tables"
     DEFAULT_DEFINITIONS_DIR = "/var/lib/data/definitions"
     DEFAULT_WEB_PORT = 6065
+    INITIAL_MAX_REPLICAS = 4
 
     replicas: int
     image: str
@@ -88,6 +99,7 @@ class KasprApp(BaseResource):
     persistent_volume_claim_name: str
     stateful_set_name: str
     bootstrap_servers: str
+    hpa_name: str
 
     annotations: Dict[str, str] = None
 
@@ -110,6 +122,7 @@ class KasprApp(BaseResource):
     _apps_v1_api: AppsV1Api = None
     _core_v1_api: CoreV1Api = None
     _custom_objects_api: CustomObjectsApi = None
+    _autoscaling_v2_api: AutoscalingV2Api = None
     _service: V1Service = None
     _service_hash: str = None
     _service_account: V1ServiceAccount = None
@@ -125,12 +138,14 @@ class KasprApp(BaseResource):
     _container_ports: List[V1ContainerPort] = None
     _stateful_set: V1StatefulSet = None
     _stateful_set_hash: str = None
+    _hpa_hash: str = None
     _kaspr_container: V1Container = None
     _pod_template: V1PodTemplateSpec = None
     _pod_spec: V1PodSpec = None
     _agent_pod_volumes: List[V1Volume] = None
     _webview_pod_volumes: List[V1Volume] = None
     _table_pod_volumes: List[V1Volume] = None
+    _hpa: V2HorizontalPodAutoscaler = None
 
     # Reference to agent resources
     agents: List[KasprAgent] = None
@@ -182,7 +197,12 @@ class KasprApp(BaseResource):
 
     @classmethod
     def from_spec(
-        self, name: str, kind: str, namespace: str, spec: KasprAppSpec, annotations: Optional[Dict[str, str]] = None
+        self,
+        name: str,
+        kind: str,
+        namespace: str,
+        spec: KasprAppSpec,
+        annotations: Optional[Dict[str, str]] = None,
     ) -> "KasprApp":
         app = KasprApp(name, kind, namespace, self.KIND)
         app.annotations = annotations
@@ -193,9 +213,12 @@ class KasprApp(BaseResource):
         app.persistent_volume_claim_name = (
             KasprAppResources.persistent_volume_claim_name(name)
         )
+        app.hpa_name = KasprAppResources.hpa_name(name)
         app._version = spec.version
         app._image = spec.image
-        app.replicas = spec.replicas or self.DEFAULT_REPLICAS
+        app.replicas = (
+            spec.replicas if spec.replicas is not None else self.DEFAULT_REPLICAS
+        )
         app.bootstrap_servers = spec.bootstrap_servers
         app.tls = spec.tls
         app.authentication = spec.authentication
@@ -226,6 +249,7 @@ class KasprApp(BaseResource):
         self.sync_service()
         self.sync_service_account()
         self.sync_settings_config_map()
+        self.sync_hpa()
         self.sync_stateful_set()
 
     def sync_service(self):
@@ -300,7 +324,10 @@ class KasprApp(BaseResource):
                     self.apps_v1_api,
                     self.stateful_set_name,
                     self.namespace,
-                    stateful_set=self.prepare_statefulset_patch(self.stateful_set),
+                    stateful_set=self.prepare_statefulset_patch(
+                        self.stateful_set,
+                        replicas_override=self.prepare_statefulset_desired_replicas(actual),
+                    ),
                 )
 
     def sync_auth_credentials(self):
@@ -315,6 +342,32 @@ class KasprApp(BaseResource):
                 raise kopf.TemporaryError(
                     f"Secret `{self.sasl_credentials.password.secret_name}` not found in `{self.namespace}` namespace."
                 )
+
+    def sync_hpa(self):
+        """Check current state of HPA and create/delete/patch if needed."""
+        hpa: V2HorizontalPodAutoscaler = self.fetch_hpa(
+            self.autoscaling_v2_api, self.hpa_name, self.namespace
+        )
+        # If reconciliation is paused, delete HPA so it does not interfere with manual changes to statefulset
+        if hpa and self.reconciliation_paused:
+            self.delete_hpa(self.autoscaling_v2_api, self.hpa_name, self.namespace)
+            return
+        elif hpa and self.replicas == 0:
+            self.delete_hpa(self.autoscaling_v2_api, self.hpa_name, self.namespace)
+            return
+        elif self.replicas > 0:
+            if not hpa:
+                self.create_hpa(self.autoscaling_v2_api, self.namespace, self.hpa)
+            else:
+                actual = self.prepare_hpa_watch_fields(hpa)
+                desired = self.prepare_hpa_watch_fields(self.hpa)
+                if self.compute_hash(actual) != self.compute_hash(desired):
+                    self.patch_hpa(
+                        self.autoscaling_v2_api,
+                        self.hpa_name,
+                        self.namespace,
+                        hpa=self.prepare_hpa_patch(self.hpa),
+                    )
 
     def with_agents(self, agents: List[KasprAgent]):
         """Apply agent resources to the app."""
@@ -582,10 +635,8 @@ class KasprApp(BaseResource):
             V1EnvVar(
                 name=self.config.env_for("consumer_group_instance_id"),
                 value_from=V1EnvVarSource(
-                    field_ref=V1ObjectFieldSelector(
-                        field_path="metadata.name"
-                    )
-                )
+                    field_ref=V1ObjectFieldSelector(field_path="metadata.name")
+                ),
             )
         )
 
@@ -681,7 +732,7 @@ class KasprApp(BaseResource):
         _envs = {**config_envs}
         _envs.update(overrides)
         return _envs
-    
+
     def prepare_agent_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
         for agent in self.agents if self.agents else []:
@@ -935,7 +986,9 @@ class KasprApp(BaseResource):
                 name=self.component_name, labels=labels, annotations=annotations
             ),
             spec=V1StatefulSetSpec(
-                replicas=self.replicas,
+                replicas=self.replicas
+                if self.replicas == 0
+                else None,  # set only 0 replicas, otherwise we delegate to HPA
                 service_name=self.service_name,
                 update_strategy=V1StatefulSetUpdateStrategy(type="RollingUpdate"),
                 pod_management_policy="Parallel",
@@ -956,14 +1009,27 @@ class KasprApp(BaseResource):
         """Compute hash for stateful set resource."""
         return self.compute_hash(stateful_set.to_dict())
 
-    def prepare_statefulset_patch(self, stateful_set: V1StatefulSet) -> Dict:
+    def prepare_statefulset_patch(
+        self, stateful_set: V1StatefulSet, replicas_override: int = None
+    ) -> Dict:
         """Prepare patch for stateful set resource.
         A statefulset can only have certain fields updated via patch.
         This method should be used to prepare the patch.
+        Args:
+            stateful_set: the desired stateful set
+            replicas: if provided, explicitly overrides the replicas in the stateful set
         """
         patch = []
 
-        if stateful_set.spec.replicas is not None:
+        if replicas_override is not None:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/replicas",
+                    "value": replicas_override,
+                }
+            )
+        elif self.replicas == 0 and stateful_set.spec.replicas is not None:
             patch.append(
                 {
                     "op": "replace",
@@ -1021,9 +1087,142 @@ class KasprApp(BaseResource):
                 "replicas": stateful_set.spec.replicas,
                 "template": {
                     "spec": {
-                        "containers": [{"image": stateful_set.spec.template.spec.containers[0].image}]
+                        "containers": [
+                            {
+                                "image": stateful_set.spec.template.spec.containers[
+                                    0
+                                ].image
+                            }
+                        ]
                     }
+                },
+            }
+        }
+
+    def prepare_statefulset_desired_replicas(self, actual: Dict) -> Dict:
+        """Prepare desired replicas for stateful set.
+        This is used to set the initial replicas when scaling the statefulset from 0 to >0.
+        We set the initial replicas to INITIAL_MAX_REPLICAS to give the HPA metrics to begin
+        scaling over INITIAL_MAX_REPLICAS, if needed.
+        """
+        if actual["spec"]["replicas"] == 0 and self.replicas > 0:
+            return (
+                self.replicas
+                if self.replicas <= self.INITIAL_MAX_REPLICAS
+                else self.INITIAL_MAX_REPLICAS
+            )
+        return None
+
+    def prepare_hpa(self) -> V2HorizontalPodAutoscaler:
+        """Build HPA resource.
+        A horizontal pod autoscaler is used to mitigate common issues stemming from race conditions related to group rebalancing
+        and assignment when starting many pods at once. The HPA is configured to scale up to 4 pods immediately, and then
+        double the number of pods every 30 seconds thereafter until max replicas is reached.
+
+        The exploit here is that we use an average cpu value of 1 millicore which will always drive scale up behavior.
+        """
+        labels, annotations = {}, {}
+        hpa = V2HorizontalPodAutoscaler(
+            api_version="autoscaling/v2",
+            kind="HorizontalPodAutoscaler",
+            metadata=V1ObjectMeta(
+                name=self.hpa_name, labels=labels, annotations=annotations
+            ),
+            spec=V2HorizontalPodAutoscalerSpec(
+                scale_target_ref=V2CrossVersionObjectReference(
+                    api_version="apps/v1",
+                    kind="StatefulSet",
+                    name=self.stateful_set_name,
+                ),
+                min_replicas=1,
+                max_replicas=self.replicas,
+                metrics=[
+                    V2MetricSpec(
+                        type="Resource",
+                        resource=V2ResourceMetricSource(
+                            name="memory",
+                            target=V2MetricTarget(
+                                type="AverageValue",
+                                average_value="1Mi",
+                            ),
+                        ),
+                    )
+                ],
+                behavior=V2HorizontalPodAutoscalerBehavior(
+                    scale_up=V2HPAScalingRules(
+                        policies=[
+                            V2HPAScalingPolicy(
+                                type="Percent",
+                                value=100,
+                                period_seconds=30,
+                            ),
+                            V2HPAScalingPolicy(
+                                type="Pods",
+                                value=4,
+                                period_seconds=30,
+                            ),
+                        ],
+                        select_policy="Max",
+                        stabilization_window_seconds=0,
+                    ),
+                    scale_down=V2HPAScalingRules(
+                        policies=[
+                            V2HPAScalingPolicy(
+                                type="Percent",
+                                value=100,
+                                period_seconds=1,
+                            )
+                        ],
+                        select_policy="Max",
+                        stabilization_window_seconds=0,
+                    ),
+                ),
+            ),
+        )
+        annotations.update(self.prepare_hash_annotation(self.prepare_hpa_hash(hpa)))
+        return hpa
+
+    def prepare_hpa_hash(self, hpa: V2HorizontalPodAutoscaler) -> str:
+        """Compute hash for HPA resource."""
+        return self.compute_hash(hpa.to_dict())
+
+    def prepare_hpa_patch(self, hpa: V2HorizontalPodAutoscaler) -> Dict:
+        """Prepare patch for HPA resource.
+        An HPA can only have certain fields updated via patch.
+        This method should be used to prepare the patch.
+        """
+        patch = []
+
+        if hpa.spec.min_replicas is not None:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/minReplicas",
+                    "value": hpa.spec.min_replicas,
                 }
+            )
+
+        if hpa.spec.max_replicas is not None:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/maxReplicas",
+                    "value": hpa.spec.max_replicas,
+                }
+            )
+
+        return patch
+
+    def prepare_hpa_watch_fields(self, hpa: V2HorizontalPodAutoscaler) -> Dict:
+        """
+        Prepare fields of interest when comparing actual vs desired state.
+        These fields are tracked for changes made outside the operator and are used to
+        determine if a patch is needed.
+        """
+        return {
+            "spec": {
+                "minReplicas": hpa.spec.min_replicas,
+                "maxReplicas": hpa.spec.max_replicas,
             }
         }
 
@@ -1051,12 +1250,28 @@ class KasprApp(BaseResource):
         self.sync_stateful_set()
 
     def patch_replicas(self):
-        self.patch_stateful_set(
-            self.apps_v1_api,
-            self.stateful_set_name,
-            self.namespace,
-            stateful_set={"spec": {"replicas": self.replicas}},
-        )
+        if self.replicas == 0:
+            # If replicas is set to 0, we don't want to patch the HPA as that would
+            # result in an invalid configuration. Instead we just delete the HPA
+            self.delete_hpa(self.autoscaling_v2_api, self.hpa_name, self.namespace)
+            self.patch_stateful_set(
+                self.apps_v1_api,
+                self.stateful_set_name,
+                self.namespace,
+                stateful_set={"spec": {"replicas": self.replicas}},
+            )
+            return
+        else:
+            self.sync_hpa()
+            self.sync_stateful_set()
+
+        # TESTING: Disable replicas patching for now
+        # self.patch_stateful_set(
+        #     self.apps_v1_api,
+        #     self.stateful_set_name,
+        #     self.namespace,
+        #     stateful_set={"spec": {"replicas": self.replicas}},
+        # )
 
     def patch_version(self):
         self.patch_stateful_set(
@@ -1291,6 +1506,7 @@ class KasprApp(BaseResource):
             self.settings_config_map,
             self.service,
             self.stateful_set,
+            self.hpa,
         ]
         kopf.adopt(children)
 
@@ -1321,27 +1537,37 @@ class KasprApp(BaseResource):
     def tables_status(self) -> Dict:
         """Return status of all tables."""
         return [table.info() for table in self.tables]
-    
+
     def fetch_app_status(self) -> Dict:
         """Fetch status of application's statefulset/pods"""
-        stateful_set = self.fetch_stateful_set(self.apps_v1_api, self.stateful_set_name, self.namespace)
+        stateful_set = self.fetch_stateful_set(
+            self.apps_v1_api, self.stateful_set_name, self.namespace
+        )
         if not stateful_set:
             return
-        
-        kaspr_container = next((c for c in stateful_set.spec.template.spec.containers if c.name == "kaspr" and c.image), None)
-        kaspr_ver = kaspr_container.image.split(':')[-1] if kaspr_container else None
-        available_replicas = stateful_set.status.available_replicas if stateful_set.status else 0
 
-        return {
-            "kasprVersion": kaspr_ver,
-            "availableReplicas": available_replicas
-        }
+        kaspr_container = next(
+            (
+                c
+                for c in stateful_set.spec.template.spec.containers
+                if c.name == "kaspr" and c.image
+            ),
+            None,
+        )
+        kaspr_ver = kaspr_container.image.split(":")[-1] if kaspr_container else None
+        available_replicas = (
+            stateful_set.status.available_replicas if stateful_set.status else 0
+        )
+
+        return {"kasprVersion": kaspr_ver, "availableReplicas": available_replicas}
 
     @property
     def reconciliation_paused(self) -> bool:
         """Check if reconciliation is paused."""
-        return "kaspr.io/pause-reconciliation" in self.annotations \
+        return (
+            "kaspr.io/pause-reconciliation" in self.annotations
             and self.annotations["kaspr.io/pause-reconciliation"].lower() == "true"
+        )
 
     @cached_property
     def version(self) -> KasprVersion:
@@ -1366,7 +1592,7 @@ class KasprApp(BaseResource):
     @cached_property
     def definitions_dir_path(self):
         return getattr(self.config, "definitions_dir", self.DEFAULT_DEFINITIONS_DIR)
-    
+
     @cached_property
     def apps_v1_api(self) -> AppsV1Api:
         if self._apps_v1_api is None:
@@ -1378,6 +1604,12 @@ class KasprApp(BaseResource):
         if self._core_v1_api is None:
             self._core_v1_api = CoreV1Api()
         return self._core_v1_api
+
+    @cached_property
+    def autoscaling_v2_api(self) -> AutoscalingV2Api:
+        if self._autoscaling_v2_api is None:
+            self._autoscaling_v2_api = AutoscalingV2Api()
+        return self._autoscaling_v2_api
 
     @cached_property
     def custom_objects_api(self) -> CustomObjectsApi:
@@ -1518,6 +1750,12 @@ class KasprApp(BaseResource):
         return self._stateful_set_hash
 
     @cached_property
+    def hpa_hash(self) -> str:
+        if self._hpa_hash is None:
+            self._hpa_hash = self.prepare_hpa_hash(self.hpa)
+        return self._hpa_hash
+
+    @cached_property
     def agent_pod_volumes(self) -> List[V1Volume]:
         if self._agent_pod_volumes is None:
             self._agent_pod_volumes = self.prepare_agent_volumes()
@@ -1534,6 +1772,12 @@ class KasprApp(BaseResource):
         if self._table_pod_volumes is None:
             self._table_pod_volumes = self.prepare_table_volumes()
         return self._table_pod_volumes
+
+    @cached_property
+    def hpa(self) -> V2HorizontalPodAutoscaler:
+        if self._hpa is None:
+            self._hpa = self.prepare_hpa()
+        return self._hpa
 
     @cached_property
     def agents_hash(self) -> str:
@@ -1567,4 +1811,3 @@ class KasprApp(BaseResource):
                 else None
             )
         return self._tables_hash
-    
