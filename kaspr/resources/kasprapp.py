@@ -319,6 +319,13 @@ class KasprApp(BaseResource):
         else:
             actual = self.prepare_statefulset_watch_fields(stateful_set)
             desired = self.prepare_statefulset_watch_fields(self.stateful_set)
+            
+            replicas_override = self.prepare_statefulset_desired_replicas(actual)
+            if replicas_override is not None:
+                desired["spec"]["replicas"] = replicas_override
+            elif desired["spec"]["replicas"] is None:
+                desired["spec"]["replicas"] = actual["spec"]["replicas"]
+
             if self.compute_hash(actual) != self.compute_hash(desired):
                 self.patch_stateful_set(
                     self.apps_v1_api,
@@ -1264,14 +1271,6 @@ class KasprApp(BaseResource):
         else:
             self.sync_hpa()
             self.sync_stateful_set()
-
-        # TESTING: Disable replicas patching for now
-        # self.patch_stateful_set(
-        #     self.apps_v1_api,
-        #     self.stateful_set_name,
-        #     self.namespace,
-        #     stateful_set={"spec": {"replicas": self.replicas}},
-        # )
 
     def patch_version(self):
         self.patch_stateful_set(
