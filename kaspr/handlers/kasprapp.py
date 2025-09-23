@@ -798,3 +798,13 @@ async def monitor_related_resources(
 async def periodic_reconciliation(name, **kwargs):
     """Reconcile KasprApp resources."""
     await request_reconciliation(name, **kwargs)
+
+@kopf.on.field(kind=APP_KIND, field='metadata.annotations', annotations={'kaspr.io/pause-reconciliation': kopf.PRESENT})
+async def on_reconciliation_paused(name, diff, spec, namespace, logger: Logger, **kwargs):
+    """Handle reconciliation paused event."""
+    await request_reconciliation(name, **kwargs)
+
+@kopf.on.field(kind=APP_KIND, field='metadata.annotations', annotations={'kaspr.io/pause-reconciliation': kopf.ABSENT})
+async def on_reconciliation_resumed(name, diff, spec, namespace, logger: Logger, **kwargs):
+    """Handle reconciliation resumed event."""
+    await request_reconciliation(name, **kwargs)

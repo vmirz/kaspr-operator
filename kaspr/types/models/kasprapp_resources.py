@@ -42,3 +42,7 @@ class KasprAppResources:
     @classmethod
     def stateful_set_name(self, cluster_name: str):
         return self.component_name(cluster_name)
+    
+    @classmethod
+    def hpa_name(self, cluster_name: str):
+        return f"{cluster_name}-app-hpa"
