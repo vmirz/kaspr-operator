@@ -1161,12 +1161,12 @@ class KasprApp(BaseResource):
                             V2HPAScalingPolicy(
                                 type="Percent",
                                 value=100,
-                                period_seconds=30,
+                                period_seconds=60,
                             ),
                             V2HPAScalingPolicy(
                                 type="Pods",
                                 value=4,
-                                period_seconds=30,
+                                period_seconds=60,
                             ),
                         ],
                         select_policy="Max",
