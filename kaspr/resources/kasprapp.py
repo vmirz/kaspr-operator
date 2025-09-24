@@ -2,6 +2,7 @@ import kopf
 import time
 from typing import List, Dict, Optional
 from kaspr.utils.objects import cached_property
+from kaspr.types.settings import Settings
 from kaspr.types.models.kasprapp_spec import KasprAppSpec
 from kaspr.types.models.storage import KasprAppStorage
 from kaspr.types.models.config import KasprAppConfig
@@ -75,6 +76,8 @@ from kaspr.common.models.labels import Labels
 class KasprApp(BaseResource):
     """Kaspr App kubernetes resource."""
 
+    conf: Settings
+
     KIND = "KasprApp"
     GROUP_NAME = "kaspr.io"
     GROUP_VERSION = "v1alpha1"
@@ -89,7 +92,7 @@ class KasprApp(BaseResource):
     DEFAULT_TABLE_DIR = "/var/lib/data/tables"
     DEFAULT_DEFINITIONS_DIR = "/var/lib/data/definitions"
     DEFAULT_WEB_PORT = 6065
-    INITIAL_MAX_REPLICAS = 4
+    INITIAL_MAX_REPLICAS = 1
 
     replicas: int
     image: str
@@ -1115,8 +1118,8 @@ class KasprApp(BaseResource):
         if actual["spec"]["replicas"] == 0 and self.replicas > 0:
             return (
                 self.replicas
-                if self.replicas <= self.INITIAL_MAX_REPLICAS
-                else self.INITIAL_MAX_REPLICAS
+                if self.replicas <= self.conf.initial_max_replicas
+                else self.conf.initial_max_replicas
             )
         return None
 
@@ -1161,12 +1164,12 @@ class KasprApp(BaseResource):
                             V2HPAScalingPolicy(
                                 type="Percent",
                                 value=100,
-                                period_seconds=120,
+                                period_seconds=self.conf.hpa_scale_up_policy_period_seconds,
                             ),
                             V2HPAScalingPolicy(
                                 type="Pods",
-                                value=4,
-                                period_seconds=120,
+                                value=self.conf.hpa_scale_up_policy_pods_per_step,
+                                period_seconds=self.conf.hpa_scale_up_policy_period_seconds,
                             ),
                         ],
                         select_policy="Max",
@@ -1230,6 +1233,11 @@ class KasprApp(BaseResource):
             "spec": {
                 "minReplicas": hpa.spec.min_replicas,
                 "maxReplicas": hpa.spec.max_replicas,
+                "behavior": {
+                    "scaleUp": {
+                        "policies": hpa.spec.behavior.scale_up.policies[0].period_seconds
+                    }
+                }
             }
         }
 
@@ -1371,7 +1379,7 @@ class KasprApp(BaseResource):
             )
             # We need to wait a bit to allow k8s to actually execute the deletion
             # before moving on to recreate the statefulset.
-            time.sleep(5)
+            time.sleep(self.conf.statefulset_deletion_timeout_seconds)
         self.unite()
         # Recreate the statefulset with new storage size PVC template
         self.create_stateful_set(self.apps_v1_api, self.namespace, self.stateful_set)
