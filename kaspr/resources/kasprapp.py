@@ -322,7 +322,7 @@ class KasprApp(BaseResource):
         else:
             actual = self.prepare_statefulset_watch_fields(stateful_set)
             desired = self.prepare_statefulset_watch_fields(self.stateful_set)
-            
+
             replicas_override = self.prepare_statefulset_desired_replicas(actual)
             if replicas_override is not None:
                 desired["spec"]["replicas"] = replicas_override
@@ -336,7 +336,9 @@ class KasprApp(BaseResource):
                     self.namespace,
                     stateful_set=self.prepare_statefulset_patch(
                         self.stateful_set,
-                        replicas_override=self.prepare_statefulset_desired_replicas(actual),
+                        replicas_override=self.prepare_statefulset_desired_replicas(
+                            actual
+                        ),
                     ),
                 )
 
@@ -1221,6 +1223,33 @@ class KasprApp(BaseResource):
                 }
             )
 
+        if (
+            hpa.spec.behavior
+            and hpa.spec.behavior.scale_up
+            and hpa.spec.behavior.scale_up.policies
+        ):
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/behavior/scaleUp/policies/0/periodSeconds",
+                    "value": hpa.spec.behavior.scale_up.policies[0].period_seconds,
+                }
+            )
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/behavior/scaleUp/policies/1/periodSeconds",
+                    "value": hpa.spec.behavior.scale_up.policies[1].period_seconds,
+                }
+            )
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/behavior/scaleUp/policies/1/value",
+                    "value": hpa.spec.behavior.scale_up.policies[1].value,
+                }
+            )
+
         return patch
 
     def prepare_hpa_watch_fields(self, hpa: V2HorizontalPodAutoscaler) -> Dict:
@@ -1235,7 +1264,9 @@ class KasprApp(BaseResource):
                 "maxReplicas": hpa.spec.max_replicas,
                 "behavior": {
                     "scaleUp": {
-                        "policies": hpa.spec.behavior.scale_up.policies[0].period_seconds
+                        "policies": hpa.spec.behavior.scale_up.policies[
+                            0
+                        ].period_seconds
                     }
                 }
             }
