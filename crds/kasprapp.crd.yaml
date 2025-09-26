@@ -1001,6 +1001,9 @@ spec:
       - name: Ready
         jsonPath: .status.conditions[?(@.type=="Ready")].status
         type: string
-      - name: Kaspr
+      - name: Version
         jsonPath: .status.kasprVersion
         type: string
+      - name: Replicas
+        jsonPath: .status.availableReplicas
+        type: integer

@@ -1128,10 +1128,10 @@ class KasprApp(BaseResource):
     def prepare_hpa(self) -> V2HorizontalPodAutoscaler:
         """Build HPA resource.
         A horizontal pod autoscaler is used to mitigate common issues stemming from race conditions related to group rebalancing
-        and assignment when starting many pods at once. The HPA is configured to scale up to 4 pods immediately, and then
-        double the number of pods every 30 seconds thereafter until max replicas is reached.
+        and assignment when starting many pods at once. The HPA is configured to scale up to N pods immediately, and then
+        double the number of pods every Y seconds thereafter until max replicas is reached.
 
-        The exploit here is that we use an average cpu value of 1 millicore which will always drive scale up behavior.
+        The exploit here is that we use an average memory value of 1Mi which will always drive scale up behavior.
         """
         labels, annotations = {}, {}
         hpa = V2HorizontalPodAutoscaler(
@@ -1264,9 +1264,14 @@ class KasprApp(BaseResource):
                 "maxReplicas": hpa.spec.max_replicas,
                 "behavior": {
                     "scaleUp": {
-                        "policies": hpa.spec.behavior.scale_up.policies[
-                            0
-                        ].period_seconds
+                        "policies": [
+                            {
+                                "value": hpa.spec.behavior.scale_up.policies[0].value,
+                                "periodSeconds": hpa.spec.behavior.scale_up.policies[
+                                    0
+                                ].period_seconds,
+                            }
+                        ]
                     }
                 }
             }
@@ -1597,7 +1602,7 @@ class KasprApp(BaseResource):
             stateful_set.status.available_replicas if stateful_set.status else 0
         )
 
-        return {"kasprVersion": kaspr_ver, "availableReplicas": available_replicas}
+        return {"kasprVersion": kaspr_ver, "availableReplicas": available_replicas, "desiredReplicas": self.replicas}
 
     @property
     def reconciliation_paused(self) -> bool:
