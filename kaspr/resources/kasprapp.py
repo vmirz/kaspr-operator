@@ -97,6 +97,7 @@ class KasprApp(BaseResource):
     replicas: int
     image: str
     service_name: str
+    headless_service_name: str
     service_account_name: str
     config_map_name: str
     persistent_volume_claim_name: str
@@ -128,6 +129,8 @@ class KasprApp(BaseResource):
     _autoscaling_v2_api: AutoscalingV2Api = None
     _service: V1Service = None
     _service_hash: str = None
+    _headless_service: V1Service = None
+    _headless_service_hash: str = None
     _service_account: V1ServiceAccount = None
     _service_account_hash: str = None
     _persistent_volume_claim: V1PersistentVolumeClaim = None
@@ -210,6 +213,7 @@ class KasprApp(BaseResource):
         app = KasprApp(name, kind, namespace, self.KIND)
         app.annotations = annotations
         app.service_name = KasprAppResources.service_name(name)
+        app.headless_service_name = KasprAppResources.headless_service_name(name)
         app.service_account_name = KasprAppResources.service_account_name(name)
         app.config_map_name = KasprAppResources.settings_config_name(name)
         app.stateful_set_name = KasprAppResources.stateful_set_name(name)
@@ -250,6 +254,7 @@ class KasprApp(BaseResource):
         """Compare current state with desired state for all child resources and create/patch as needed."""
         self.sync_auth_credentials()
         self.sync_service()
+        self.sync_headless_service()
         self.sync_service_account()
         self.sync_settings_config_map()
         self.sync_hpa()
@@ -271,6 +276,24 @@ class KasprApp(BaseResource):
                     self.service_name,
                     self.namespace,
                     service=self.prepare_service_patch(self.service),
+                )
+
+    def sync_headless_service(self):
+        """Check current state of headless service and create/patch if needed"""
+        headless_service: V1Service = self.fetch_service(
+            self.core_v1_api, self.headless_service_name, self.namespace
+        )
+        if not headless_service:
+            self.create_service(self.core_v1_api, self.namespace, self.headless_service)
+        else:
+            actual = self.prepare_headless_service_watch_fields(headless_service)
+            desired = self.prepare_headless_service_watch_fields(self.headless_service)
+            if self.compute_hash(actual) != self.compute_hash(desired):
+                self.patch_service(
+                    self.core_v1_api,
+                    self.service_name,
+                    self.namespace,
+                    service=self.prepare_headless_service_patch(self.headless_service),
                 )
 
     def sync_service_account(self):
@@ -315,6 +338,10 @@ class KasprApp(BaseResource):
         stateful_set: V1StatefulSet = self.fetch_stateful_set(
             self.apps_v1_api, self.stateful_set_name, self.namespace
         )
+        if stateful_set and self.statefulset_needs_migrations(stateful_set):
+            self.recreate_statefulset(stateful_set)
+            return
+
         if not stateful_set:
             self.create_stateful_set(
                 self.apps_v1_api, self.namespace, self.stateful_set
@@ -380,6 +407,19 @@ class KasprApp(BaseResource):
                         self.namespace,
                         hpa=self.prepare_hpa_patch(self.hpa),
                     )
+
+    def recreate_statefulset(self, stateful_set: V1StatefulSet):
+        """Check if statefulset needs migrations and perform them."""        
+        self.delete_stateful_set(
+            self.apps_v1_api,
+            self.stateful_set_name,
+            self.namespace,
+            delete_options=V1DeleteOptions(propagation_policy="Orphan"),
+        )
+        # We need to wait a bit to allow k8s to actually execute the deletion
+        # before moving on to recreate the statefulset.
+        time.sleep(self.conf.statefulset_deletion_timeout_seconds)
+        self.sync_stateful_set()
 
     def with_agents(self, agents: List[KasprAgent]):
         """Apply agent resources to the app."""
@@ -502,6 +542,64 @@ class KasprApp(BaseResource):
             },
         }
 
+    def prepare_headless_service(self) -> V1Service:
+        """Build headless service resource."""
+        annotations = {}
+        if self.template_service.metadata and self.template_service.metadata.annotations:
+            annotations = self.template_service.metadata.annotations
+        labels = self.template_service.metadata.labels or {}
+        labels.update(self.labels.as_dict())
+        service = V1Service(
+            api_version="v1",
+            kind="Service",
+            metadata=V1ObjectMeta(
+                name=self.headless_service_name, labels=labels, annotations=annotations
+            ),
+            spec=V1ServiceSpec(
+                selector=self.labels.kasper_label_selectors().as_dict(),
+                cluster_ip="None",
+                publish_not_ready_addresses=True,
+                ports=[
+                    V1ServicePort(
+                        name=self.WEB_PORT_NAME,
+                        protocol="TCP",
+                        port=self.web_port,
+                        target_port=self.web_port,
+                    )
+                ],
+            ),
+        )
+        return service
+    
+    def prepare_headless_service_hash(self, service: V1Service) -> str:
+        """Compute hash for app's headless service resource."""
+        return self.compute_hash(service.to_dict())
+    
+    def prepare_headless_service_patch(self, service: V1Service) -> Dict:
+        """Prepare patch for headless service resource.
+        A service can only have certain fields updated via patch. 
+        This method should be used to prepare the patch.
+        """
+        patch = []
+
+        if service.spec.ports:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/ports",
+                    "value": service.spec.ports,
+                }
+            )
+
+        return patch        
+
+    def prepare_headless_service_watch_fields(self, service: V1Service) -> Dict:
+        return {
+            "spec": {
+                "ports": service.spec.ports,
+            },
+        }
+    
     def prepare_service_account(self) -> V1ServiceAccount:
         """Build service account resource."""
         labels, annotations = self.labels.as_dict(), {}
@@ -650,6 +748,11 @@ class KasprApp(BaseResource):
                     field_ref=V1ObjectFieldSelector(field_path="metadata.name")
                 ),
             )
+        )
+
+        # include headless service hash
+        env_vars.append(
+            V1EnvVar(name="HEADLESS_SERVICE_HASH", value=self.headless_service_hash)
         )
 
         # include config hash
@@ -1001,7 +1104,7 @@ class KasprApp(BaseResource):
                 replicas=self.replicas
                 if self.replicas == 0
                 else None,  # set only 0 replicas, otherwise we delegate to HPA
-                service_name=self.service_name,
+                service_name=self.headless_service_name,
                 update_strategy=V1StatefulSetUpdateStrategy(type="RollingUpdate"),
                 pod_management_policy="Parallel",
                 selector=V1LabelSelector(
@@ -1033,6 +1136,8 @@ class KasprApp(BaseResource):
         """
         patch = []
 
+        spec: V1StatefulSetSpec = stateful_set.spec
+
         if replicas_override is not None:
             patch.append(
                 {
@@ -1041,12 +1146,12 @@ class KasprApp(BaseResource):
                     "value": replicas_override,
                 }
             )
-        elif self.replicas == 0 and stateful_set.spec.replicas is not None:
+        elif self.replicas == 0 and spec.replicas is not None:
             patch.append(
                 {
                     "op": "replace",
                     "path": "/spec/replicas",
-                    "value": stateful_set.spec.replicas,
+                    "value": spec.replicas,
                 }
             )
 
@@ -1055,7 +1160,7 @@ class KasprApp(BaseResource):
                 {
                     "op": "replace",
                     "path": "/spec/template",
-                    "value": stateful_set.spec.template,
+                    "value": spec.template,
                 }
             )
 
@@ -1064,7 +1169,7 @@ class KasprApp(BaseResource):
                 {
                     "op": "replace",
                     "path": "/spec/updateStrategy",
-                    "value": stateful_set.spec.update_strategy,
+                    "value": spec.update_strategy,
                 }
             )
 
@@ -1073,7 +1178,7 @@ class KasprApp(BaseResource):
                 {
                     "op": "replace",
                     "path": "/spec/minReadySeconds",
-                    "value": stateful_set.spec.min_ready_seconds,
+                    "value": spec.min_ready_seconds,
                 }
             )
 
@@ -1082,8 +1187,17 @@ class KasprApp(BaseResource):
                 {
                     "op": "replace",
                     "path": "/spec/persistentVolumeClaimRetentionPolicy",
-                    "value": stateful_set.spec.persistent_volume_claim_retention_policy,
+                    "value": spec.persistent_volume_claim_retention_policy,
                 }
+            )
+
+        if spec.service_name:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/spec/serviceName",
+                    "value": spec.service_name,
+                }                
             )
 
         return patch
@@ -1298,6 +1412,7 @@ class KasprApp(BaseResource):
         self.sync_service_account()
         self.sync_settings_config_map()
         self.sync_service()
+        self.sync_headless_service()
         self.sync_stateful_set()
 
     def patch_replicas(self):
@@ -1548,6 +1663,7 @@ class KasprApp(BaseResource):
             self.service_account,
             self.settings_config_map,
             self.service,
+            self.headless_service,
             self.stateful_set,
             self.hpa,
         ]
@@ -1604,6 +1720,18 @@ class KasprApp(BaseResource):
 
         return {"kasprVersion": kaspr_ver, "availableReplicas": available_replicas, "desiredReplicas": self.replicas}
 
+    def statefulset_needs_migrations(self, stateful_set: V1StatefulSet) -> bool:
+        """Check if statefulset needs a migration."""
+
+        # Needs migration due to change of service name to headless service name
+        # TODO: Remove after upgrade to v0.8.0
+        # ----
+        if stateful_set is None:
+            return False
+        if stateful_set.spec.service_name != self.headless_service_name:
+            return True
+        return False
+    
     @property
     def reconciliation_paused(self) -> bool:
         """Check if reconciliation is paused."""
@@ -1671,6 +1799,18 @@ class KasprApp(BaseResource):
         if self._service_hash is None:
             self._service_hash = self.prepare_service_hash(self.service)
         return self._service_hash
+    
+    @cached_property
+    def headless_service(self) -> V1Service:
+        if self._headless_service is None:
+            self._headless_service = self.prepare_headless_service()
+        return self._headless_service
+    
+    @cached_property
+    def headless_service_hash(self) -> str:
+        if self._headless_service is None:
+            self._headless_service = self.prepare_headless_service_hash(self.headless_service)
+        return self._headless_service_hash
 
     @cached_property
     def service_account(self) -> V1ServiceAccount:

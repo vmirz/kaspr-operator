@@ -23,6 +23,16 @@ class KasprAppResources:
         return f"{self.service_name(cluster_name)}.{namespace}.svc"
 
     @classmethod
+    def headless_service_name(self, cluster_name: str):
+        """Returns the name of the headless service for a cluster of the given name."""
+        return f"{cluster_name}-app"
+    
+    @classmethod
+    def qualified_headless_service_name(self, cluster_name: str, namespace: str):
+        """Returns qualified name of the headless service which works across different namespaces."""
+        return f"{self.headless_service_name(cluster_name)}.{namespace}.svc"
+    
+    @classmethod
     def url(self, cluster_name: str, namespace: str, port: int):
         """Returns the URL of the KasprApp API for a KasprApp cluster of the given name."""
         return f"http://{self.qualified_service_name(cluster_name, namespace)}:{port}"
