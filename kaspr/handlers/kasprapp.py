@@ -73,9 +73,10 @@ async def update_status(
     """Update KasprApp status based on the actual state of the app."""
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
-    try:
+    _status = status or {}    
+    try:        
         gen = meta.get("generation", 0)
-        cur_gen = status.get("observedGeneration") if status else None
+        cur_gen = _status.get("observedGeneration")
 
         # Always update observedGeneration to match the current generation
         patch.status["observedGeneration"] = gen
@@ -86,10 +87,16 @@ async def update_status(
             return
 
         # Always update kasprVersion if changed
-        if _actual_status.get("kasprVersion") and _actual_status["kasprVersion"] != (status or {}).get("kasprVersion"):
+        if _actual_status.get("kasprVersion") and _actual_status["kasprVersion"] != _status.get("kasprVersion"):
             patch.status["kasprVersion"] = _actual_status["kasprVersion"]
 
-        conds = (status or {}).get("conditions", [])
+        if _actual_status.get("desiredReplicas") is not None and _actual_status["desiredReplicas"] != _status.get("desiredReplicas"):
+            patch.status["desiredReplicas"] = _actual_status["desiredReplicas"]
+            
+        if _actual_status.get("availableReplicas") is not None and _actual_status["availableReplicas"] != _status.get("availableReplicas"):
+            patch.status["availableReplicas"] = _actual_status["availableReplicas"]
+
+        conds = _status.get("conditions", [])
 
         # If we are reconciling a new generation, set Progressing True, Ready False
         if cur_gen != gen:
