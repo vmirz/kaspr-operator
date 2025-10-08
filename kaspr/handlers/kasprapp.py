@@ -82,7 +82,7 @@ async def update_status(
         patch.status["observedGeneration"] = gen
 
         # Get the current status of the app
-        _actual_status = app.fetch_app_status()
+        _actual_status = await app.fetch_app_status()
         if not _actual_status:
             return
 
