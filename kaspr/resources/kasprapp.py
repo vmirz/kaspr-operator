@@ -1,3 +1,4 @@
+import asyncio
 import kopf
 import time
 from typing import List, Dict, Optional
@@ -71,12 +72,14 @@ from kubernetes.client import (
 from kaspr.resources.base import BaseResource
 from kaspr.resources import KasprAgent, KasprWebView, KasprTable
 from kaspr.common.models.labels import Labels
+from kaspr.web import KasprWebClient
 
 
 class KasprApp(BaseResource):
     """Kaspr App kubernetes resource."""
 
     conf: Settings
+    web_client: KasprWebClient
 
     KIND = "KasprApp"
     GROUP_NAME = "kaspr.io"
@@ -409,7 +412,7 @@ class KasprApp(BaseResource):
                     )
 
     def recreate_statefulset(self, stateful_set: V1StatefulSet):
-        """Check if statefulset needs migrations and perform them."""        
+        """Check if statefulset needs migrations and perform them."""
         self.delete_stateful_set(
             self.apps_v1_api,
             self.stateful_set_name,
@@ -545,7 +548,10 @@ class KasprApp(BaseResource):
     def prepare_headless_service(self) -> V1Service:
         """Build headless service resource."""
         annotations = {}
-        if self.template_service.metadata and self.template_service.metadata.annotations:
+        if (
+            self.template_service.metadata
+            and self.template_service.metadata.annotations
+        ):
             annotations = self.template_service.metadata.annotations
         labels = self.template_service.metadata.labels or {}
         labels.update(self.labels.as_dict())
@@ -570,14 +576,14 @@ class KasprApp(BaseResource):
             ),
         )
         return service
-    
+
     def prepare_headless_service_hash(self, service: V1Service) -> str:
         """Compute hash for app's headless service resource."""
         return self.compute_hash(service.to_dict())
-    
+
     def prepare_headless_service_patch(self, service: V1Service) -> Dict:
         """Prepare patch for headless service resource.
-        A service can only have certain fields updated via patch. 
+        A service can only have certain fields updated via patch.
         This method should be used to prepare the patch.
         """
         patch = []
@@ -591,7 +597,7 @@ class KasprApp(BaseResource):
                 }
             )
 
-        return patch        
+        return patch
 
     def prepare_headless_service_watch_fields(self, service: V1Service) -> Dict:
         return {
@@ -599,7 +605,7 @@ class KasprApp(BaseResource):
                 "ports": service.spec.ports,
             },
         }
-    
+
     def prepare_service_account(self) -> V1ServiceAccount:
         """Build service account resource."""
         labels, annotations = self.labels.as_dict(), {}
@@ -750,9 +756,21 @@ class KasprApp(BaseResource):
             )
         )
 
-        # include headless service hash
+        # include web host as FQDN of the pod
+        # e.g. <pod_name>.<headless_service_name>.<namespace>.svc
         env_vars.append(
-            V1EnvVar(name="HEADLESS_SERVICE_HASH", value=self.headless_service_hash)
+            V1EnvVar(
+                name="POD_NAME",
+                value_from=V1EnvVarSource(
+                    field_ref=V1ObjectFieldSelector(field_path="metadata.name")
+                ),
+            )
+        )
+        env_vars.append(
+            V1EnvVar(
+                name=self.config.env_for("web_host"),
+                value=f"$(POD_NAME).{self.headless_service_name}.{self.namespace}.svc.cluster.local",
+            )
         )
 
         # include config hash
@@ -1197,7 +1215,7 @@ class KasprApp(BaseResource):
                     "op": "replace",
                     "path": "/spec/serviceName",
                     "value": spec.service_name,
-                }                
+                }
             )
 
         return patch
@@ -1387,7 +1405,7 @@ class KasprApp(BaseResource):
                             }
                         ]
                     }
-                }
+                },
             }
         }
 
@@ -1697,7 +1715,7 @@ class KasprApp(BaseResource):
         """Return status of all tables."""
         return [table.info() for table in self.tables]
 
-    def fetch_app_status(self) -> Dict:
+    async def fetch_app_status(self) -> Dict:
         """Fetch status of application's statefulset/pods"""
         stateful_set = self.fetch_stateful_set(
             self.apps_v1_api, self.stateful_set_name, self.namespace
@@ -1705,7 +1723,7 @@ class KasprApp(BaseResource):
         if not stateful_set:
             return
 
-        kaspr_container = next(
+        kaspr_container: V1Container = next(
             (
                 c
                 for c in stateful_set.spec.template.spec.containers
@@ -1713,12 +1731,88 @@ class KasprApp(BaseResource):
             ),
             None,
         )
+
+        if stateful_set.status.available_replicas > 0 and kaspr_container:
+            # Fetch status from all workers using dedicated method
+            worker_statuses = await self.fetch_all_worker_statuses(
+                stateful_set.status.available_replicas
+            )
+            print(f"Fetched statuses from workers: {worker_statuses}")
+
         kaspr_ver = kaspr_container.image.split(":")[-1] if kaspr_container else None
         available_replicas = (
             stateful_set.status.available_replicas if stateful_set.status else 0
         )
 
-        return {"kasprVersion": kaspr_ver, "availableReplicas": available_replicas, "desiredReplicas": self.replicas}
+        return {
+            "kasprVersion": kaspr_ver,
+            "availableReplicas": available_replicas,
+            "desiredReplicas": self.replicas,
+        }
+
+    async def fetch_all_worker_statuses(self, available_replicas: int) -> Dict[int, Dict]:
+        """Fetch status from all available worker instances concurrently.
+        
+        Args:
+            available_replicas: Number of available replicas to check
+            
+        Returns:
+            Dictionary mapping worker index to status data for successful calls
+            
+        Raises:
+            Exception: If timeout occurs during status fetching
+        """
+        if not self.conf.client_status_check_enabled:
+            return {}
+            
+        async def fetch_worker_status(idx: int):
+            """Fetch status from a single worker."""
+            try:
+                url = self.prepare_worker_url(idx)
+                status = await self.web_client.get_status(url)
+                return idx, status
+            except Exception as e:
+                print(f"Failed to get status from Kaspr instance {idx}: {e}")
+                return idx, None
+        
+        # Create tasks for all workers
+        tasks = [
+            fetch_worker_status(idx) 
+            for idx in range(available_replicas)
+        ]
+        
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=5.0
+            )
+            
+            # Filter out failed calls and collect successful results
+            worker_statuses = {}
+            for result in results:
+                if isinstance(result, Exception):
+                    # This shouldn't happen since we handle exceptions in fetch_worker_status
+                    continue
+                idx, status = result
+                if status is not None:
+                    worker_statuses[idx] = status
+                    print(f"Kaspr instance {idx} status: {status}")
+            
+            if not worker_statuses:
+                print("Warning: All worker status checks failed")
+                
+            return worker_statuses
+            
+        except asyncio.TimeoutError:
+            raise Exception("Timeout: Failed to fetch worker statuses within 5 seconds")
+
+    def prepare_worker_url(self, pod_index: int) -> str:
+        """Prepare the worker URL for a given pod index."""
+        return f"http://{self.prepare_fqdn(pod_index)}:{self.web_port}"
+
+    def prepare_fqdn(self, pod_index: int) -> str:
+        """Prepare the fully qualified domain name for a given pod index."""
+        return f"{self.component_name}-{pod_index}.{self.headless_service_name}.{self.namespace}.svc.cluster.local"
 
     def statefulset_needs_migrations(self, stateful_set: V1StatefulSet) -> bool:
         """Check if statefulset needs a migration."""
@@ -1731,7 +1825,7 @@ class KasprApp(BaseResource):
         if stateful_set.spec.service_name != self.headless_service_name:
             return True
         return False
-    
+
     @property
     def reconciliation_paused(self) -> bool:
         """Check if reconciliation is paused."""
@@ -1799,17 +1893,19 @@ class KasprApp(BaseResource):
         if self._service_hash is None:
             self._service_hash = self.prepare_service_hash(self.service)
         return self._service_hash
-    
+
     @cached_property
     def headless_service(self) -> V1Service:
         if self._headless_service is None:
             self._headless_service = self.prepare_headless_service()
         return self._headless_service
-    
+
     @cached_property
     def headless_service_hash(self) -> str:
         if self._headless_service is None:
-            self._headless_service = self.prepare_headless_service_hash(self.headless_service)
+            self._headless_service = self.prepare_headless_service_hash(
+                self.headless_service
+            )
         return self._headless_service_hash
 
     @cached_property

@@ -56,6 +56,10 @@ STATEFULSET_DELETION_TIMEOUT_SECONDS = int(
     _getenv("STATEFULSET_DELETION_TIMEOUT_SECONDS", 5)
 )
 
+#: Seconds to wait for statefulset deletion to complete prior to resizing disk
+CLIENT_STATUS_CHECK_ENABLED = bool(
+    _getenv("CLIENT_STATUS_CHECK_ENABLED", True)
+)
 
 class Settings:
     """Operator settings"""
@@ -64,6 +68,7 @@ class Settings:
     hpa_scale_up_policy_pods_per_step: int = HPA_SCALE_UP_POLICY_PODS_PER_STEP
     hpa_scale_up_policy_period_seconds: int = HPA_SCALE_UP_POLICY_PERIOD_SECONDS
     statefulset_deletion_timeout_seconds: int = STATEFULSET_DELETION_TIMEOUT_SECONDS
+    client_status_check_enabled: bool = CLIENT_STATUS_CHECK_ENABLED
 
     def __init__(
         self,
@@ -72,6 +77,7 @@ class Settings:
         hpa_scale_up_policy_pods_per_step: int = None,
         hpa_scale_up_policy_period_seconds: int = None,
         statefulset_deletion_timeout_seconds: int = None,
+        client_status_check_enabled: bool = None,
         **kwargs,
     ):
         if initial_max_replicas is not None:
@@ -87,3 +93,5 @@ class Settings:
             self.statefulset_deletion_timeout_seconds = (
                 statefulset_deletion_timeout_seconds
             )
+        if client_status_check_enabled is not None:
+            self.client_status_check_enabled = client_status_check_enabled

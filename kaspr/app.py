@@ -5,13 +5,15 @@ import kaspr.handlers.kaspragent as kaspragent
 import kaspr.handlers.kasprwebview as kasprwebview
 from kaspr.types.settings import Settings
 from kaspr.resources.kasprapp import KasprApp
+from kaspr.web import KasprWebClient
 
 # Configure Kopf settings
 @kopf.on.startup()
-def configure_settings(settings: kopf.OperatorSettings, memo: kopf.Memo, **kwargs):
+async def setup(settings: kopf.OperatorSettings, memo: kopf.Memo, **kwargs):
 
-    memo.conf = Settings()
+    memo.conf = Settings()  
     KasprApp.conf = memo.conf
+    KasprApp.web_client = KasprWebClient()
 
     # Limit the number of concurrent workers to prevent flooding the API
     settings.batching.worker_limit = 2
