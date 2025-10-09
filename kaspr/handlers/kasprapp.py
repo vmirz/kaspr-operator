@@ -14,7 +14,7 @@ from kaspr.types.schemas import (
     KasprTableSpecSchema,
 )
 from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable
-from kaspr.utils.helpers import utc_now, upsert_condition
+from kaspr.utils.helpers import upsert_condition, deep_compare_dict
 
 APP_KIND = "KasprApp"
 
@@ -95,6 +95,10 @@ async def update_status(
             
         if _actual_status.get("availableReplicas") is not None and _actual_status["availableReplicas"] != _status.get("availableReplicas"):
             patch.status["availableReplicas"] = _actual_status["availableReplicas"]
+
+        # Update members status if changed (using deep comparison for nested data)
+        if _actual_status.get("members") is not None and not deep_compare_dict(_actual_status["members"], _status.get("members")):
+            patch.status["members"] = _actual_status["members"]
 
         conds = _status.get("conditions", [])
 
