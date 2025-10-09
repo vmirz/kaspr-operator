@@ -56,7 +56,7 @@ STATEFULSET_DELETION_TIMEOUT_SECONDS = int(
     _getenv("STATEFULSET_DELETION_TIMEOUT_SECONDS", 5)
 )
 
-#: Seconds to wait for statefulset deletion to complete prior to resizing disk
+#: Enable periodic status check calls to all kaspr workers
 CLIENT_STATUS_CHECK_ENABLED = bool(
     _getenv("CLIENT_STATUS_CHECK_ENABLED", True)
 )
