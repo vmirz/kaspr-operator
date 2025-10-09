@@ -1733,11 +1733,10 @@ class KasprApp(BaseResource):
         )
 
         if stateful_set.status.available_replicas > 0 and kaspr_container:
-            # Fetch status from all workers using dedicated method
-            worker_statuses = await self.fetch_all_worker_statuses(
+            # Fetch status from all members using dedicated method
+            member_statuses = await self.fetch_all_member_statuses(
                 stateful_set.status.available_replicas
             )
-            print(f"Fetched statuses from workers: {worker_statuses}")
 
         kaspr_ver = kaspr_container.image.split(":")[-1] if kaspr_container else None
         available_replicas = (
@@ -1748,9 +1747,10 @@ class KasprApp(BaseResource):
             "kasprVersion": kaspr_ver,
             "availableReplicas": available_replicas,
             "desiredReplicas": self.replicas,
+            "members": member_statuses if available_replicas > 0 else {},
         }
 
-    async def fetch_all_worker_statuses(self, available_replicas: int) -> Dict[int, Dict]:
+    async def fetch_all_member_statuses(self, available_replicas: int) -> Dict[int, Dict]:
         """Fetch status from all available worker instances concurrently.
         
         Args:
@@ -1765,19 +1765,19 @@ class KasprApp(BaseResource):
         if not self.conf.client_status_check_enabled:
             return {}
             
-        async def fetch_worker_status(idx: int):
-            """Fetch status from a single worker."""
+        async def fetch_member_status(idx: int):
+            """Fetch status from a single member."""
             try:
-                url = self.prepare_worker_url(idx)
+                url = self.prepare_member_url(idx)
                 status = await self.web_client.get_status(url)
                 return idx, status
             except Exception as e:
                 print(f"Failed to get status from Kaspr instance {idx}: {e}")
                 return idx, None
         
-        # Create tasks for all workers
+        # Create tasks for all members
         tasks = [
-            fetch_worker_status(idx) 
+            fetch_member_status(idx) 
             for idx in range(available_replicas)
         ]
         
@@ -1788,25 +1788,24 @@ class KasprApp(BaseResource):
             )
             
             # Filter out failed calls and collect successful results
-            worker_statuses = {}
+            member_statuses = {}
             for result in results:
                 if isinstance(result, Exception):
-                    # This shouldn't happen since we handle exceptions in fetch_worker_status
+                    # This shouldn't happen since we handle exceptions in fetch_member_status
                     continue
                 idx, status = result
                 if status is not None:
-                    worker_statuses[idx] = status
-                    print(f"Kaspr instance {idx} status: {status}")
+                    member_statuses[idx] = status
             
-            if not worker_statuses:
+            if not member_statuses:
                 print("Warning: All worker status checks failed")
                 
-            return worker_statuses
+            return member_statuses
             
         except asyncio.TimeoutError:
             raise Exception("Timeout: Failed to fetch worker statuses within 5 seconds")
 
-    def prepare_worker_url(self, pod_index: int) -> str:
+    def prepare_member_url(self, pod_index: int) -> str:
         """Prepare the worker URL for a given pod index."""
         return f"http://{self.prepare_fqdn(pod_index)}:{self.web_port}"
 
