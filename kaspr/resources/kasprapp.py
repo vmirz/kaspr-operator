@@ -1,3 +1,4 @@
+import asyncio
 import kopf
 import time
 from typing import List, Dict, Optional
@@ -1744,22 +1745,24 @@ class KasprApp(BaseResource):
                         print(f"Failed to get status from Kaspr instance {idx}: {e}")
                         return idx, None
                 
-                # Create tasks for all workers
                 tasks = [
                     fetch_worker_status(idx) 
                     for idx in range(stateful_set.status.available_replicas)
                 ]
                 
-                # Wait for all tasks with 5 second timeout
                 try:
                     results = await asyncio.wait_for(
-                        asyncio.gather(*tasks, return_exceptions=False),
+                        asyncio.gather(*tasks, return_exceptions=True),
                         timeout=5.0
                     )
                     
                     # Filter out failed calls and collect successful results
                     worker_statuses = {}
-                    for idx, status in results:
+                    for result in results:
+                        if isinstance(result, Exception):
+                            # This shouldn't happen since we handle exceptions in fetch_worker_status
+                            continue
+                        idx, status = result
                         if status is not None:
                             worker_statuses[idx] = status
                             print(f"Kaspr instance {idx} status: {status}")
@@ -1768,7 +1771,7 @@ class KasprApp(BaseResource):
                         print("Warning: All worker status checks failed")
                     
                 except asyncio.TimeoutError:
-                    raise Exception("Timeout: Failed to fetch worker statuses within 5 seconds")
+                    raise Exception("Timeout: Failed to fetch worker statuses")
 
         kaspr_ver = kaspr_container.image.split(":")[-1] if kaspr_container else None
         available_replicas = (

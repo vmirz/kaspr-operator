@@ -75,7 +75,7 @@ class BaseSchema(Schema):
         unknown = INCLUDE
 
     @post_load
-    def make_object(self, data: JSON, **kwargs: Any) -> "__model__":
+    def make_object(self, data: JSON, **kwargs: Any):
         """Build model for the given `__model__` class attribute.
         Args:
             data: The JSON diction to use to build the model.
