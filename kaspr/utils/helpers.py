@@ -2,6 +2,7 @@ import re
 import math
 import inspect
 import jsonpickle
+import json
 from functools import wraps
 from datetime import datetime, timezone
 from typing import Optional, Iterator, List, Mapping, OrderedDict
@@ -251,3 +252,28 @@ def upsert_condition(conds, newc):
     else:
         conds.append({**newc, "lastTransitionTime": now()})
     return conds
+
+def deep_compare_dict(dict1, dict2) -> bool:
+    """Compare two dictionaries deeply, handling nested structures and type normalization.
+    
+    Args:
+        dict1: First dictionary to compare
+        dict2: Second dictionary to compare
+        
+    Returns:
+        True if dictionaries are equivalent, False otherwise
+    """
+    if dict1 is None and dict2 is None:
+        return True
+    if dict1 is None or dict2 is None:
+        return False
+    
+    try:
+        # Use jsonpickle for reliable deep comparison with better type handling
+        # This handles nested structures, ordering, and complex data types
+        json1 = jsonpickle.dumps(sort_dict_keys(dict1), unpicklable=False)
+        json2 = jsonpickle.dumps(sort_dict_keys(dict2), unpicklable=False)
+        return json1 == json2
+    except (TypeError, ValueError):
+        # Fallback to direct comparison if jsonpickle serialization fails
+        return dict1 == dict2
