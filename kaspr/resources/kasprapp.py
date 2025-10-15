@@ -1747,24 +1747,34 @@ class KasprApp(BaseResource):
             "kasprVersion": kaspr_ver,
             "availableReplicas": available_replicas,
             "desiredReplicas": self.replicas,
-            "members": member_statuses if available_replicas > 0 else {},
+            "members": {
+                idx: {
+                    "leader": status.get("leader"),
+                    "rebalancing": status.get("rebalancing"),
+                    "recovering": status.get("recovering"),
+                }
+                for idx, status in member_statuses.items()
+            }
+            if available_replicas > 0 else {},
         }
 
-    async def fetch_all_member_statuses(self, available_replicas: int) -> Dict[int, Dict]:
+    async def fetch_all_member_statuses(
+        self, available_replicas: int
+    ) -> Dict[int, Dict]:
         """Fetch status from all available worker instances concurrently.
-        
+
         Args:
             available_replicas: Number of available replicas to check
-            
+
         Returns:
             Dictionary mapping worker index to status data for successful calls
-            
+
         Raises:
             Exception: If timeout occurs during status fetching
         """
         if not self.conf.client_status_check_enabled:
             return {}
-            
+
         async def fetch_member_status(idx: int):
             """Fetch status from a single member."""
             try:
@@ -1774,19 +1784,15 @@ class KasprApp(BaseResource):
             except Exception as e:
                 print(f"Failed to get status from Kaspr instance {idx}: {e}")
                 return idx, None
-        
+
         # Create tasks for all members
-        tasks = [
-            fetch_member_status(idx) 
-            for idx in range(available_replicas)
-        ]
-        
+        tasks = [fetch_member_status(idx) for idx in range(available_replicas)]
+
         try:
             results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True),
-                timeout=5.0
+                asyncio.gather(*tasks, return_exceptions=True), timeout=5.0
             )
-            
+
             # Filter out failed calls and collect successful results
             member_statuses = {}
             for result in results:
@@ -1796,12 +1802,12 @@ class KasprApp(BaseResource):
                 idx, status = result
                 if status is not None:
                     member_statuses[idx] = status
-            
+
             if not member_statuses:
                 print("Warning: All worker status checks failed")
-                
+
             return member_statuses
-            
+
         except asyncio.TimeoutError:
             raise Exception("Timeout: Failed to fetch worker statuses within 5 seconds")
 
