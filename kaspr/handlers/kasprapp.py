@@ -72,7 +72,7 @@ async def update_status(
 ):
     """Update KasprApp status based on the actual state of the app."""
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     _status = status or {}    
     try:        
         gen = meta.get("generation", 0)
@@ -178,7 +178,7 @@ async def update_status(
 async def reconcile(name, namespace, spec, meta, status, patch, annotations, logger: Logger, **kwargs):
     """Reconcile the KasprApp."""
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -199,7 +199,7 @@ def on_create(
 ):
     """Creates KasprApp resources."""
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -228,7 +228,7 @@ def on_version_update(
     **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -256,7 +256,7 @@ def on_replicas_update(
     **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -286,7 +286,7 @@ def on_kafka_credentials_update(
     **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -314,7 +314,7 @@ def on_resource_requirements_update(
     **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -342,7 +342,7 @@ def on_web_port_update(
     **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -370,7 +370,7 @@ def on_storage_delete_claim_update(
     **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -398,7 +398,7 @@ def on_storage_size_update(
     **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -426,7 +426,7 @@ def on_template_service_account_updated(
     **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -454,7 +454,7 @@ def on_template_pod_updated(
     **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -483,7 +483,7 @@ def on_template_service_updated(
     **kwargs,
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -508,7 +508,7 @@ def general_config_update(
     spec, name, meta, patch, status, namespace, annotations, logger: Logger, **kwargs
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
@@ -644,7 +644,7 @@ async def monitor_related_resources(
     while not stopped:
         try:
             spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-            app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations)
+            app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
             agents: List[KasprAgent] = []
             webviews: List[KasprWebView] = []
             tables: List[KasprTable] = []

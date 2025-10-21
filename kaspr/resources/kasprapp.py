@@ -1,6 +1,8 @@
 import asyncio
 import kopf
 import time
+import logging
+from logging import Logger
 from typing import List, Dict, Optional
 from kaspr.utils.objects import cached_property
 from kaspr.types.settings import Settings
@@ -78,6 +80,7 @@ from kaspr.web import KasprWebClient
 class KasprApp(BaseResource):
     """Kaspr App kubernetes resource."""
 
+    logger: Logger
     conf: Settings
     web_client: KasprWebClient
 
@@ -212,8 +215,10 @@ class KasprApp(BaseResource):
         namespace: str,
         spec: KasprAppSpec,
         annotations: Optional[Dict[str, str]] = None,
+        logger: Logger = None,
     ) -> "KasprApp":
         app = KasprApp(name, kind, namespace, self.KIND)
+        app.logger = logger or logging.getLogger(__name__)
         app.annotations = annotations
         app.service_name = KasprAppResources.service_name(name)
         app.headless_service_name = KasprAppResources.headless_service_name(name)
@@ -1782,7 +1787,7 @@ class KasprApp(BaseResource):
                 status = await self.web_client.get_status(url)
                 return idx, status
             except Exception as e:
-                print(f"Failed to get status from Kaspr instance {idx}: {e}")
+                self.logger.warning(f"Failed to get status from instance {idx}: {e}")
                 return idx, None
 
         # Create tasks for all members
@@ -1804,7 +1809,7 @@ class KasprApp(BaseResource):
                     member_statuses[idx] = status
 
             if not member_statuses:
-                print("Warning: All worker status checks failed")
+                self.logger.warning("All worker status checks failed")
 
             return member_statuses
 
