@@ -5,6 +5,7 @@ import logging
 from logging import Logger
 from typing import List, Dict, Optional
 from kaspr.utils.objects import cached_property
+from kaspr.utils.helpers import now
 from kaspr.types.settings import Settings
 from kaspr.types.models.kasprapp_spec import KasprAppSpec
 from kaspr.types.models.storage import KasprAppStorage
@@ -1737,6 +1738,7 @@ class KasprApp(BaseResource):
             None,
         )
 
+        member_statuses = []
         if stateful_set.status.available_replicas > 0 and kaspr_container:
             # Fetch status from all members using dedicated method
             member_statuses = await self.fetch_all_member_statuses(
@@ -1750,22 +1752,23 @@ class KasprApp(BaseResource):
 
         return {
             "kasprVersion": kaspr_ver,
-            "availableReplicas": available_replicas,
-            "desiredReplicas": self.replicas,
-            "members": {
-                idx: {
+            "availableMembers": available_replicas,
+            "desiredMembers": self.replicas,
+            "members": [
+                {
+                    "id": status["id"],
                     "leader": status.get("leader"),
                     "rebalancing": status.get("rebalancing"),
                     "recovering": status.get("recovering"),
                 }
-                for idx, status in member_statuses.items()
-            }
-            if available_replicas > 0 else {},
+                for status in member_statuses
+            ]
+            if available_replicas > 0 else [],
         }
 
     async def fetch_all_member_statuses(
         self, available_replicas: int
-    ) -> Dict[int, Dict]:
+    ) -> List[Dict]:
         """Fetch status from all available worker instances concurrently.
 
         Args:
@@ -1787,7 +1790,7 @@ class KasprApp(BaseResource):
                 status = await self.web_client.get_status(url)
                 return idx, status
             except Exception as e:
-                self.logger.warning(f"Failed to get status from instance {idx}: {e}")
+                self.logger.warning(f"Failed to get status from member {idx}: {e}")
                 return idx, None
 
         # Create tasks for all members
@@ -1799,14 +1802,18 @@ class KasprApp(BaseResource):
             )
 
             # Filter out failed calls and collect successful results
-            member_statuses = {}
+            member_statuses = []
             for result in results:
                 if isinstance(result, Exception):
                     # This shouldn't happen since we handle exceptions in fetch_member_status
                     continue
                 idx, status = result
                 if status is not None:
-                    member_statuses[idx] = status
+                    member_statuses.append({
+                        "id": idx, 
+                        "lastProbeTime": now(), 
+                        **status
+                    })
 
             if not member_statuses:
                 self.logger.warning("All worker status checks failed")
@@ -1855,7 +1862,7 @@ class KasprApp(BaseResource):
         # Check if cluster is in ready state
         available_replicas = status.get("availableReplicas", 0)
         desired_replicas = status.get("desiredReplicas", 0)
-        members = status.get("members", {})
+        members = status.get("members", [])
         
         if available_replicas != desired_replicas:
             self.logger.warning(
@@ -1870,9 +1877,9 @@ class KasprApp(BaseResource):
         
         # Find the leader member
         leader_idx = None
-        for idx, member_status in members.items():
+        for member_status in members:
             if member_status.get("leader"):
-                leader_idx = idx
+                leader_idx = member_status["id"]
                 break
         
         if leader_idx is None:

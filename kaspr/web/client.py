@@ -3,7 +3,7 @@ from typing import Any, Dict
 from yarl import URL
 from .session import SessionManager
 
-REBALANCE_URL = "/signal/rebalance/"
+REBALANCE_URL = "/signal/rebalance"
 STATUS_URL = "/status/"
 
 class KasprWebClient(SessionManager):

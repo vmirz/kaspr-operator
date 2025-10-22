@@ -90,11 +90,19 @@ async def update_status(
         if _actual_status.get("kasprVersion") and _actual_status["kasprVersion"] != _status.get("kasprVersion"):
             patch.status["kasprVersion"] = _actual_status["kasprVersion"]
 
-        if _actual_status.get("desiredReplicas") is not None and _actual_status["desiredReplicas"] != _status.get("desiredReplicas"):
-            patch.status["desiredReplicas"] = _actual_status["desiredReplicas"]
-            
-        if _actual_status.get("availableReplicas") is not None and _actual_status["availableReplicas"] != _status.get("availableReplicas"):
-            patch.status["availableReplicas"] = _actual_status["availableReplicas"]
+        # DEPRECATED FIELDS
+        # TODO: Remove after v0.8.7
+        # --------------------------------
+        if _status.get("desiredReplicas") is not None:
+            patch.status["desiredReplicas"] = None
+        if _status.get("availableReplicas") is not None:
+            patch.status["availableReplicas"] = None
+        # --------------------------------
+
+        if _actual_status.get("availableMembers") is not None and _actual_status.get("desiredMembers") is not None:
+            availableMembers = f"{_actual_status['availableMembers']}/{_actual_status['desiredMembers']}"
+            if availableMembers != _status.get("availableMembers"):
+                patch.status["availableMembers"] = availableMembers
 
         # Update members status if changed (using deep comparison for nested data)
         if _actual_status.get("members") is not None and not deep_compare_dict(_actual_status["members"], _status.get("members")):
@@ -125,7 +133,7 @@ async def update_status(
                 },
             )
         # If everything is healthy, set Progressing False, Ready True
-        elif _actual_status["availableReplicas"] == app.replicas:
+        elif _actual_status["availableMembers"] == app.replicas:
             conds = upsert_condition(
                 conds,
                 {
