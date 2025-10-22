@@ -1,6 +1,8 @@
 import asyncio
 import kopf
 import time
+import logging
+from logging import Logger
 from typing import List, Dict, Optional
 from kaspr.utils.objects import cached_property
 from kaspr.types.settings import Settings
@@ -78,6 +80,7 @@ from kaspr.web import KasprWebClient
 class KasprApp(BaseResource):
     """Kaspr App kubernetes resource."""
 
+    logger: Logger
     conf: Settings
     web_client: KasprWebClient
 
@@ -212,8 +215,10 @@ class KasprApp(BaseResource):
         namespace: str,
         spec: KasprAppSpec,
         annotations: Optional[Dict[str, str]] = None,
+        logger: Logger = None,
     ) -> "KasprApp":
         app = KasprApp(name, kind, namespace, self.KIND)
+        app.logger = logger or logging.getLogger(__name__)
         app.annotations = annotations
         app.service_name = KasprAppResources.service_name(name)
         app.headless_service_name = KasprAppResources.headless_service_name(name)
@@ -1782,7 +1787,7 @@ class KasprApp(BaseResource):
                 status = await self.web_client.get_status(url)
                 return idx, status
             except Exception as e:
-                print(f"Failed to get status from Kaspr instance {idx}: {e}")
+                self.logger.warning(f"Failed to get status from instance {idx}: {e}")
                 return idx, None
 
         # Create tasks for all members
@@ -1804,7 +1809,7 @@ class KasprApp(BaseResource):
                     member_statuses[idx] = status
 
             if not member_statuses:
-                print("Warning: All worker status checks failed")
+                self.logger.warning("All worker status checks failed")
 
             return member_statuses
 
@@ -1830,6 +1835,60 @@ class KasprApp(BaseResource):
         if stateful_set.spec.service_name != self.headless_service_name:
             return True
         return False
+
+    async def request_rebalance(self):
+        """Request a cluster rebalance when the app cluster is in ready state.
+        
+        Ready state is defined as:
+        - availableReplicas equals desiredReplicas
+        - At least one member is a leader
+        
+        Raises:
+            Exception: If cluster is not in ready state or rebalance fails
+        """
+        status = await self.fetch_app_status()
+        
+        if not status:
+            self.logger.warning("Cannot request rebalance: status not available")
+            return
+        
+        # Check if cluster is in ready state
+        available_replicas = status.get("availableReplicas", 0)
+        desired_replicas = status.get("desiredReplicas", 0)
+        members = status.get("members", {})
+        
+        if available_replicas != desired_replicas:
+            self.logger.warning(
+                f"Cannot request rebalance: cluster not ready "
+                f"(available={available_replicas}, desired={desired_replicas})"
+            )
+            return
+        
+        if not members:
+            self.logger.warning("Cannot request rebalance: no member status available")
+            return
+        
+        # Find the leader member
+        leader_idx = None
+        for idx, member_status in members.items():
+            if member_status.get("leader"):
+                leader_idx = idx
+                break
+        
+        if leader_idx is None:
+            self.logger.warning("Cannot request rebalance: no leader found in cluster")
+            return
+        
+        # Request rebalance on the leader member
+        try:
+            # Convert string index to int for prepare_member_url
+            leader_url = self.prepare_member_url(int(leader_idx))
+            self.logger.info(f"Requesting rebalance on leader member {leader_idx} at {leader_url}")
+            await self.web_client.rebalance(leader_url)
+            self.logger.info(f"Rebalance successfully requested on member {leader_idx}")
+        except Exception as e:
+            self.logger.error(f"Failed to request rebalance on member {leader_idx}: {e}")
+            raise
 
     @property
     def reconciliation_paused(self) -> bool:

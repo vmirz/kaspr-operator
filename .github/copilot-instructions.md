@@ -78,6 +78,11 @@ The operator includes a web client (`kaspr/web/`) for triggering Kaspr cluster o
 - Status checks: `GET /status/`
 - Configured per KasprApp instance
 
+### Annotation-Driven Operations
+Certain operations can be triggered via annotations on KasprApp resources:
+- `kaspr.io/pause-reconciliation: "true"` - Pause reconciliation loop
+- `kaspr.io/rebalance: "true"` - Trigger ad-hoc cluster rebalance (auto-removed after attempt)
+
 ### Resource Generation
 Resources inherit from `BaseResource` and follow this pattern:
 1. Spec validation via Marshmallow schemas
