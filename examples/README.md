@@ -1,4 +1,4 @@
-# Kaspr Examples v2
+# Kaspr Examples
 
 This directory contains comprehensive examples demonstrating various Kaspr capabilities using generic, non-proprietary use cases. These examples showcase real-world patterns and best practices for building stream processing applications with Kaspr.
 
