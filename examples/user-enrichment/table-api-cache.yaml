@@ -1,0 +1,17 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: api-cache
+  namespace: demo
+  labels:
+    kaspr.io/app: user-enrichment
+spec:
+  name: api-cache
+  description: |
+    Caches API responses to reduce external API calls and improve performance.
+    Key format: {api_type}:{cache_key}
+  keySerializer: json
+  valueSerializer: json
+  partitions: 8
+  extraTopicConfigs:
+    retention.ms: 86400000  # 24 hours

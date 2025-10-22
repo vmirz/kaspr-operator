@@ -1,0 +1,26 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: analytics-api
+  namespace: demo
+spec:
+  replicas: 2
+  bootstrapServers: kafka-cluster:9092
+  authentication:
+    type: plain
+    username: demo-user
+    passwordSecret:
+      secretName: kafka-credentials
+      passwordKey: password
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  storage:
+    type: persistent-claim
+    class: standard
+    size: 1Gi
+    deleteClaim: true

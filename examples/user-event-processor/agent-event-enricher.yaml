@@ -1,0 +1,181 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: event-enricher
+  namespace: demo
+  labels:
+    kaspr.io/app: user-event-processor
+spec:
+  description: |
+    Processes raw user events by enriching them with additional metadata,
+    normalizing data formats, and filtering out invalid events.
+  input:
+    topic:
+      name: raw-user-events
+  output:
+    topics:
+      - name: enriched-user-events
+        keySelector:
+          python: |
+            def get_key(value):
+                return value["user_id"]
+        valueSelector:
+          python: |
+            def get_value(value):
+                return value["enriched_event"]
+        predicate:
+          python: |
+            def should_send(value):
+                return value.get("is_valid", False)
+      - name: invalid-events-dlq
+        predicate:
+          python: |
+            def should_send(value):
+                return not value.get("is_valid", True)
+  processors:
+    pipeline:
+      - validate-event
+      - enrich-metadata
+      - normalize-data
+    init:
+      python: |
+        import json
+        from datetime import datetime, timezone
+        import hashlib
+        import re
+        
+        app = context["app"]
+        
+        # Valid event types
+        VALID_EVENT_TYPES = {"login", "logout", "page_view", "click", "purchase", "signup"}
+        
+        # Country code mapping
+        COUNTRY_CODES = {
+            "US": "United States",
+            "CA": "Canada", 
+            "GB": "United Kingdom",
+            "DE": "Germany",
+            "FR": "France",
+            "JP": "Japan",
+            "AU": "Australia"
+        }
+        
+        def is_valid_email(email):
+            pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+            return re.match(pattern, email) is not None
+        
+        def generate_session_id(user_id, timestamp):
+            # Generate deterministic session ID based on user and hour
+            hour_key = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y%m%d%H")
+            return hashlib.md5(f"{user_id}_{hour_key}".encode()).hexdigest()[:16]
+            
+    operations:
+      - name: validate-event
+        map:
+          entrypoint: validate_event
+          python: |
+            def validate_event(value):
+                """
+                Validates incoming user events for required fields and data quality.
+                """
+                errors = []
+                
+                # Check required fields
+                required_fields = ["user_id", "event_type", "timestamp"]
+                for field in required_fields:
+                    if field not in value or value[field] is None:
+                        errors.append(f"Missing required field: {field}")
+                
+                # Validate event type
+                if value.get("event_type") not in VALID_EVENT_TYPES:
+                    errors.append(f"Invalid event_type: {value.get('event_type')}")
+                
+                # Validate email if present
+                if "email" in value and not is_valid_email(value["email"]):
+                    errors.append("Invalid email format")
+                
+                # Validate timestamp
+                try:
+                    timestamp = float(value.get("timestamp", 0))
+                    if timestamp <= 0:
+                        errors.append("Invalid timestamp")
+                except (ValueError, TypeError):
+                    errors.append("Timestamp must be a number")
+                
+                is_valid = len(errors) == 0
+                
+                return {
+                    "raw_event": value,
+                    "is_valid": is_valid,
+                    "validation_errors": errors,
+                    "processed_at": datetime.now(timezone.utc).isoformat()
+                }
+                
+      - name: enrich-metadata
+        map:
+          entrypoint: enrich_metadata
+          python: |
+            def enrich_metadata(value):
+                """
+                Enriches valid events with additional metadata and computed fields.
+                """
+                if not value["is_valid"]:
+                    return value
+                
+                event = value["raw_event"]
+                timestamp = float(event["timestamp"])
+                
+                # Add session information
+                session_id = generate_session_id(event["user_id"], timestamp)
+                
+                # Enrich country information
+                country_code = event.get("country_code", "UNKNOWN")
+                country_name = COUNTRY_CODES.get(country_code, "Unknown")
+                
+                # Add computed fields
+                event_date = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+                
+                enriched = {
+                    **event,
+                    "session_id": session_id,
+                    "country_name": country_name,
+                    "event_date": event_date.date().isoformat(),
+                    "event_hour": event_date.hour,
+                    "day_of_week": event_date.strftime("%A"),
+                    "is_weekend": event_date.weekday() >= 5,
+                    "enrichment_version": "1.0"
+                }
+                
+                value["enriched_event"] = enriched
+                return value
+                
+      - name: normalize-data
+        map:
+          entrypoint: normalize_data
+          python: |
+            def normalize_data(value):
+                """
+                Normalizes data formats and ensures consistency across events.
+                """
+                if not value["is_valid"]:
+                    return value
+                
+                event = value["enriched_event"]
+                
+                # Normalize event_type to lowercase
+                event["event_type"] = event["event_type"].lower()
+                
+                # Normalize email to lowercase
+                if "email" in event:
+                    event["email"] = event["email"].lower().strip()
+                
+                # Normalize country code to uppercase
+                if "country_code" in event:
+                    event["country_code"] = event["country_code"].upper()
+                
+                # Add standard metadata
+                event["processing_timestamp"] = datetime.now(timezone.utc).isoformat()
+                event["event_schema_version"] = "2.0"
+                
+                value["enriched_event"] = event
+                return value

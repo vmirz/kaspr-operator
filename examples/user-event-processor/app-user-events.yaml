@@ -1,0 +1,35 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: user-event-processor
+  namespace: demo
+spec:
+  replicas: 2
+  bootstrapServers: kafka-cluster:9092
+  authentication:
+    type: plain
+    username: demo-user
+    passwordSecret:
+      secretName: kafka-credentials
+      passwordKey: password
+  config:
+    auto.offset.reset: earliest
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  storage:
+    type: persistent-claim
+    class: standard
+    size: 1Gi
+    deleteClaim: true
+  template:
+    kasprContainer:
+      env:
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: ENABLE_METRICS
+          value: "true"

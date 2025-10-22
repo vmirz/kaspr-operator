@@ -1,0 +1,303 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: api-enricher
+  namespace: demo
+  labels:
+    kaspr.io/app: user-enrichment
+spec:
+  description: |
+    Enriches user events by calling external APIs to gather additional information
+    such as geolocation data and user details. Implements caching to minimize API calls.
+  input:
+    topic:
+      name: enriched-user-events
+  output:
+    topics:
+      - name: api-enriched-events
+        keySelector:
+          python: |
+            def get_key(value):
+                return value["user_id"]
+        valueSelector:
+          python: |
+            def get_value(value):
+                return value["enriched_event"]
+        predicate:
+          python: |
+            def should_send(value):
+                return value.get("enrichment_successful", False)
+      - name: api-enrichment-errors
+        keySelector:
+          python: |
+            def get_key(value):
+                return value["user_id"]
+        valueSelector:
+          python: |
+            def get_value(value):
+                return value["error_info"]
+        predicate:
+          python: |
+            def should_send(value):
+                return not value.get("enrichment_successful", True)
+  processors:
+    pipeline:
+      - check-cache
+      - enrich-with-geo-api
+      - enrich-with-user-api
+      - update-cache
+      - compile-enrichment
+    init:
+      python: |
+        import aiohttp
+        import asyncio
+        import json
+        import os
+        from datetime import datetime, timezone, timedelta
+        import hashlib
+        
+        app = context["app"]
+        
+        # Configuration
+        GEO_API_URL = os.getenv("GEO_API_URL", "http://ip-api.com/json")
+        USER_API_URL = os.getenv("USER_API_URL", "https://jsonplaceholder.typicode.com/users")
+        API_TIMEOUT = int(os.getenv("API_TIMEOUT_SECONDS", "5"))
+        CACHE_TTL_HOURS = int(os.getenv("CACHE_TTL_HOURS", "24"))
+        
+        # Create a single HTTP session for reuse across all API calls
+        # This session will be reused for all HTTP requests to improve performance
+        http_session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)
+        )
+        
+        # Note: In a production environment, you may want to handle session cleanup
+        # when the agent shuts down, though Kaspr typically handles this automatically
+        
+        async def make_api_call(session, url, params=None):
+            """Make an HTTP API call with timeout and error handling."""
+            try:
+                async with session.get(url, params=params) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        return {"error": f"HTTP {response.status}"}
+            except asyncio.TimeoutError:
+                return {"error": "API timeout"}
+            except Exception as e:
+                return {"error": str(e)}
+        
+        def is_cache_valid(cached_item):
+            """Check if a cached item is still valid based on TTL."""
+            if not cached_item or "cached_at" not in cached_item:
+                return False
+            
+            cached_at = datetime.fromisoformat(cached_item["cached_at"])
+            expiry = cached_at + timedelta(hours=CACHE_TTL_HOURS)
+            return datetime.now(timezone.utc) < expiry
+        
+        def get_cache_key(api_type, identifier):
+            """Generate a consistent cache key."""
+            return f"{api_type}:{hashlib.md5(str(identifier).encode()).hexdigest()}"
+            
+    operations:
+      - name: check-cache
+        tables:
+          - name: api-cache
+            paramName: cache
+        map:
+          entrypoint: check_cache
+          python: |
+            def check_cache(value, cache):
+                """
+                Check if we have valid cached data for this event's enrichment needs.
+                """
+                ip_address = value.get("ip_address")
+                user_id = value["user_id"]
+                
+                # Check geo cache
+                geo_data = None
+                if ip_address:
+                    geo_cache_key = get_cache_key("geo", ip_address)
+                    cached_geo = cache.get(geo_cache_key)
+                    if is_cache_valid(cached_geo):
+                        geo_data = cached_geo["data"]
+                
+                # Check user data cache
+                user_data = None
+                user_cache_key = get_cache_key("user", user_id)
+                cached_user = cache.get(user_cache_key)
+                if is_cache_valid(cached_user):
+                    user_data = cached_user["data"]
+                
+                return {
+                    **value,
+                    "cached_geo_data": geo_data,
+                    "cached_user_data": user_data,
+                    "needs_geo_api": ip_address and not geo_data,
+                    "needs_user_api": not user_data,
+                    "geo_cache_key": get_cache_key("geo", ip_address) if ip_address else None,
+                    "user_cache_key": user_cache_key
+                }
+                
+      - name: enrich-with-geo-api
+        map:
+          entrypoint: enrich_with_geo_api
+          python: |
+            async def enrich_with_geo_api(value):
+                """
+                Call geolocation API to enrich event with location data.
+                """
+                if not value.get("needs_geo_api"):
+                    return {**value, "api_geo_data": value.get("cached_geo_data")}
+                
+                ip_address = value.get("ip_address")
+                if not ip_address:
+                    return {**value, "api_geo_data": None}
+                
+                geo_url = f"{GEO_API_URL}/{ip_address}"
+                geo_response = await make_api_call(http_session, geo_url)
+                    
+                    if "error" in geo_response:
+                        app.log.warning(f"Geo API error for IP {ip_address}: {geo_response['error']}")
+                        return {**value, "api_geo_data": None, "geo_api_error": geo_response["error"]}
+                    
+                    # Extract relevant geo data
+                    geo_data = {
+                        "country": geo_response.get("country"),
+                        "country_code": geo_response.get("countryCode"),
+                        "region": geo_response.get("regionName"),
+                        "city": geo_response.get("city"),
+                        "timezone": geo_response.get("timezone"),
+                        "latitude": geo_response.get("lat"),
+                        "longitude": geo_response.get("lon"),
+                        "isp": geo_response.get("isp")
+                    }
+                    
+                    return {**value, "api_geo_data": geo_data}
+                    
+      - name: enrich-with-user-api
+        map:
+          entrypoint: enrich_with_user_api
+          python: |
+            async def enrich_with_user_api(value):
+                """
+                Call user API to enrich event with user profile data.
+                """
+                if not value.get("needs_user_api"):
+                    return {**value, "api_user_data": value.get("cached_user_data")}
+                
+                user_id = value["user_id"]
+                
+                # Simulate user lookup - in real world, this would be your user service
+                user_url = f"{USER_API_URL}/{hash(user_id) % 10 + 1}"  # Map to user 1-10
+                user_response = await make_api_call(http_session, user_url)
+                    
+                    if "error" in user_response:
+                        app.log.warning(f"User API error for user {user_id}: {user_response['error']}")
+                        return {**value, "api_user_data": None, "user_api_error": user_response["error"]}
+                    
+                    # Extract relevant user data
+                    user_data = {
+                        "name": user_response.get("name"),
+                        "username": user_response.get("username"),
+                        "email": user_response.get("email"),
+                        "phone": user_response.get("phone"),
+                        "website": user_response.get("website"),
+                        "company": user_response.get("company", {}).get("name"),
+                        "address": {
+                            "city": user_response.get("address", {}).get("city"),
+                            "zipcode": user_response.get("address", {}).get("zipcode")
+                        }
+                    }
+                    
+                    return {**value, "api_user_data": user_data}
+                    
+      - name: update-cache
+        tables:
+          - name: api-cache
+            paramName: cache
+        map:
+          entrypoint: update_cache
+          python: |
+            def update_cache(value, cache):
+                """
+                Update cache with new API responses.
+                """
+                current_time = datetime.now(timezone.utc).isoformat()
+                
+                # Cache geo data if we fetched it
+                if value.get("needs_geo_api") and value.get("api_geo_data"):
+                    geo_cache_key = value["geo_cache_key"]
+                    cache[geo_cache_key] = {
+                        "data": value["api_geo_data"],
+                        "cached_at": current_time,
+                        "cache_type": "geo"
+                    }
+                
+                # Cache user data if we fetched it
+                if value.get("needs_user_api") and value.get("api_user_data"):
+                    user_cache_key = value["user_cache_key"]
+                    cache[user_cache_key] = {
+                        "data": value["api_user_data"],
+                        "cached_at": current_time,
+                        "cache_type": "user"
+                    }
+                
+                return value
+                
+      - name: compile-enrichment
+        map:
+          entrypoint: compile_enrichment
+          python: |
+            def compile_enrichment(value):
+                """
+                Compile all enrichment data into the final enriched event.
+                """
+                enriched_event = {**value}
+                
+                # Add geo enrichment
+                geo_data = value.get("api_geo_data")
+                if geo_data:
+                    enriched_event.update({
+                        "geo_country": geo_data.get("country"),
+                        "geo_country_code": geo_data.get("country_code"),
+                        "geo_region": geo_data.get("region"),
+                        "geo_city": geo_data.get("city"),
+                        "geo_timezone": geo_data.get("timezone"),
+                        "geo_coordinates": [geo_data.get("latitude"), geo_data.get("longitude")] if geo_data.get("latitude") else None,
+                        "geo_isp": geo_data.get("isp")
+                    })
+                
+                # Add user enrichment
+                user_data = value.get("api_user_data")
+                if user_data:
+                    enriched_event.update({
+                        "user_name": user_data.get("name"),
+                        "user_username": user_data.get("username"),
+                        "user_email": user_data.get("email"),
+                        "user_phone": user_data.get("phone"),
+                        "user_company": user_data.get("company"),
+                        "user_city": user_data.get("address", {}).get("city"),
+                        "user_zipcode": user_data.get("address", {}).get("zipcode")
+                    })
+                
+                # Track enrichment success
+                has_errors = bool(value.get("geo_api_error") or value.get("user_api_error"))
+                enrichment_successful = not has_errors
+                
+                result = {
+                    **value,
+                    "enriched_event": enriched_event,
+                    "enrichment_successful": enrichment_successful,
+                    "enrichment_timestamp": datetime.now(timezone.utc).isoformat()
+                }
+                
+                if has_errors:
+                    result["error_info"] = {
+                        "user_id": value["user_id"],
+                        "geo_error": value.get("geo_api_error"),
+                        "user_error": value.get("user_api_error"),
+                        "timestamp": result["enrichment_timestamp"]
+                    }
+                
+                return result
