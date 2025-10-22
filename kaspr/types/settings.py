@@ -56,9 +56,14 @@ STATEFULSET_DELETION_TIMEOUT_SECONDS = int(
     _getenv("STATEFULSET_DELETION_TIMEOUT_SECONDS", 5)
 )
 
-#: Enable periodic status check calls to all kaspr workers
+#: Enable periodic status check calls to all app members
 CLIENT_STATUS_CHECK_ENABLED = bool(
     _getenv("CLIENT_STATUS_CHECK_ENABLED", True)
+)
+
+#: Timeout in seconds for status check calls to all app members
+CLIENT_STATUS_CHECK_TIMEOUT_SECONDS = float(
+    _getenv("CLIENT_STATUS_CHECK_TIMEOUT_SECONDS", 10.0)
 )
 
 class Settings:
@@ -69,6 +74,7 @@ class Settings:
     hpa_scale_up_policy_period_seconds: int = HPA_SCALE_UP_POLICY_PERIOD_SECONDS
     statefulset_deletion_timeout_seconds: int = STATEFULSET_DELETION_TIMEOUT_SECONDS
     client_status_check_enabled: bool = CLIENT_STATUS_CHECK_ENABLED
+    client_status_check_timeout_seconds: float = CLIENT_STATUS_CHECK_TIMEOUT_SECONDS
 
     def __init__(
         self,
@@ -78,6 +84,7 @@ class Settings:
         hpa_scale_up_policy_period_seconds: int = None,
         statefulset_deletion_timeout_seconds: int = None,
         client_status_check_enabled: bool = None,
+        client_status_check_timeout_seconds: float = None,
         **kwargs,
     ):
         if initial_max_replicas is not None:
@@ -95,3 +102,7 @@ class Settings:
             )
         if client_status_check_enabled is not None:
             self.client_status_check_enabled = client_status_check_enabled
+
+        if client_status_check_timeout_seconds is not None:
+            self.client_status_check_timeout_seconds = client_status_check_timeout_seconds
+            

@@ -1776,12 +1776,9 @@ class KasprApp(BaseResource):
 
         Returns:
             Dictionary mapping worker index to status data for successful calls
-
-        Raises:
-            Exception: If timeout occurs during status fetching
         """
         if not self.conf.client_status_check_enabled:
-            return {}
+            return []
 
         async def fetch_member_status(idx: int):
             """Fetch status from a single member."""
@@ -1798,7 +1795,7 @@ class KasprApp(BaseResource):
 
         try:
             results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True), timeout=5.0
+                asyncio.gather(*tasks, return_exceptions=True), timeout=self.conf.client_status_check_timeout_seconds
             )
 
             # Filter out failed calls and collect successful results
@@ -1821,7 +1818,8 @@ class KasprApp(BaseResource):
             return member_statuses
 
         except asyncio.TimeoutError:
-            raise Exception("Timeout: Failed to fetch worker statuses within 5 seconds")
+            self.logger.warning(f"Timed out fetching member statuses after {self.conf.client_status_check_timeout_seconds} seconds.")
+            return []
 
     def prepare_member_url(self, pod_index: int) -> str:
         """Prepare the worker URL for a given pod index."""
