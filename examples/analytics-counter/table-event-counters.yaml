@@ -1,0 +1,18 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: event-counters
+  namespace: demo
+  labels:
+    kaspr.io/app: analytics-counter
+spec:
+  name: event-counters
+  description: |
+    Stores real-time counters for various event dimensions.
+    Key format: {dimension}:{value}:{time_window}
+    Value: counter object with metrics
+  keySerializer: json
+  valueSerializer: json
+  partitions: 16
+  extraTopicConfigs:
+    retention.ms: 604800000  # 7 days

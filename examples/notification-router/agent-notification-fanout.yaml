@@ -1,0 +1,413 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: notification-fanout
+  namespace: demo
+  labels:
+    kaspr.io/app: notification-router
+spec:
+  description: |
+    Demonstrates fan-out capability by taking a single notification request and
+    generating multiple targeted notifications based on user preferences, device types,
+    and delivery channels. Implements rate limiting and preference checking.
+  input:
+    topic:
+      name: notification-requests
+  output:
+    topics:
+      - name: email-notifications
+        keySelector:
+          python: |
+            def get_key(value):
+                return f"{value['user_id']}:{value['notification_id']}"
+        valueSelector:
+          python: |
+            def get_value(value):
+                return value["notification"]
+        predicate:
+          python: |
+            def should_send(value):
+                return value["channel"] == "email"
+      
+      - name: push-notifications
+        keySelector:
+          python: |
+            def get_key(value):
+                return f"{value['user_id']}:{value['notification_id']}"
+        valueSelector:
+          python: |
+            def get_value(value):
+                return value["notification"]
+        predicate:
+          python: |
+            def should_send(value):
+                return value["channel"] == "push"
+      
+      - name: sms-notifications
+        keySelector:
+          python: |
+            def get_key(value):
+                return f"{value['user_id']}:{value['notification_id']}"
+        valueSelector:
+          python: |
+            def get_value(value):
+                return value["notification"]
+        predicate:
+          python: |
+            def should_send(value):
+                return value["channel"] == "sms"
+      
+      - name: in-app-notifications
+        keySelector:
+          python: |
+            def get_key(value):
+                return f"{value['user_id']}:{value['notification_id']}"
+        valueSelector:
+          python: |
+            def get_value(value):
+                return value["notification"]
+        predicate:
+          python: |
+            def should_send(value):
+                return value["channel"] == "in_app"
+      
+      - name: notification-analytics
+        keySelector:
+          python: |
+            def get_key(value):
+                return value["analytics_key"]
+        valueSelector:
+          python: |
+            def get_value(value):
+                return value["analytics_data"]
+        predicate:
+          python: |
+            def should_send(value):
+                return "analytics_data" in value
+                
+      - name: rate-limit-violations
+        keySelector:
+          python: |
+            def get_key(value):
+                return value["user_id"]
+        valueSelector:
+          python: |
+            def get_value(value):
+                return value["rate_limit_info"]
+        predicate:
+          python: |
+            def should_send(value):
+                return value.get("rate_limited", False)
+
+  processors:
+    pipeline:
+      - parse-notification-request
+      - check-user-preferences
+      - apply-rate-limiting
+      - generate-targeted-notifications
+      - track-analytics
+    init:
+      python: |
+        from datetime import datetime, timezone, timedelta
+        import uuid
+        import os
+        from collections import defaultdict
+        
+        app = context["app"]
+        
+        # Configuration
+        MAX_NOTIFICATIONS_PER_USER = int(os.getenv("MAX_NOTIFICATIONS_PER_USER", "5"))
+        NOTIFICATION_WINDOW_HOURS = int(os.getenv("NOTIFICATION_WINDOW_HOURS", "1"))
+        
+        # Default user preferences
+        DEFAULT_PREFERENCES = {
+            "email": {"enabled": True, "frequency": "immediate"},
+            "push": {"enabled": True, "frequency": "immediate"},
+            "sms": {"enabled": False, "frequency": "daily_digest"},
+            "in_app": {"enabled": True, "frequency": "immediate"}
+        }
+        
+        # Notification priority levels
+        PRIORITY_LEVELS = {
+            "critical": 1,
+            "high": 2,
+            "normal": 3,
+            "low": 4
+        }
+        
+        def should_send_channel(preferences, channel, notification_type, priority):
+            """Determine if notification should be sent on a specific channel."""
+            channel_prefs = preferences.get(channel, {})
+            
+            if not channel_prefs.get("enabled", False):
+                return False
+            
+            # Critical notifications always go through if channel is enabled
+            if priority == "critical":
+                return True
+            
+            # Check notification type preferences
+            type_prefs = channel_prefs.get("notification_types", {})
+            if notification_type in type_prefs:
+                return type_prefs[notification_type]
+            
+            # Default based on frequency setting
+            frequency = channel_prefs.get("frequency", "immediate")
+            if frequency == "disabled":
+                return False
+            elif frequency == "immediate":
+                return True
+            elif frequency == "daily_digest" and priority in ["critical", "high"]:
+                return True
+            
+            return False
+        
+        def is_within_rate_limit(sent_notifications, max_count, window_hours):
+            """Check if user is within rate limit."""
+            if not sent_notifications:
+                return True
+            
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+            recent_notifications = [
+                notif for notif in sent_notifications 
+                if datetime.fromisoformat(notif["sent_at"]) > cutoff_time
+            ]
+            
+            return len(recent_notifications) < max_count
+            
+    operations:
+      - name: parse-notification-request
+        map:
+          entrypoint: parse_request
+          python: |
+            def parse_request(value):
+                """
+                Parses and validates the incoming notification request.
+                """
+                required_fields = ["user_id", "message", "notification_type"]
+                for field in required_fields:
+                    if field not in value:
+                        raise ValueError(f"Missing required field: {field}")
+                
+                # Generate unique notification ID
+                notification_id = str(uuid.uuid4())
+                
+                return {
+                    "notification_id": notification_id,
+                    "user_id": value["user_id"],
+                    "message": value["message"],
+                    "notification_type": value["notification_type"],
+                    "priority": value.get("priority", "normal"),
+                    "title": value.get("title", "Notification"),
+                    "data": value.get("data", {}),
+                    "sender": value.get("sender", "system"),
+                    "expires_at": value.get("expires_at"),
+                    "request_timestamp": datetime.now(timezone.utc).isoformat(),
+                    "original_request": value
+                }
+                
+      - name: check-user-preferences
+        tables:
+          - name: user-preferences
+            paramName: preferences_table
+        map:
+          entrypoint: check_preferences
+          python: |
+            def check_preferences(request, preferences_table):
+                """
+                Looks up user notification preferences.
+                """
+                user_id = request["user_id"]
+                user_prefs = preferences_table.get(user_id, {
+                    "preferences": DEFAULT_PREFERENCES,
+                    "timezone": "UTC",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "sent_notifications": []
+                })
+                
+                return {
+                    **request,
+                    "user_preferences": user_prefs
+                }
+                
+      - name: apply-rate-limiting
+        tables:
+          - name: user-preferences
+            paramName: preferences_table
+        map:
+          entrypoint: apply_rate_limiting
+          python: |
+            def apply_rate_limiting(request, preferences_table):
+                """
+                Applies rate limiting rules and updates user notification history.
+                """
+                user_id = request["user_id"]
+                user_prefs = request["user_preferences"]
+                priority = request["priority"]
+                
+                # Critical notifications bypass rate limiting
+                if priority == "critical":
+                    return {**request, "rate_limited": False}
+                
+                # Check rate limit
+                sent_notifications = user_prefs.get("sent_notifications", [])
+                within_limit = is_within_rate_limit(
+                    sent_notifications, 
+                    MAX_NOTIFICATIONS_PER_USER, 
+                    NOTIFICATION_WINDOW_HOURS
+                )
+                
+                if not within_limit:
+                    # Log rate limit violation
+                    return {
+                        **request,
+                        "rate_limited": True,
+                        "rate_limit_info": {
+                            "user_id": user_id,
+                            "notification_id": request["notification_id"],
+                            "reason": "exceeded_hourly_limit",
+                            "max_allowed": MAX_NOTIFICATIONS_PER_USER,
+                            "window_hours": NOTIFICATION_WINDOW_HOURS,
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        }
+                    }
+                
+                return {**request, "rate_limited": False}
+                
+      - name: generate-targeted-notifications
+        tables:
+          - name: user-preferences
+            paramName: preferences_table
+        map:
+          entrypoint: generate_notifications
+          python: |
+            def generate_notifications(request, preferences_table):
+                """
+                Fan-out: Generate multiple targeted notifications for different channels.
+                This is where the fan-out happens - one input produces multiple outputs.
+                """
+                if request.get("rate_limited", False):
+                    # Only yield rate limit violation, no notifications
+                    yield request
+                    return
+                
+                user_id = request["user_id"]
+                notification_id = request["notification_id"]
+                user_prefs = request["user_preferences"]
+                preferences = user_prefs["preferences"]
+                
+                # Track which notifications we're sending
+                sent_channels = []
+                
+                # Generate notification for each enabled channel
+                for channel in ["email", "push", "sms", "in_app"]:
+                    should_send = should_send_channel(
+                        preferences, 
+                        channel, 
+                        request["notification_type"], 
+                        request["priority"]
+                    )
+                    
+                    if should_send:
+                        # Create channel-specific notification
+                        notification = {
+                            "notification_id": notification_id,
+                            "user_id": user_id,
+                            "channel": channel,
+                            "title": request["title"],
+                            "message": request["message"],
+                            "notification_type": request["notification_type"],
+                            "priority": request["priority"],
+                            "data": request["data"],
+                            "sender": request["sender"],
+                            "expires_at": request.get("expires_at"),
+                            "created_at": request["request_timestamp"],
+                            "delivery_timestamp": datetime.now(timezone.utc).isoformat(),
+                            
+                            # Channel-specific formatting
+                            "channel_config": preferences[channel]
+                        }
+                        
+                        # Add channel-specific content
+                        if channel == "email":
+                            notification.update({
+                                "subject": request["title"],
+                                "html_body": f"<p>{request['message']}</p>",
+                                "text_body": request["message"]
+                            })
+                        elif channel == "sms":
+                            # Truncate for SMS
+                            notification["message"] = request["message"][:160]
+                        elif channel == "push":
+                            notification.update({
+                                "badge_count": 1,
+                                "sound": "default" if request["priority"] in ["critical", "high"] else None
+                            })
+                        
+                        sent_channels.append(channel)
+                        
+                        yield {
+                            "user_id": user_id,
+                            "notification_id": notification_id,
+                            "channel": channel,
+                            "notification": notification
+                        }
+                
+                # Update user's notification history
+                if sent_channels:
+                    updated_prefs = {**user_prefs}
+                    sent_notifications = updated_prefs.get("sent_notifications", [])
+                    sent_notifications.append({
+                        "notification_id": notification_id,
+                        "sent_at": datetime.now(timezone.utc).isoformat(),
+                        "channels": sent_channels,
+                        "notification_type": request["notification_type"],
+                        "priority": request["priority"]
+                    })
+                    
+                    # Keep only recent notifications for rate limiting
+                    cutoff_time = datetime.now(timezone.utc) - timedelta(days=7)
+                    updated_prefs["sent_notifications"] = [
+                        notif for notif in sent_notifications[-100:]  # Keep last 100
+                        if datetime.fromisoformat(notif["sent_at"]) > cutoff_time
+                    ]
+                    
+                    preferences_table[user_id] = updated_prefs
+                
+      - name: track-analytics
+        map:
+          entrypoint: track_analytics
+          python: |
+            def track_analytics(notification_data):
+                """
+                Generate analytics data for notification delivery tracking.
+                """
+                if notification_data.get("rate_limited", False):
+                    return notification_data  # Pass through rate limit violations
+                
+                if "notification" in notification_data:
+                    # This is a notification delivery
+                    notif = notification_data["notification"]
+                    
+                    analytics_data = {
+                        "event_type": "notification_sent",
+                        "notification_id": notif["notification_id"],
+                        "user_id": notif["user_id"],
+                        "channel": notif["channel"],
+                        "notification_type": notif["notification_type"],
+                        "priority": notif["priority"],
+                        "sender": notif["sender"],
+                        "timestamp": notif["delivery_timestamp"],
+                        "metadata": {
+                            "has_expiry": bool(notif.get("expires_at")),
+                            "has_custom_data": bool(notif.get("data"))
+                        }
+                    }
+                    
+                    return {
+                        **notification_data,
+                        "analytics_key": f"notification_analytics:{notif['notification_type']}:{notif['channel']}",
+                        "analytics_data": analytics_data
+                    }
+                
+                return notification_data

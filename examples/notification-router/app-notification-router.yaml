@@ -1,0 +1,33 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: notification-router
+  namespace: demo
+spec:
+  replicas: 3
+  bootstrapServers: kafka-cluster:9092
+  authentication:
+    type: plain
+    username: demo-user
+    passwordSecret:
+      secretName: kafka-credentials
+      passwordKey: password
+  resources:
+    requests:
+      cpu: 150m
+      memory: 384Mi
+    limits:
+      cpu: 750m
+      memory: 768Mi
+  storage:
+    type: persistent-claim
+    class: standard
+    size: 2Gi
+    deleteClaim: true
+  template:
+    kasprContainer:
+      env:
+        - name: MAX_NOTIFICATIONS_PER_USER
+          value: "5"
+        - name: NOTIFICATION_WINDOW_HOURS
+          value: "1"

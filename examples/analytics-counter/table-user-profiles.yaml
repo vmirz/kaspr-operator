@@ -1,0 +1,17 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: user-profiles
+  namespace: demo
+  labels:
+    kaspr.io/app: analytics-counter
+spec:
+  name: user-profiles
+  description: |
+    Maintains user profile information for lookups and enrichment.
+    Updated whenever user attributes change.
+  keySerializer: json
+  valueSerializer: json
+  partitions: 8
+  extraTopicConfigs:
+    retention.ms: -1  # Indefinite retention

@@ -1,0 +1,33 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: analytics-counter
+  namespace: demo
+spec:
+  replicas: 4
+  bootstrapServers: kafka-cluster:9092
+  authentication:
+    type: plain
+    username: demo-user
+    passwordSecret:
+      secretName: kafka-credentials
+      passwordKey: password
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  storage:
+    type: persistent-claim
+    class: standard
+    size: 5Gi
+    deleteClaim: true
+  template:
+    kasprContainer:
+      env:
+        - name: WINDOW_SIZE_MINUTES
+          value: "5"
+        - name: MAX_COUNTERS_PER_KEY
+          value: "1000"
