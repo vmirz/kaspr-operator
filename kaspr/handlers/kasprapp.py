@@ -819,3 +819,49 @@ async def on_reconciliation_paused(name, diff, spec, namespace, logger: Logger, 
 async def on_reconciliation_resumed(name, diff, spec, namespace, logger: Logger, **kwargs):
     """Handle reconciliation resumed event."""
     await request_reconciliation(name, **kwargs)
+
+@kopf.on.field(kind=APP_KIND, field='metadata.annotations', annotations={'kaspr.io/rebalance': kopf.PRESENT})
+async def on_rebalance_requested(
+    name, body, spec, namespace, annotations, patch, logger: Logger, **kwargs
+):
+    """Handle ad-hoc rebalance request via annotation.
+    
+    When kaspr.io/rebalance annotation is added, this handler:
+    1. Attempts to rebalance the cluster
+    2. Removes the annotation regardless of success/failure
+    3. Posts an event indicating the result
+    """
+    spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
+    app = KasprApp.from_spec(name, APP_KIND, namespace, spec_model, annotations, logger=logger)
+    
+    try:
+        logger.info(f"Rebalance requested for {name} via annotation")
+        
+        # Attempt rebalance
+        await app.request_rebalance()
+        
+        # Post success event
+        kopf.event(
+            body,
+            type="Normal",
+            reason="RebalanceRequested",
+            message=f"Rebalance successfully requested for '{name}' in '{namespace}' namespace.",
+        )
+        
+    except Exception as e:
+        logger.error(f"Rebalance request failed for {name}: {e}")
+        
+        # Post failure event
+        kopf.event(
+            body,
+            type="Warning",
+            reason="RebalanceFailed",
+            message=f"Rebalance request failed for '{name}' in '{namespace}' namespace: {e}",
+        )
+    
+    finally:
+        # Always remove the annotation to prevent repeated attempts
+        if "kaspr.io/rebalance" in (annotations or {}):
+            # Remove the annotation by setting it to None
+            patch.metadata.annotations["kaspr.io/rebalance"] = None
+            logger.info(f"Removed kaspr.io/rebalance annotation from {name}")

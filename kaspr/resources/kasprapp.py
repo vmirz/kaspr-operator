@@ -1836,6 +1836,60 @@ class KasprApp(BaseResource):
             return True
         return False
 
+    async def request_rebalance(self):
+        """Request a cluster rebalance when the app cluster is in ready state.
+        
+        Ready state is defined as:
+        - availableReplicas equals desiredReplicas
+        - At least one member is a leader
+        
+        Raises:
+            Exception: If cluster is not in ready state or rebalance fails
+        """
+        status = await self.fetch_app_status()
+        
+        if not status:
+            self.logger.warning("Cannot request rebalance: status not available")
+            return
+        
+        # Check if cluster is in ready state
+        available_replicas = status.get("availableReplicas", 0)
+        desired_replicas = status.get("desiredReplicas", 0)
+        members = status.get("members", {})
+        
+        if available_replicas != desired_replicas:
+            self.logger.warning(
+                f"Cannot request rebalance: cluster not ready "
+                f"(available={available_replicas}, desired={desired_replicas})"
+            )
+            return
+        
+        if not members:
+            self.logger.warning("Cannot request rebalance: no member status available")
+            return
+        
+        # Find the leader member
+        leader_idx = None
+        for idx, member_status in members.items():
+            if member_status.get("leader"):
+                leader_idx = idx
+                break
+        
+        if leader_idx is None:
+            self.logger.warning("Cannot request rebalance: no leader found in cluster")
+            return
+        
+        # Request rebalance on the leader member
+        try:
+            # Convert string index to int for prepare_member_url
+            leader_url = self.prepare_member_url(int(leader_idx))
+            self.logger.info(f"Requesting rebalance on leader member {leader_idx} at {leader_url}")
+            await self.web_client.rebalance(leader_url)
+            self.logger.info(f"Rebalance successfully requested on member {leader_idx}")
+        except Exception as e:
+            self.logger.error(f"Failed to request rebalance on member {leader_idx}: {e}")
+            raise
+
     @property
     def reconciliation_paused(self) -> bool:
         """Check if reconciliation is paused."""
