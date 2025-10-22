@@ -1,0 +1,37 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: user-enrichment
+  namespace: demo
+spec:
+  replicas: 2
+  bootstrapServers: kafka-cluster:9092
+  authentication:
+    type: plain
+    username: demo-user
+    passwordSecret:
+      secretName: kafka-credentials
+      passwordKey: password
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  storage:
+    type: persistent-claim
+    class: standard
+    size: 2Gi
+    deleteClaim: true
+  template:
+    kasprContainer:
+      env:
+        - name: GEO_API_URL
+          value: "http://ip-api.com/json"
+        - name: USER_API_URL
+          value: "https://jsonplaceholder.typicode.com/users"
+        - name: API_TIMEOUT_SECONDS
+          value: "5"
+        - name: CACHE_TTL_HOURS
+          value: "24"

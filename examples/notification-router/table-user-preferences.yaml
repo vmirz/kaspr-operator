@@ -1,0 +1,17 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: user-preferences
+  namespace: demo
+  labels:
+    kaspr.io/app: notification-router
+spec:
+  name: user-preferences
+  description: |
+    Stores user notification preferences and rate limiting information.
+    Updated when users change their preferences or when notifications are sent.
+  keySerializer: json
+  valueSerializer: json
+  partitions: 8
+  extraTopicConfig:
+    retention.ms: -1  # Keep preferences indefinitely

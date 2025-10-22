@@ -1,0 +1,253 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: counter-processor
+  namespace: demo
+  labels:
+    kaspr.io/app: analytics-counter
+spec:
+  description: |
+    Processes enriched user events and maintains real-time counters for various dimensions.
+    Performs lookups against user profiles for additional enrichment.
+  input:
+    topic:
+      name: enriched-user-events
+  output:
+    topics:
+      - name: real-time-metrics
+        keySelector:
+          python: |
+            def get_key(value):
+                return f"metrics:{value['dimension']}:{value['time_window']}"
+        valueSelector:
+          python: |
+            def get_value(value):
+                return value["metrics"]
+      - name: user-segments-updated
+        keySelector:
+          python: |
+            def get_key(value):
+                return value["user_id"]
+        valueSelector:
+          python: |
+            def get_value(value):
+                return value["segment_data"]
+        predicate:
+          python: |
+            def should_send(value):
+                return "segment_data" in value
+  processors:
+    pipeline:
+      - lookup-user-profile
+      - update-counters
+      - calculate-segments
+      - emit-metrics
+    init:
+      python: |
+        from datetime import datetime, timezone, timedelta
+        from collections import defaultdict
+        import os
+        import math
+        
+        app = context["app"]
+        
+        # Configuration from environment
+        WINDOW_SIZE_MINUTES = int(os.getenv("WINDOW_SIZE_MINUTES", "5"))
+        MAX_COUNTERS_PER_KEY = int(os.getenv("MAX_COUNTERS_PER_KEY", "1000"))
+        
+        def get_time_window(timestamp, window_minutes=WINDOW_SIZE_MINUTES):
+            """Get the time window bucket for a timestamp."""
+            dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+            # Round down to the nearest window_minutes interval
+            minutes = (dt.minute // window_minutes) * window_minutes
+            window_start = dt.replace(minute=minutes, second=0, microsecond=0)
+            return window_start.isoformat()
+        
+        def calculate_user_segment(profile, recent_activity):
+            """Calculate user segment based on profile and recent activity."""
+            # Simple segmentation logic
+            total_events = profile.get("total_events", 0)
+            days_since_signup = profile.get("days_since_signup", 0)
+            avg_daily_events = total_events / max(days_since_signup, 1)
+            
+            recent_purchases = recent_activity.get("purchase_count", 0)
+            recent_logins = recent_activity.get("login_count", 0)
+            
+            if recent_purchases >= 2:
+                return "high_value"
+            elif recent_logins >= 5 and avg_daily_events > 10:
+                return "active_user"
+            elif days_since_signup <= 7:
+                return "new_user"
+            elif recent_logins == 0:
+                return "dormant"
+            else:
+                return "regular_user"
+                
+    operations:
+      - name: lookup-user-profile
+        tables:
+          - name: user-profiles
+            paramName: profiles
+        map:
+          entrypoint: lookup_profile
+          python: |
+            def lookup_profile(value, profiles):
+                """
+                Looks up user profile information and adds it to the event.
+                """
+                user_id = value["user_id"]
+                profile = profiles.get(user_id, {
+                    "user_id": user_id,
+                    "total_events": 0,
+                    "first_seen": value["timestamp"],
+                    "signup_date": value.get("event_date"),
+                    "country": value.get("country_name", "Unknown"),
+                    "segments": []
+                })
+                
+                # Calculate days since signup
+                if profile.get("signup_date"):
+                    signup_date = datetime.fromisoformat(profile["signup_date"])
+                    current_date = datetime.fromisoformat(value["event_date"])
+                    days_since_signup = (current_date - signup_date).days
+                    profile["days_since_signup"] = days_since_signup
+                
+                return {
+                    **value,
+                    "user_profile": profile
+                }
+                
+      - name: update-counters
+        tables:
+          - name: event-counters
+            paramName: counters
+        map:
+          entrypoint: update_counters
+          python: |
+            def update_counters(value, counters):
+                """
+                Updates various dimensional counters based on the event.
+                """
+                timestamp = float(value["timestamp"])
+                time_window = get_time_window(timestamp)
+                event_type = value["event_type"]
+                country = value.get("country_name", "Unknown")
+                user_id = value["user_id"]
+                
+                # Define dimensions to count
+                dimensions = [
+                    f"global:total:{time_window}",
+                    f"event_type:{event_type}:{time_window}",
+                    f"country:{country}:{time_window}",
+                    f"hour:{value['event_hour']}:{time_window}",
+                    f"weekend:{value['is_weekend']}:{time_window}"
+                ]
+                
+                updated_counters = []
+                
+                for dimension in dimensions:
+                    counter = counters.get(dimension, {
+                        "count": 0,
+                        "unique_users": set(),
+                        "first_event": timestamp,
+                        "last_event": timestamp,
+                        "dimension": dimension,
+                        "time_window": time_window
+                    })
+                    
+                    # Update counter
+                    counter["count"] += 1
+                    counter["unique_users"].add(user_id)
+                    counter["last_event"] = max(counter["last_event"], timestamp)
+                    
+                    # Convert set to list for serialization, keep only count
+                    serializable_counter = {
+                        **counter,
+                        "unique_user_count": len(counter["unique_users"])
+                    }
+                    del serializable_counter["unique_users"]
+                    
+                    counters[dimension] = counter  # Keep set in table
+                    updated_counters.append(serializable_counter)
+                
+                return {
+                    **value,
+                    "updated_counters": updated_counters,
+                    "time_window": time_window
+                }
+                
+      - name: calculate-segments
+        tables:
+          - name: user-profiles
+            paramName: profiles
+          - name: event-counters
+            paramName: counters
+        map:
+          entrypoint: calculate_segments
+          python: |
+            def calculate_segments(value, profiles, counters):
+                """
+                Updates user segments based on recent activity patterns.
+                """
+                user_id = value["user_id"]
+                profile = value["user_profile"]
+                time_window = value["time_window"]
+                
+                # Get recent activity from counters
+                recent_activity = {}
+                for event_type in ["login", "purchase", "page_view"]:
+                    counter_key = f"user:{user_id}:event_type:{event_type}:{time_window}"
+                    counter = counters.get(counter_key, {"count": 0})
+                    recent_activity[f"{event_type}_count"] = counter["count"]
+                
+                # Calculate new segment
+                new_segment = calculate_user_segment(profile, recent_activity)
+                
+                # Update profile
+                updated_profile = {
+                    **profile,
+                    "total_events": profile["total_events"] + 1,
+                    "last_seen": value["timestamp"],
+                    "current_segment": new_segment,
+                    "last_updated": datetime.now(timezone.utc).isoformat()
+                }
+                
+                # Add to segments history if segment changed
+                if profile.get("current_segment") != new_segment:
+                    segments = profile.get("segments", [])
+                    segments.append({
+                        "segment": new_segment,
+                        "timestamp": value["timestamp"],
+                        "trigger_event": value["event_type"]
+                    })
+                    # Keep only last 10 segments
+                    updated_profile["segments"] = segments[-10:]
+                
+                profiles[user_id] = updated_profile
+                
+                result = {**value}
+                if profile.get("current_segment") != new_segment:
+                    result["segment_data"] = {
+                        "user_id": user_id,
+                        "old_segment": profile.get("current_segment"),
+                        "new_segment": new_segment,
+                        "change_timestamp": value["timestamp"]
+                    }
+                
+                return result
+                
+      - name: emit-metrics
+        map:
+          entrypoint: emit_metrics
+          python: |
+            def emit_metrics(value):
+                """
+                Emits metrics for each updated counter.
+                """
+                for counter in value["updated_counters"]:
+                    yield {
+                        "dimension": counter["dimension"],
+                        "time_window": counter["time_window"],
+                        "metrics": counter
+                    }

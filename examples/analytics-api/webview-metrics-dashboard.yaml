@@ -1,0 +1,198 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprWebView
+metadata:
+  name: metrics-dashboard
+  namespace: demo
+  labels:
+    kaspr.io/app: analytics-api
+spec:
+  name: metrics-dashboard
+  description: REST API for querying real-time analytics metrics
+  request:
+    method: GET
+    path: /api/v1/metrics/{dimension}
+  response:
+    contentType: application/json
+    statusCodeSelector:
+      onSuccess:
+        entrypoint: success_status
+        python: |
+          def success_status(result):
+              return 200
+      onError:
+        entrypoint: error_status
+        python: |
+          def error_status(error):
+              if "not found" in str(error).lower():
+                  return 404
+              return 500
+    bodySelector:
+      onSuccess:
+        entrypoint: success_body
+        python: |
+          def success_body(result):
+              return {
+                  "success": True,
+                  "data": result,
+                  "timestamp": result.get("query_timestamp")
+              }
+      onError:
+        entrypoint: error_body
+        python: |
+          def error_body(error):
+              return {
+                  "success": False,
+                  "error": str(error),
+                  "timestamp": datetime.now(timezone.utc).isoformat()
+              }
+  processors:
+    pipeline:
+      - validate-request
+      - query-metrics
+      - format-response
+    init:
+      python: |
+        from datetime import datetime, timezone, timedelta
+        import json
+        
+        def get_current_time_window(window_minutes=5):
+            """Get the current time window."""
+            now = datetime.now(timezone.utc)
+            minutes = (now.minute // window_minutes) * window_minutes
+            window_start = now.replace(minute=minutes, second=0, microsecond=0)
+            return window_start.isoformat()
+            
+        def parse_time_range(time_range_param):
+            """Parse time range parameter (e.g., '1h', '24h', '7d')."""
+            if not time_range_param:
+                return 1  # Default 1 hour
+                
+            unit = time_range_param[-1].lower()
+            try:
+                value = int(time_range_param[:-1])
+            except ValueError:
+                return 1
+                
+            if unit == 'h':
+                return value
+            elif unit == 'd':
+                return value * 24
+            elif unit == 'w':
+                return value * 24 * 7
+            else:
+                return 1
+                
+    operations:
+      - name: validate-request
+        map:
+          entrypoint: validate_request
+          python: |
+            def validate_request(request, dimension):
+                """
+                Validates the incoming API request parameters.
+                """
+                # Parse query parameters
+                query_params = {}
+                if hasattr(request, 'query_string') and request.query_string:
+                    for param in request.query_string.decode().split('&'):
+                        if '=' in param:
+                            key, value = param.split('=', 1)
+                            query_params[key] = value
+                
+                # Validate dimension
+                valid_dimensions = [
+                    "global", "event_type", "country", "hour", "weekend"
+                ]
+                
+                if dimension not in valid_dimensions:
+                    raise ValueError(f"Invalid dimension '{dimension}'. Valid options: {valid_dimensions}")
+                
+                # Parse and validate parameters
+                time_range_hours = parse_time_range(query_params.get('time_range', '1h'))
+                dimension_value = query_params.get('value', 'total')
+                
+                return {
+                    "dimension": dimension,
+                    "dimension_value": dimension_value,
+                    "time_range_hours": time_range_hours,
+                    "query_timestamp": datetime.now(timezone.utc).isoformat(),
+                    "query_params": query_params
+                }
+                
+      - name: query-metrics
+        tables:
+          - name: event-counters
+            paramName: counters
+        map:
+          entrypoint: query_metrics
+          python: |
+            def query_metrics(request, counters):
+                """
+                Queries metrics from the counters table based on the request parameters.
+                """
+                dimension = request["dimension"]
+                dimension_value = request["dimension_value"]
+                time_range_hours = request["time_range_hours"]
+                
+                # Calculate time windows to query
+                current_window = get_current_time_window()
+                current_time = datetime.fromisoformat(current_window.replace('Z', '+00:00'))
+                
+                metrics = []
+                windows_to_check = time_range_hours * (60 // 5)  # 5-minute windows
+                
+                for i in range(windows_to_check):
+                    window_time = current_time - timedelta(minutes=i * 5)
+                    window_key = window_time.isoformat()
+                    
+                    # Build counter key
+                    counter_key = f"{dimension}:{dimension_value}:{window_key}"
+                    
+                    counter = counters.get(counter_key)
+                    if counter:
+                        metrics.append({
+                            "time_window": window_key,
+                            "count": counter["count"],
+                            "unique_users": counter.get("unique_user_count", 0),
+                            "dimension": dimension,
+                            "dimension_value": dimension_value
+                        })
+                
+                if not metrics:
+                    raise ValueError(f"No metrics found for {dimension}:{dimension_value}")
+                
+                # Calculate aggregates
+                total_count = sum(m["count"] for m in metrics)
+                total_unique_users = len(set(str(m["unique_users"]) for m in metrics if m["unique_users"] > 0))
+                avg_count_per_window = total_count / len(metrics) if metrics else 0
+                
+                return {
+                    **request,
+                    "metrics": metrics,
+                    "summary": {
+                        "total_events": total_count,
+                        "unique_users": total_unique_users,
+                        "avg_events_per_window": round(avg_count_per_window, 2),
+                        "windows_queried": len(metrics),
+                        "time_range_hours": time_range_hours
+                    }
+                }
+                
+      - name: format-response
+        map:
+          entrypoint: format_response
+          python: |
+            def format_response(result):
+                """
+                Formats the final API response.
+                """
+                return {
+                    "query": {
+                        "dimension": result["dimension"],
+                        "dimension_value": result["dimension_value"],
+                        "time_range_hours": result["time_range_hours"]
+                    },
+                    "summary": result["summary"],
+                    "metrics": result["metrics"],
+                    "query_timestamp": result["query_timestamp"]
+                }
