@@ -965,6 +965,8 @@ spec:
                   format: int64
                 kasprVersion:
                   type: string
+                availableMembers:
+                  type: string
                 conditions:
                   type: array
                   x-kubernetes-list-type: map
@@ -994,7 +996,29 @@ spec:
                         format: date-time
                       observedGeneration:
                         type: integer
-                        format: int64   
+                        format: int64
+                members:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys:
+                    - id
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                    required:
+                      - id
+                    properties:
+                      id:
+                        type: integer
+                      lastProbeTime:
+                        type: string
+                        format: date-time
+                      leader:
+                        type: boolean
+                      rebalancing:
+                        type: boolean
+                      recovering:
+                        type: boolean
       subresources:
         status: {}      
       additionalPrinterColumns:
@@ -1004,6 +1028,6 @@ spec:
       - name: Version
         jsonPath: .status.kasprVersion
         type: string
-      - name: Replicas
-        jsonPath: .status.availableReplicas
-        type: integer
+      - name: Members
+        jsonPath: .status.availableMembers
+        type: string
