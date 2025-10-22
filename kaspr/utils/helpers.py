@@ -217,13 +217,21 @@ def datetime_converter(o):
 
 
 def sort_dict_keys(d):
+    """Recursively sort dictionary keys and handle nested structures.
+    
+    Args:
+        d: Data structure (dict, list, or primitive type)
+        
+    Returns:
+        Sorted version of the data structure
+    """
     if isinstance(d, dict):
         return {
-            key: sort_dict_keys(value) if isinstance(value, dict) else value
+            key: sort_dict_keys(value)
             for key, value in sorted(d.items())
         }
     elif isinstance(d, list):
-        return [sort_dict_keys(item) if isinstance(item, dict) else item for item in d]
+        return [sort_dict_keys(item) for item in d]
     else:
         return d
 
@@ -253,27 +261,36 @@ def upsert_condition(conds, newc):
         conds.append({**newc, "lastTransitionTime": now()})
     return conds
 
-def deep_compare_dict(dict1, dict2) -> bool:
-    """Compare two dictionaries deeply, handling nested structures and type normalization.
+def deep_compare_dict(data1, data2) -> bool:
+    """Compare two data structures deeply, handling nested structures and type normalization.
+    
+    Supports comparison of:
+    - Dictionaries
+    - Lists of dictionaries
+    - Nested combinations of both
     
     Args:
-        dict1: First dictionary to compare
-        dict2: Second dictionary to compare
+        data1: First data structure (dict, list, or nested combination)
+        data2: Second data structure (dict, list, or nested combination)
         
     Returns:
-        True if dictionaries are equivalent, False otherwise
+        True if data structures are equivalent, False otherwise
     """
-    if dict1 is None and dict2 is None:
+    if data1 is None and data2 is None:
         return True
-    if dict1 is None or dict2 is None:
+    if data1 is None or data2 is None:
+        return False
+    
+    # Check if types match
+    if type(data1) != type(data2):
         return False
     
     try:
         # Use jsonpickle for reliable deep comparison with better type handling
         # This handles nested structures, ordering, and complex data types
-        json1 = jsonpickle.dumps(sort_dict_keys(dict1), unpicklable=False)
-        json2 = jsonpickle.dumps(sort_dict_keys(dict2), unpicklable=False)
+        json1 = jsonpickle.dumps(sort_dict_keys(data1), unpicklable=False)
+        json2 = jsonpickle.dumps(sort_dict_keys(data2), unpicklable=False)
         return json1 == json2
     except (TypeError, ValueError):
         # Fallback to direct comparison if jsonpickle serialization fails
-        return dict1 == dict2
+        return data1 == data2
