@@ -27,6 +27,10 @@ spec:
                 description:
                   type: string
                   description: A short description of what this agent does.
+                isolatedPartitions:
+                  type: boolean
+                  description: Isolate processing by input topic partitions
+                  default: false
                 input:
                   description: Input to stream processing.
                   type: object

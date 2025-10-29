@@ -190,6 +190,9 @@ class KasprAgentSpecSchema(BaseSchema):
 
     name = fields.Str(data_key="name", required=False)
     description = fields.Str(data_key="description", allow_none=True, load_default=None)
+    isolated_partitions = fields.Bool(
+        data_key="isolatedPartitions", allow_none=True, load_default=None
+    )
     input = fields.Nested(KasprAgentInputSchema(), data_key="input", allow_none=True)
     output = fields.Nested(KasprAgentOutputSchema(), data_key="output", allow_none=True)
     processors = fields.Nested(
@@ -198,3 +201,8 @@ class KasprAgentSpecSchema(BaseSchema):
         allow_none=True,
         load_default=None,
     )
+
+    @post_dump
+    def camel_to_snake_dump(self, data, **kwargs):
+        """Convert data keys from camelCase to snake_case."""
+        return camel_to_snake(data)
