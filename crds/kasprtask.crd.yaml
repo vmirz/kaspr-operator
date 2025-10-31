@@ -1,0 +1,217 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kasprtasks.kaspr.io
+spec:
+  scope: Namespaced
+  group: kaspr.io
+  names:
+    kind: KasprTask
+    plural: kasprtasks
+    singular: kasprtask
+    shortNames:
+      - ktasks
+      - ktask
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                name:
+                  type: string
+                  description: The name of the task.
+                description:
+                  type: string
+                  description: A short description of what this task does.
+                onLeader:
+                  type: boolean
+                  description: Whether to run this task only on the leader instance.
+                  default: false
+                schedule:
+                  type: object
+                  properties:
+                    cron:
+                      type: string
+                      description: Cron expression defining the schedule.
+                    interval:
+                      type: string
+                      description: Interval duration (e.g., "10s", "5m", "1h")
+                  anyOf:
+                    - required: ["cron"]
+                    - required: ["interval"]
+                processors:
+                  description: Chain of processors that modify input values
+                  type: object
+                  properties:
+                    pipeline:
+                      type: array
+                      items:
+                        type: string
+                        description: Sequence of operations to run.
+                    init:
+                      description: Initialization code to run.
+                      type: object
+                      properties:
+                        entrypoint:
+                          type: string
+                          description: Name of the function to run.                         
+                        python:
+                          type: string
+                          description: Python code to run.
+                      required:
+                        - python
+                    operations:
+                      description: Chain of operations to run on input events.
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            description: The name of the operation.
+                          tables:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                name:
+                                  type: string
+                                  description: The name of the table.
+                                paramName:
+                                  type: string
+                                  description: The name of the function parameter to use for the table.
+                              required:
+                                - name
+                                - paramName
+                          map:
+                            type: object
+                            properties:
+                              entrypoint:
+                                type: string
+                                description: Name of the function to run.                               
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          filter:
+                            type: object
+                            properties:
+                              entrypoint:
+                                type: string
+                                description: Name of the function to run.                               
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python
+                          topicSend:
+                            description: Send a message to a kafka topic.
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                                description: Name of the kafka topic to send the message to.
+                              nameSelector:
+                                type: object
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.                            
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python                                
+                              ack:
+                                type: boolean
+                                description: Wait for acknoledgement from the broker before considering the message sent
+                              keySerializer:
+                                type: string
+                                description: Serializer for the key of the message
+                                enum: ["raw", "json", "pickle", "binary"]
+                              valueSerializer:
+                                type: string
+                                description: Serializer for the value of the message
+                                enum: ["raw", "json", "pickle", "binary"]
+                              keySelector:
+                                type: object
+                                description: Python code to determine the key of the message
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.                                   
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              valueSelector:
+                                type: object
+                                description: Python code to determine the value of the message
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.                                   
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              partitionSelector:
+                                type: object
+                                description: Python code to determine the topic partition of the message
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              headersSelector:
+                                type: object
+                                description: Python code to determine the headers of the message
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              predicate:
+                                type: object
+                                description: Python code to determine if the message should be sent
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                            anyOf:
+                              - required: ["name"]
+                              - required: ["nameSelector"]
+                        required:
+                          - name
+                      required:
+                        - pipeline
+                        - operations
+              required:
+                - name
+                - processors
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true

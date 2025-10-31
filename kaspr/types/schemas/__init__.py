@@ -44,6 +44,16 @@ from .container_template import (
     VolumeMountSchema,
     ContainerTemplateSchema
 )
+from .kasprtask_spec import (
+    KasprTaskSpecSchema,
+    KasprTaskScheduleSpecSchema,
+    KasprTaskProcessorOperationSchema,
+    KasprTaskProcessorSpecSchema,
+    KasprTaskProcessorTopicSendOperatorSchema,
+    KasprTaskProcessorMapOperatorSchema,
+    KasprTaskProcessorFilterOperatorSchema,
+    KasprTaskProcessorInitSchema
+)
 
 __all__ = [
     "KasprAgentSpecSchema",
@@ -70,6 +80,14 @@ __all__ = [
     "KasprTableWindowHoppingSpecSchema",
     "KasprTableWindowSpecSchema",
     "KasprTableSpecSchema",
+    "KasprTaskSpecSchema",
+    "KasprTaskScheduleSpecSchema",
+    "KasprTaskProcessorOperationSchema",
+    "KasprTaskProcessorSpecSchema",
+    "KasprTaskProcessorTopicSendOperatorSchema",
+    "KasprTaskProcessorMapOperatorSchema",
+    "KasprTaskProcessorFilterOperatorSchema",
+    "KasprTaskProcessorInitSchema",
     "TableRefSpecSchema",
     "PodTemplateSchema",
     "KeyToPathSchema",

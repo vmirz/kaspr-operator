@@ -53,6 +53,17 @@ from .container_template import (
     VolumeMount,
     ContainerTemplate
 )
+from .kasprtask_resources import KasprTaskResources
+from .kasprtask_spec import (
+    KasprTaskScheduleSpec,
+    KasprTaskProcessorTopicSendOperator,
+    KasprTaskProcessorMapOperator,
+    KasprTaskProcessorFilterOperator,
+    KasprTaskProcessorsOperation,
+    KasprTaskProcessorsInit,
+    KasprTaskProcessorsSpec,
+    KasprTaskSpec,
+)
 
 __all__ = [
     "MetadataTemplate",
@@ -104,4 +115,13 @@ __all__ = [
     "ContainerEnvVar",
     "VolumeMount",
     "ContainerTemplate",
+    "KasprTaskResources",
+    "KasprTaskScheduleSpec",
+    "KasprTaskProcessorTopicSendOperator",
+    "KasprTaskProcessorMapOperator",
+    "KasprTaskProcessorFilterOperator",
+    "KasprTaskProcessorsOperation",
+    "KasprTaskProcessorsInit",
+    "KasprTaskProcessorsSpec",
+    "KasprTaskSpec",
 ]

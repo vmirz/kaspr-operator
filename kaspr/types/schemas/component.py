@@ -4,6 +4,7 @@ from kaspr.types.models import KasprAppComponents
 from kaspr.types.schemas.kaspragent_spec import KasprAgentSpecSchema
 from kaspr.types.schemas.kasprwebview_spec import KasprWebViewSpecSchema
 from kaspr.types.schemas.kasprtable_spec import KasprTableSpecSchema
+from kaspr.types.schemas.kasprtask_spec import KasprTaskSpecSchema
 
 
 class KasprAppComponentsSchema(BaseSchema):
@@ -27,4 +28,9 @@ class KasprAppComponentsSchema(BaseSchema):
         required=False,
         load_default=[],
     )
-    
+    tasks = fields.List(
+        fields.Nested(KasprTaskSpecSchema()),
+        data_key="tasks",
+        required=False,
+        load_default=[],
+    )
