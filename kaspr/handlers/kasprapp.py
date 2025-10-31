@@ -13,7 +13,7 @@ from kaspr.types.schemas import (
     KasprWebViewSpecSchema,
     KasprTableSpecSchema,
 )
-from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable
+from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable, KasprTask
 from kaspr.utils.helpers import upsert_condition, deep_compare_dict
 
 APP_KIND = "KasprApp"
@@ -656,9 +656,12 @@ async def monitor_related_resources(
             agents: List[KasprAgent] = []
             webviews: List[KasprWebView] = []
             tables: List[KasprTable] = []
+            tasks: List[KasprTask] = []
             agent_resources = KasprAgent.default().search(namespace, apps=[name])
             webview_resources = KasprWebView.default().search(namespace, apps=[name])
             table_resources = KasprTable.default().search(namespace, apps=[name])
+            task_resources = KasprTask.default().search(namespace, apps=[name])
+
             for agent in agent_resources.get("items", []) if agent_resources else []:
                 agents.append(
                     KasprAgent.from_spec(
@@ -669,6 +672,7 @@ async def monitor_related_resources(
                         dict(agent["metadata"]["labels"]),
                     )
                 )
+
             for webview in (
                 webview_resources.get("items", []) if webview_resources else []
             ):
@@ -681,6 +685,7 @@ async def monitor_related_resources(
                         dict(webview["metadata"]["labels"]),
                     )
                 )
+
             for table in table_resources.get("items", []) if table_resources else []:
                 tables.append(
                     KasprTable.from_spec(
@@ -691,9 +696,21 @@ async def monitor_related_resources(
                         dict(table["metadata"]["labels"]),
                     )
                 )
+
+            for task in task_resources.get("items", []) if task_resources else []:
+                tasks.append(
+                    KasprTask.from_spec(
+                        task["metadata"]["name"],
+                        KasprTask.KIND,
+                        namespace,
+                        KasprTableSpecSchema().load(task["spec"]),
+                        dict(task["metadata"]["labels"]),
+                    )
+                )
             app.with_agents(agents)
             app.with_webviews(webviews)
             app.with_tables(tables)
+            app.with_tasks(tasks)
             # current_agents_hash, desired_agents_hash = (
             #     annotations.get("kaspr.io/last-applied-agents-hash"),
             #     app.agents_hash,

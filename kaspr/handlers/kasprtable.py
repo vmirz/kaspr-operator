@@ -139,7 +139,7 @@ async def monitor_table(
             logger.info("Monitoring stopped.")
             break
         except Exception as e:
-            logger.error("Unexpected error during monitoring: {e}")
+            logger.error(f"Unexpected error during monitoring: {e}")
             logger.exception(e)
 
 

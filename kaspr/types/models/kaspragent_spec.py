@@ -39,8 +39,7 @@ class KasprAgentProcessorsOperation(BaseModel):
     filter: Optional[FilterOperation]
     tables: Optional[List[TableRefSpec]]
 
-class KasprAgentProcessorsInit(CodeSpec):
-    ...
+class KasprAgentProcessorsInit(CodeSpec): ...
 
 class KasprAgentProcessors(BaseModel):
     pipeline: List[str]
@@ -52,6 +51,7 @@ class KasprAgentSpec(BaseModel):
 
     name: str
     description: Optional[str]
+    isolated_partitions: Optional[bool]
     input: KasprAgentInput
     output: KasprAgentOutput
     processors: KasprAgentProcessors

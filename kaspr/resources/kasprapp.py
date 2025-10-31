@@ -73,7 +73,7 @@ from kubernetes.client import (
 )
 
 from kaspr.resources.base import BaseResource
-from kaspr.resources import KasprAgent, KasprWebView, KasprTable
+from kaspr.resources import KasprAgent, KasprWebView, KasprTable, KasprTask
 from kaspr.common.models.labels import Labels
 from kaspr.web import KasprWebClient
 
@@ -158,15 +158,18 @@ class KasprApp(BaseResource):
     _agent_pod_volumes: List[V1Volume] = None
     _webview_pod_volumes: List[V1Volume] = None
     _table_pod_volumes: List[V1Volume] = None
+    _task_pod_volumes: List[V1Volume] = None
     _hpa: V2HorizontalPodAutoscaler = None
 
     # Reference to agent resources
     agents: List[KasprAgent] = None
     webviews: List[KasprWebView] = None
     tables: List[KasprTable] = None
+    tasks: List[KasprTask] = None
     _webviews_hash: str = None
     _agents_hash: str = None
     _tables_hash: str = None
+    _tasks_hash: str = None
 
     # TODO: Templates allow customizing k8s behavior
     template_service_account: ResourceTemplate
@@ -444,6 +447,11 @@ class KasprApp(BaseResource):
         """Apply table resources to the app."""
         self.tables = tables
         self._tables_hash = None  # reset hash
+
+    def with_tasks(self, tasks: List[KasprTask]):
+        """Apply task resources to the app."""
+        self.tasks = tasks
+        self._tasks_hash = None  # reset hash
 
     def fetch(self, name: str, namespace: str):
         """Fetch actual KasprApp in kubernetes."""
@@ -794,6 +802,10 @@ class KasprApp(BaseResource):
         if self.tables:
             env_vars.append(V1EnvVar(name="TABLES_HASH", value=self.tables_hash))
 
+        # include tasks hash
+        if self.tasks:
+            env_vars.append(V1EnvVar(name="TASKS_HASH", value=self.tasks_hash))
+
         # template environment variables
         env_vars.extend(self.prepare_container_template_env_vars())
 
@@ -910,6 +922,19 @@ class KasprApp(BaseResource):
                 )
             )
         return volume_mounts
+    
+    def prepare_task_volume_mounts(self) -> List[V1VolumeMount]:
+        volume_mounts = []
+        for task in self.tasks if self.tasks else []:
+            volume_mounts.append(
+                V1VolumeMount(
+                    name=task.volume_mount_name,
+                    mount_path=self.prepare_task_mount_path(task),
+                    read_only=True,
+                    sub_path=task.file_name,
+                )
+            )
+        return volume_mounts
 
     def prepare_agent_mount_path(self, agent: KasprAgent) -> str:
         return f"{self.definitions_dir_path}/{agent.file_name}"
@@ -920,6 +945,9 @@ class KasprApp(BaseResource):
     def prepare_table_mount_path(self, table: KasprTable) -> str:
         return f"{self.definitions_dir_path}/{table.file_name}"
 
+    def prepare_task_mount_path(self, task: KasprTask) -> str:
+        return f"{self.definitions_dir_path}/{task.file_name}"
+    
     def prepare_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
         volume_mounts.extend(
@@ -931,6 +959,7 @@ class KasprApp(BaseResource):
                 *self.prepare_agent_volume_mounts(),
                 *self.prepare_webview_volume_mounts(),
                 *self.prepare_table_volume_mounts(),
+                *self.prepare_task_volume_mounts(),
                 *self.prepare_container_template_volume_mounts(),
             ]
         )
@@ -985,6 +1014,7 @@ class KasprApp(BaseResource):
         volumes.extend(self.prepare_agent_volumes())
         volumes.extend(self.prepare_webview_volumes())
         volumes.extend(self.prepare_table_volumes())
+        volumes.extend(self.prepare_task_volumes())
         volumes.extend(self.prepare_pod_template_volumes())
         return volumes
 
@@ -1070,6 +1100,20 @@ class KasprApp(BaseResource):
                     config_map=V1ConfigMapVolumeSource(
                         name=table.config_map_name,
                         items=[V1KeyToPath(key=table.file_name, path=table.file_name)],
+                    ),
+                )
+            )
+        return volumes
+    
+    def prepare_task_volumes(self) -> List[V1Volume]:
+        volumes = []
+        for task in self.tasks if self.tasks else []:
+            volumes.append(
+                V1Volume(
+                    name=task.volume_mount_name,
+                    config_map=V1ConfigMapVolumeSource(
+                        name=task.config_map_name,
+                        items=[V1KeyToPath(key=task.file_name, path=task.file_name)],
                     ),
                 )
             )
@@ -1720,6 +1764,10 @@ class KasprApp(BaseResource):
     def tables_status(self) -> Dict:
         """Return status of all tables."""
         return [table.info() for table in self.tables]
+    
+    def tasks_status(self) -> Dict:
+        """Return status of all tasks."""
+        return [task.info() for task in self.tasks]
 
     async def fetch_app_status(self) -> Dict:
         """Fetch status of application's statefulset/pods"""
@@ -2122,6 +2170,12 @@ class KasprApp(BaseResource):
         return self._table_pod_volumes
 
     @cached_property
+    def task_pod_volumes(self) -> List[V1Volume]:
+        if self._task_pod_volumes is None:
+            self._task_pod_volumes = self.prepare_task_volumes()
+        return self._task_pod_volumes
+
+    @cached_property
     def hpa(self) -> V2HorizontalPodAutoscaler:
         if self._hpa is None:
             self._hpa = self.prepare_hpa()
@@ -2159,3 +2213,14 @@ class KasprApp(BaseResource):
                 else None
             )
         return self._tables_hash
+
+    @cached_property
+    def tasks_hash(self) -> str:
+        """Hash of all tasks."""
+        if self._tasks_hash is None:
+            self._tasks_hash = (
+                self.compute_hash("".join(task.hash for task in self.tasks))
+                if self.tasks
+                else None
+            )
+        return self._tasks_hash
