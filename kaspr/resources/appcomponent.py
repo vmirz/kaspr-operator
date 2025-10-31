@@ -135,7 +135,12 @@ class BaseAppComponent(BaseResource):
         """Prepare yaml string for config map data."""
         components = KasprAppComponentsSchema().dump(self.app_components)
         components = ordered_dict_to_dict(components)
-        return yaml.dump(components, default_flow_style=False)
+        return yaml.dump(
+            components,
+            default_flow_style=False,
+            allow_unicode=True,
+            Dumper=yaml.SafeDumper,
+        )
 
     def prepare_config_map(self) -> V1ConfigMap:
         labels, annotations = self.labels.as_dict(), {}
@@ -265,7 +270,7 @@ class BaseAppComponent(BaseResource):
             return self.yaml_str
         else:
             return self.json_str
-        
+
     @cached_property
     def app_components(self) -> KasprAppComponents:
         """Return the app components."""
