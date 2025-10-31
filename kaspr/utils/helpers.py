@@ -174,11 +174,32 @@ def ensure_date(dtstr, format=DEFAULT_DATE_FORMAT):
 
 
 def ordered_dict_to_dict(data):
+    """
+    Recursively convert OrderedDict instances to regular dict instances.
+    Handles nested structures including lists, tuples, sets, and regular dicts.
+    
+    Args:
+        data: Any data structure that may contain OrderedDict instances
+        
+    Returns:
+        The same data structure with all OrderedDict instances converted to dict
+    """
     if isinstance(data, OrderedDict):
-        return dict((k, ordered_dict_to_dict(v)) for k, v in data.items())
-    elif isinstance(data, list):
-        return [ordered_dict_to_dict(i) for i in data]
-    return data
+        # Convert OrderedDict to dict and recursively process values
+        return {k: ordered_dict_to_dict(v) for k, v in data.items()}
+    elif isinstance(data, dict):
+        # Process regular dict values recursively
+        return {k: ordered_dict_to_dict(v) for k, v in data.items()}
+    elif isinstance(data, (list, tuple)):
+        # Process list/tuple elements recursively, preserving container type
+        converted = [ordered_dict_to_dict(item) for item in data]
+        return converted if isinstance(data, list) else tuple(converted)
+    elif isinstance(data, set):
+        # Process set elements recursively
+        return {ordered_dict_to_dict(item) for item in data}
+    else:
+        # Return primitive types and other objects as-is
+        return data
 
 
 def camel_to_snake(data):
@@ -282,7 +303,7 @@ def deep_compare_dict(data1, data2) -> bool:
         return False
     
     # Check if types match
-    if type(data1) != type(data2):
+    if not isinstance(data1, type(data2)) and not isinstance(data2, type(data1)):
         return False
     
     try:
