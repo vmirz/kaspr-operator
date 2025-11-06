@@ -6,9 +6,9 @@ from kaspr.types.models.tableref import TableRefSpec
 
 class KasprWebViewProcessorTopicSendOperator(TopicOutSpec): ...
 
-
 class KasprWebViewProcessorMapOperator(CodeSpec): ...
 
+class KasprWebViewProcessorFilterOperator(CodeSpec): ...
 
 class KasprWebViewProcessorOperation(BaseModel):
     name: str
