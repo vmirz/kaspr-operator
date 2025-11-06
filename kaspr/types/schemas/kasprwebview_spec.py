@@ -11,6 +11,7 @@ from kaspr.types.models import (
     KasprWebViewProcessorsInit,
     KasprWebViewProcessorMapOperator,
     KasprWebViewProcessorTopicSendOperator,
+    KasprWebViewProcessorFilterOperator,
 )
 from kaspr.types.schemas.topicout import TopicOutSpecSchema
 from kaspr.types.schemas.code import CodeSpecSchema
@@ -23,6 +24,8 @@ class KasprWebViewProcessorTopicSendOperatorSchema(TopicOutSpecSchema):
 class KasprWebViewProcessorMapOperatorSchema(CodeSpecSchema):
     __model__ = KasprWebViewProcessorMapOperator
 
+class KasprWebViewProcessorFilterOperatorSchema(CodeSpecSchema):
+    __model__ = KasprWebViewProcessorFilterOperator
 
 class KasprWebViewProcessorOperationSchema(BaseSchema):
     __model__ = KasprWebViewProcessorOperation
@@ -37,6 +40,12 @@ class KasprWebViewProcessorOperationSchema(BaseSchema):
     map = fields.Nested(
         KasprWebViewProcessorMapOperatorSchema(),
         data_key="map",
+        allow_none=True,
+        load_default=None,
+    )
+    filter = fields.Nested(
+        KasprWebViewProcessorFilterOperatorSchema(),
+        data_key="filter",
         allow_none=True,
         load_default=None,
     )

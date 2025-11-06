@@ -14,6 +14,7 @@ from .topicout import TopicOutSpecSchema
 from .kasprwebview_spec import (
     KasprWebViewProcessorTopicSendOperatorSchema,
     KasprWebViewProcessorMapOperatorSchema,
+    KasprWebViewProcessorFilterOperatorSchema,
     KasprWebViewProcessorOperationSchema,
     KasprWebViewProcessorSpecSchema,
     KasprWebViewResponseSelectorSchema,
@@ -70,6 +71,7 @@ __all__ = [
     "TopicOutSpecSchema",
     "KasprWebViewProcessorTopicSendOperatorSchema",
     "KasprWebViewProcessorMapOperatorSchema",
+    "KasprWebViewProcessorFilterOperatorSchema",
     "KasprWebViewProcessorOperationSchema",
     "KasprWebViewProcessorSpecSchema",
     "KasprWebViewResponseSelectorSchema",
