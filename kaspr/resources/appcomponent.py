@@ -12,6 +12,7 @@ from kubernetes_asyncio.client import (
     V1ObjectMeta,
     V1ConfigMap,
 )
+from kubernetes_asyncio.client.api_client import ApiClient
 
 from kaspr.resources.base import BaseResource
 from kaspr.common.models.labels import Labels
@@ -24,6 +25,9 @@ class BaseAppComponent(BaseResource):
     GROUP_VERSION = "v1alpha1"
     KASPR_APP_NAME_LABEL = "kaspr.io/app"
     OUTPUT_TYPE = "yaml"
+    
+    # Shared API client (will be set from KasprApp.shared_api_client)
+    shared_api_client: ApiClient = None
 
     # The are defined by subclass
     KIND = None
@@ -40,6 +44,7 @@ class BaseAppComponent(BaseResource):
     _yaml_str: str = None
 
     # k8s resources
+    _api_client: ApiClient = None
     _core_v1_api: CoreV1Api = None
     _custom_objects_api: CustomObjectsApi = None
     _config_map: V1ConfigMap = None
@@ -213,15 +218,25 @@ class BaseAppComponent(BaseResource):
         }
 
     @cached_property
+    def api_client(self) -> ApiClient:
+        if self._api_client is None:
+            # Use the shared API client if available, otherwise create a new one
+            if self.shared_api_client is not None:
+                self._api_client = self.shared_api_client
+            else:
+                self._api_client = ApiClient()
+        return self._api_client
+    
+    @cached_property
     def core_v1_api(self) -> CoreV1Api:
         if self._core_v1_api is None:
-            self._core_v1_api = CoreV1Api()
+            self._core_v1_api = CoreV1Api(self.api_client)
         return self._core_v1_api
 
     @cached_property
     def custom_objects_api(self) -> CustomObjectsApi:
         if self._custom_objects_api is None:
-            self._custom_objects_api = CustomObjectsApi()
+            self._custom_objects_api = CustomObjectsApi(self.api_client)
         return self._custom_objects_api
 
     @cached_property

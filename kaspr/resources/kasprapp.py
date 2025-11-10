@@ -85,6 +85,7 @@ class KasprApp(BaseResource):
     logger: Logger
     conf: Settings
     web_client: KasprWebClient
+    shared_api_client: ApiClient = None  # Shared across all KasprApp instances
 
     KIND = "KasprApp"
     GROUP_NAME = "kaspr.io"
@@ -1982,7 +1983,11 @@ class KasprApp(BaseResource):
     @cached_property
     def api_client(self) -> ApiClient:
         if self._api_client is None:
-            self._api_client = ApiClient()
+            # Use the shared API client if available, otherwise create a new one
+            if self.shared_api_client is not None:
+                self._api_client = self.shared_api_client
+            else:
+                self._api_client = ApiClient()
         return self._api_client
     
     @cached_property

@@ -1,14 +1,31 @@
 """
 Override for kopf._cogs.helpers.thirdparty module to support kubernetes_asyncio.
+
+This override can be removed once https://github.com/nolar/kopf/pull/809 is merged
+and released in a new version of Kopf. Once that happens, we can go back to launching
+the application via kopf module directly (e.g. `kopf run kaspr/app.py`).
+
+This module MUST be imported before any Kopf imports to patch Kopf's internal
+thirdparty detection to recognize kubernetes_asyncio models alongside the standard
+kubernetes client models.
+
+The patch works by replacing the kopf._cogs.helpers.thirdparty module in sys.modules
+before Kopf's internal imports load it.
 """
 import abc
 import sys
 from typing import Any, Optional
 
-# Force early module replacement before Kopf can import it
+
 def patch_kopf_thirdparty():
     """Patch Kopf's thirdparty detection before it loads."""
     
+    # Check if already patched
+    if 'kopf._cogs.helpers.thirdparty' in sys.modules:
+        existing = sys.modules['kopf._cogs.helpers.thirdparty']
+        if hasattr(existing, '_kaspr_patched'):
+            return  # Already patched by us
+        
     # Create our custom implementation
     class _dummy:
         pass
@@ -54,9 +71,13 @@ def patch_kopf_thirdparty():
     thirdparty_module.KubernetesModel = KubernetesModel
     thirdparty_module.V1ObjectMeta = V1ObjectMeta
     thirdparty_module.V1OwnerReference = V1OwnerReference
+    thirdparty_module._kaspr_patched = True  # Mark as patched
     
     # Force replace in sys.modules
     sys.modules['kopf._cogs.helpers.thirdparty'] = thirdparty_module
+    
+    print("[kaspr] Applied Kopf thirdparty patch for kubernetes_asyncio support")
+
 
 # Apply immediately when imported
 patch_kopf_thirdparty()
