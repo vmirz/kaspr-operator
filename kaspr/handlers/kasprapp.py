@@ -192,7 +192,7 @@ async def reconcile(name, namespace, spec, meta, status, patch, annotations, log
         return
     try:
         logger.debug(f"Reconciling {APP_KIND}/{name} in {namespace} namespace.")
-        app.synchronize()
+        await app.synchronize()
         logger.debug(f"Reconciled {APP_KIND}/{name} in {namespace} namespace.")
         await update_status(name, spec, meta, status, patch, namespace, annotations, logger)
     except Exception as e:
@@ -202,7 +202,7 @@ async def reconcile(name, namespace, spec, meta, status, patch, annotations, log
 
 @kopf.on.resume(kind=APP_KIND)
 @kopf.on.create(kind=APP_KIND)
-def on_create(
+async def on_create(
     spec, name, meta, status, patch, namespace, annotations, logger: Logger, **kwargs
 ):
     """Creates KasprApp resources."""
@@ -212,7 +212,7 @@ def on_create(
         logger.info("Reconciliation is paused.")
         return
     try:
-        app.create()
+        await app.create()
     except Exception as e:
         logger.error(f"Failed to create KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
@@ -221,7 +221,7 @@ def on_create(
 
 @kopf.on.update(kind=APP_KIND, field="spec.image")
 @kopf.on.update(kind=APP_KIND, field="spec.version")
-def on_version_update(
+async def on_version_update(
     old,
     new,
     diff,
@@ -241,7 +241,7 @@ def on_version_update(
         logger.info("Reconciliation is paused.")
         return
     try:
-        app.patch_version()
+        await app.patch_version()
     except Exception as e:
         logger.error(f"Failed to patch version for KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
@@ -249,7 +249,7 @@ def on_version_update(
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.replicas")
-def on_replicas_update(
+async def on_replicas_update(
     old,
     new,
     diff,
@@ -269,7 +269,7 @@ def on_replicas_update(
         logger.info("Reconciliation is paused.")
         return
     try:
-        app.patch_replicas()
+        await app.patch_replicas()
     except Exception as e:
         logger.error(f"Failed to patch replicas for KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
@@ -279,7 +279,7 @@ def on_replicas_update(
 @kopf.on.update(kind=APP_KIND, field="spec.bootstrapServers")
 @kopf.on.update(kind=APP_KIND, field="spec.tls")
 @kopf.on.update(kind=APP_KIND, field="spec.authentication")
-def on_kafka_credentials_update(
+async def on_kafka_credentials_update(
     old,
     new,
     diff,
@@ -299,7 +299,7 @@ def on_kafka_credentials_update(
         logger.info("Reconciliation is paused.")
         return
     try:
-        app.patch_kafka_credentials()
+        await app.patch_kafka_credentials()
     except Exception as e:
         logger.error(f"Failed to patch Kafka credentials for KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
@@ -307,7 +307,7 @@ def on_kafka_credentials_update(
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.resources")
-def on_resource_requirements_update(
+async def on_resource_requirements_update(
     old,
     new,
     diff,
@@ -327,7 +327,7 @@ def on_resource_requirements_update(
         logger.info("Reconciliation is paused.")
         return
     try:
-        app.patch_resource_requirements()
+        await app.patch_resource_requirements()
     except Exception as e:
         logger.error(f"Failed to patch resource requirements for KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
@@ -335,7 +335,7 @@ def on_resource_requirements_update(
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.config.web_port")
-def on_web_port_update(
+async def on_web_port_update(
     old,
     new,
     diff,
@@ -355,7 +355,7 @@ def on_web_port_update(
         logger.info("Reconciliation is paused.")
         return
     try:
-        app.patch_web_port()
+        await app.patch_web_port()
     except Exception as e:
         logger.error(f"Failed to patch web port for KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
@@ -363,7 +363,7 @@ def on_web_port_update(
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.storage.deleteClaim")
-def on_storage_delete_claim_update(
+async def on_storage_delete_claim_update(
     old,
     new,
     diff,
@@ -383,7 +383,7 @@ def on_storage_delete_claim_update(
         logger.info("Reconciliation is paused.")
         return
     try:
-        app.patch_storage_retention_policy()
+        await app.patch_storage_retention_policy()
     except Exception as e:
         logger.error(f"Failed to patch storage retention policy for KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
@@ -391,7 +391,7 @@ def on_storage_delete_claim_update(
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.storage.size")
-def on_storage_size_update(
+async def on_storage_size_update(
     old,
     new,
     diff,
@@ -411,7 +411,7 @@ def on_storage_size_update(
         logger.info("Reconciliation is paused.")
         return
     try:
-        app.patch_storage_size()
+        await app.patch_storage_size()
     except Exception as e:
         logger.error(f"Failed to patch storage size for KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
@@ -419,7 +419,7 @@ def on_storage_size_update(
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.template.serviceAccount")
-def on_template_service_account_updated(
+async def on_template_service_account_updated(
     old,
     new,
     diff,
@@ -439,7 +439,7 @@ def on_template_service_account_updated(
         logger.info("Reconciliation is paused.")
         return
     try:
-        app.patch_template_service_account()
+        await app.patch_template_service_account()
     except Exception as e:
         logger.error(f"Failed to patch template service account for KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
@@ -447,7 +447,7 @@ def on_template_service_account_updated(
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.template.pod")
-def on_template_pod_updated(
+async def on_template_pod_updated(
     old,
     new,
     diff,
@@ -468,7 +468,7 @@ def on_template_pod_updated(
         return
 
     try:
-        app.patch_template_pod()
+        await app.patch_template_pod()
     except Exception as e:
         logger.error(f"Failed to patch template pod for KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
@@ -476,7 +476,7 @@ def on_template_pod_updated(
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.template.service")
-def on_template_service_updated(
+async def on_template_service_updated(
     old,
     new,
     diff,
@@ -497,7 +497,7 @@ def on_template_service_updated(
         return
 
     try:
-        app.patch_template_service()
+        await app.patch_template_service()
     except Exception as e:
         logger.error(f"Failed to patch template service for KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
@@ -512,7 +512,7 @@ def immutable_config_updated_00(**kwargs):
 
 
 @kopf.on.update(kind=APP_KIND, field="spec.config")
-def general_config_update(
+async def general_config_update(
     spec, name, meta, patch, status, namespace, annotations, logger: Logger, **kwargs
 ):
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
@@ -521,7 +521,7 @@ def general_config_update(
         logger.info("Reconciliation is paused.")
         return
     try:
-        app.patch_settings()
+        await app.patch_settings()
     except Exception as e:
         logger.error(f"Failed to patch settings for KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
@@ -657,10 +657,10 @@ async def monitor_related_resources(
             webviews: List[KasprWebView] = []
             tables: List[KasprTable] = []
             tasks: List[KasprTask] = []
-            agent_resources = KasprAgent.default().search(namespace, apps=[name])
-            webview_resources = KasprWebView.default().search(namespace, apps=[name])
-            table_resources = KasprTable.default().search(namespace, apps=[name])
-            task_resources = KasprTask.default().search(namespace, apps=[name])
+            agent_resources = await KasprAgent.default().search(namespace, apps=[name])
+            webview_resources = await KasprWebView.default().search(namespace, apps=[name])
+            table_resources = await KasprTable.default().search(namespace, apps=[name])
+            task_resources = await KasprTask.default().search(namespace, apps=[name])
 
             for agent in agent_resources.get("items", []) if agent_resources else []:
                 agents.append(
@@ -723,7 +723,7 @@ async def monitor_related_resources(
             #     annotations.get("kaspr.io/last-applied-tables-hash"),
             #     app.tables_hash,
             # )
-            app.patch_volume_mounted_resources()
+            await app.patch_volume_mounted_resources()
             # TODO: Update latest applied generation # in status
             # patch_requests = [
             #     {

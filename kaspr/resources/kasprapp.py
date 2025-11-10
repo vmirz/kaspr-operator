@@ -25,7 +25,7 @@ from kaspr.types.models.resource_template import ResourceTemplate
 from kaspr.types.models.pod_template import PodTemplate
 from kaspr.types.models.service_template import ServiceTemplate
 from kaspr.types.models.container_template import ContainerTemplate
-from kubernetes.client import (
+from kubernetes_asyncio.client import (
     AppsV1Api,
     CoreV1Api,
     CustomObjectsApi,
@@ -71,6 +71,7 @@ from kubernetes.client import (
     V2HPAScalingRules,
     V2HPAScalingPolicy,
 )
+from kubernetes_asyncio.client.api_client import ApiClient
 
 from kaspr.resources.base import BaseResource
 from kaspr.resources import KasprAgent, KasprWebView, KasprTable, KasprTask
@@ -130,6 +131,7 @@ class KasprApp(BaseResource):
     _image: str = None
 
     # k8s resources
+    _api_client: ApiClient = None
     _apps_v1_api: AppsV1Api = None
     _core_v1_api: CoreV1Api = None
     _custom_objects_api: CustomObjectsApi = None
@@ -262,72 +264,72 @@ class KasprApp(BaseResource):
             component_type=self.COMPONENT_TYPE,
         )
 
-    def synchronize(self) -> "KasprApp":
+    async def synchronize(self) -> "KasprApp":
         """Compare current state with desired state for all child resources and create/patch as needed."""
-        self.sync_auth_credentials()
-        self.sync_service()
-        self.sync_headless_service()
-        self.sync_service_account()
-        self.sync_settings_config_map()
-        self.sync_hpa()
-        self.sync_stateful_set()
+        await self.sync_auth_credentials()
+        await self.sync_service()
+        await self.sync_headless_service()
+        await self.sync_service_account()
+        await self.sync_settings_config_map()
+        await self.sync_hpa()
+        await self.sync_stateful_set()
 
-    def sync_service(self):
+    async def sync_service(self):
         """Check current state of service and create/patch if needed."""
-        service: V1Service = self.fetch_service(
+        service: V1Service = await self.fetch_service(
             self.core_v1_api, self.service_name, self.namespace
         )
         if not service:
-            self.create_service(self.core_v1_api, self.namespace, self.service)
+            await self.create_service(self.core_v1_api, self.namespace, self.service)
         else:
             actual = self.prepare_service_watch_fields(service)
             desired = self.prepare_service_watch_fields(self.service)
             if self.compute_hash(actual) != self.compute_hash(desired):
-                self.patch_service(
+                await self.patch_service(
                     self.core_v1_api,
                     self.service_name,
                     self.namespace,
                     service=self.prepare_service_patch(self.service),
                 )
 
-    def sync_headless_service(self):
+    async def sync_headless_service(self):
         """Check current state of headless service and create/patch if needed"""
-        headless_service: V1Service = self.fetch_service(
+        headless_service: V1Service = await self.fetch_service(
             self.core_v1_api, self.headless_service_name, self.namespace
         )
         if not headless_service:
-            self.create_service(self.core_v1_api, self.namespace, self.headless_service)
+            await self.create_service(self.core_v1_api, self.namespace, self.headless_service)
         else:
             actual = self.prepare_headless_service_watch_fields(headless_service)
             desired = self.prepare_headless_service_watch_fields(self.headless_service)
             if self.compute_hash(actual) != self.compute_hash(desired):
-                self.patch_service(
+                await self.patch_service(
                     self.core_v1_api,
-                    self.service_name,
+                    self.headless_service_name,
                     self.namespace,
                     service=self.prepare_headless_service_patch(self.headless_service),
                 )
 
-    def sync_service_account(self):
+    async def sync_service_account(self):
         """Check current state of service account and create/patch if needed."""
-        service_account: V1ServiceAccount = self.fetch_service_account(
+        service_account: V1ServiceAccount = await self.fetch_service_account(
             self.core_v1_api, self.service_account_name, self.namespace
         )
         if not service_account:
-            self.create_service_account(
+            await self.create_service_account(
                 self.core_v1_api, self.namespace, self.service_account
             )
         else:
             ...
             # not much to patch for a service account
 
-    def sync_settings_config_map(self):
+    async def sync_settings_config_map(self):
         """Check current state of config map and create/patch if needed."""
-        settings_config_map: V1ConfigMap = self.fetch_config_map(
+        settings_config_map: V1ConfigMap = await self.fetch_config_map(
             self.core_v1_api, self.config_map_name, self.namespace
         )
         if not settings_config_map:
-            self.create_config_map(
+            await self.create_config_map(
                 self.core_v1_api, self.namespace, self.settings_config_map
             )
         else:
@@ -336,7 +338,7 @@ class KasprApp(BaseResource):
                 self.settings_config_map
             )
             if self.compute_hash(actual) != self.compute_hash(desired):
-                self.patch_config_map(
+                await self.patch_config_map(
                     self.core_v1_api,
                     self.config_map_name,
                     self.namespace,
@@ -345,17 +347,17 @@ class KasprApp(BaseResource):
                     ),
                 )
 
-    def sync_stateful_set(self):
+    async def sync_stateful_set(self):
         """Check current state of stateful set and create/patch if needed."""
-        stateful_set: V1StatefulSet = self.fetch_stateful_set(
+        stateful_set: V1StatefulSet = await self.fetch_stateful_set(
             self.apps_v1_api, self.stateful_set_name, self.namespace
         )
         if stateful_set and self.statefulset_needs_migrations(stateful_set):
-            self.recreate_statefulset(stateful_set)
+            await self.recreate_statefulset(stateful_set)
             return
 
         if not stateful_set:
-            self.create_stateful_set(
+            await self.create_stateful_set(
                 self.apps_v1_api, self.namespace, self.stateful_set
             )
         else:
@@ -369,7 +371,7 @@ class KasprApp(BaseResource):
                 desired["spec"]["replicas"] = actual["spec"]["replicas"]
 
             if self.compute_hash(actual) != self.compute_hash(desired):
-                self.patch_stateful_set(
+                await self.patch_stateful_set(
                     self.apps_v1_api,
                     self.stateful_set_name,
                     self.namespace,
@@ -381,10 +383,10 @@ class KasprApp(BaseResource):
                     ),
                 )
 
-    def sync_auth_credentials(self):
+    async def sync_auth_credentials(self):
         """Sync credentials secret; We only need to check that password secret exists."""
         if self.authentication.sasl_enabled and self.sasl_credentials.password:
-            secret = self.fetch_secret(
+            secret = await self.fetch_secret(
                 self.core_v1_api,
                 self.sasl_credentials.password.secret_name,
                 self.namespace,
@@ -394,35 +396,35 @@ class KasprApp(BaseResource):
                     f"Secret `{self.sasl_credentials.password.secret_name}` not found in `{self.namespace}` namespace."
                 )
 
-    def sync_hpa(self):
+    async def sync_hpa(self):
         """Check current state of HPA and create/delete/patch if needed."""
-        hpa: V2HorizontalPodAutoscaler = self.fetch_hpa(
+        hpa: V2HorizontalPodAutoscaler = await self.fetch_hpa(
             self.autoscaling_v2_api, self.hpa_name, self.namespace
         )
         # If reconciliation is paused, delete HPA so it does not interfere with manual changes to statefulset
         if hpa and self.reconciliation_paused:
-            self.delete_hpa(self.autoscaling_v2_api, self.hpa_name, self.namespace)
+            await self.delete_hpa(self.autoscaling_v2_api, self.hpa_name, self.namespace)
             return
         elif hpa and self.replicas == 0:
-            self.delete_hpa(self.autoscaling_v2_api, self.hpa_name, self.namespace)
+            await self.delete_hpa(self.autoscaling_v2_api, self.hpa_name, self.namespace)
             return
         elif self.replicas > 0:
             if not hpa:
-                self.create_hpa(self.autoscaling_v2_api, self.namespace, self.hpa)
+                await self.create_hpa(self.autoscaling_v2_api, self.namespace, self.hpa)
             else:
                 actual = self.prepare_hpa_watch_fields(hpa)
                 desired = self.prepare_hpa_watch_fields(self.hpa)
                 if self.compute_hash(actual) != self.compute_hash(desired):
-                    self.patch_hpa(
+                    await self.patch_hpa(
                         self.autoscaling_v2_api,
                         self.hpa_name,
                         self.namespace,
                         hpa=self.prepare_hpa_patch(self.hpa),
                     )
 
-    def recreate_statefulset(self, stateful_set: V1StatefulSet):
+    async def recreate_statefulset(self, stateful_set: V1StatefulSet):
         """Check if statefulset needs migrations and perform them."""
-        self.delete_stateful_set(
+        await self.delete_stateful_set(
             self.apps_v1_api,
             self.stateful_set_name,
             self.namespace,
@@ -430,8 +432,8 @@ class KasprApp(BaseResource):
         )
         # We need to wait a bit to allow k8s to actually execute the deletion
         # before moving on to recreate the statefulset.
-        time.sleep(self.conf.statefulset_deletion_timeout_seconds)
-        self.sync_stateful_set()
+        await asyncio.sleep(self.conf.statefulset_deletion_timeout_seconds)
+        await self.sync_stateful_set()
 
     def with_agents(self, agents: List[KasprAgent]):
         """Apply agent resources to the app."""
@@ -453,9 +455,9 @@ class KasprApp(BaseResource):
         self.tasks = tasks
         self._tasks_hash = None  # reset hash
 
-    def fetch(self, name: str, namespace: str):
+    async def fetch(self, name: str, namespace: str):
         """Fetch actual KasprApp in kubernetes."""
-        return self.get_custom_object(
+        return await self.get_custom_object(
             self.custom_objects_api,
             namespace=namespace,
             group="kaspr.io",
@@ -1459,36 +1461,36 @@ class KasprApp(BaseResource):
             }
         }
 
-    def patch_settings(self):
+    async def patch_settings(self):
         """Update resources as a result of app settings change."""
-        self.patch_config_map(
+        await self.patch_config_map(
             self.core_v1_api,
             self.config_map_name,
             self.namespace,
             self.settings_config_map,
         )
-        self.patch_stateful_set(
+        await self.patch_stateful_set(
             self.apps_v1_api,
             self.stateful_set_name,
             self.namespace,
             stateful_set={"spec": {"template": self.pod_template}},
         )
 
-    def create(self):
+    async def create(self):
         """Create KMS resources."""
         self.unite()
-        self.sync_service_account()
-        self.sync_settings_config_map()
-        self.sync_service()
-        self.sync_headless_service()
-        self.sync_stateful_set()
+        await self.sync_service_account()
+        await self.sync_settings_config_map()
+        await self.sync_service()
+        await self.sync_headless_service()
+        await self.sync_stateful_set()
 
-    def patch_replicas(self):
+    async def patch_replicas(self):
         if self.replicas == 0:
             # If replicas is set to 0, we don't want to patch the HPA as that would
             # result in an invalid configuration. Instead we just delete the HPA
-            self.delete_hpa(self.autoscaling_v2_api, self.hpa_name, self.namespace)
-            self.patch_stateful_set(
+            await self.delete_hpa(self.autoscaling_v2_api, self.hpa_name, self.namespace)
+            await self.patch_stateful_set(
                 self.apps_v1_api,
                 self.stateful_set_name,
                 self.namespace,
@@ -1496,43 +1498,43 @@ class KasprApp(BaseResource):
             )
             return
         else:
-            self.sync_hpa()
-            self.sync_stateful_set()
+            await self.sync_hpa()
+            await self.sync_stateful_set()
 
-    def patch_version(self):
-        self.patch_stateful_set(
+    async def patch_version(self):
+        await self.patch_stateful_set(
             self.apps_v1_api,
             self.stateful_set_name,
             self.namespace,
             stateful_set={"spec": {"template": self.pod_template}},
         )
 
-    def patch_kafka_credentials(self):
-        self.patch_settings()
+    async def patch_kafka_credentials(self):
+        await self.patch_settings()
 
-    def patch_resource_requirements(self):
-        self.patch_stateful_set(
+    async def patch_resource_requirements(self):
+        await self.patch_stateful_set(
             self.apps_v1_api,
             self.stateful_set_name,
             self.namespace,
             stateful_set={"spec": {"template": self.pod_template}},
         )
 
-    def patch_web_port(self):
+    async def patch_web_port(self):
         """Update resources to change app web port."""
-        if not self.fetch_config_map(
+        if not await self.fetch_config_map(
             self.core_v1_api, self.config_map_name, self.namespace
         ):
             raise kopf.TemporaryError(
                 f"ConfigMap `{self.config_map_name}` not found in `{self.namespace}` namespace."
             )
-        self.patch_config_map(
+        await self.patch_config_map(
             self.core_v1_api,
             self.config_map_name,
             self.namespace,
             self.settings_config_map,
         )
-        service = self.fetch_service(
+        service = await self.fetch_service(
             self.core_v1_api, self.service_name, self.namespace
         )
         if not service:
@@ -1541,10 +1543,10 @@ class KasprApp(BaseResource):
             )
         service.spec.ports[0].port = self.web_port
         service.spec.ports[0].target_port = self.web_port
-        self.replace_service(
+        await self.replace_service(
             self.core_v1_api, self.service_name, self.namespace, service
         )
-        stateful_set = self.fetch_stateful_set(
+        stateful_set = await self.fetch_stateful_set(
             self.apps_v1_api, self.stateful_set_name, self.namespace
         )
         if not stateful_set:
@@ -1554,43 +1556,44 @@ class KasprApp(BaseResource):
         stateful_set.spec.template.spec.containers[0].ports[
             0
         ].container_port = self.web_port
-        self.replace_stateful_set(
+        await self.replace_stateful_set(
             self.apps_v1_api,
             self.stateful_set_name,
             self.namespace,
             stateful_set=stateful_set,
         )
 
-    def patch_storage_retention_policy(self):
+    async def patch_storage_retention_policy(self):
         patch = {
             "spec": {
                 "persistentVolumeClaimRetentionPolicy": self.persistent_volume_claim_retention_policy
             }
         }
-        if not self.fetch_stateful_set(
+        ss = await self.fetch_stateful_set(
             self.apps_v1_api, self.stateful_set_name, self.namespace
-        ):
+        )
+        if not ss:
             raise kopf.TemporaryError(
                 f"StatefulSet `{self.stateful_set_name}` not found in `{self.namespace}` namespace."
             )
-        self.patch_stateful_set(
+        await self.patch_stateful_set(
             self.apps_v1_api,
             self.stateful_set_name,
             self.namespace,
             stateful_set=patch,
         )
 
-    def patch_storage_size(self):
+    async def patch_storage_size(self):
         # We can't directly patch the stateful set PVC template with new storage size.
         # So must must do the following:
         #  - Delete the statefulset with orphaned pods.
         #  - Recreate the statefulset with the updated PVC template storage size
         #  - Update storage size on all existing PVCs
-        stateful_set = self.fetch_stateful_set(
+        stateful_set = await self.fetch_stateful_set(
             self.apps_v1_api, self.stateful_set_name, self.namespace
         )
         if stateful_set:
-            self.delete_stateful_set(
+            await self.delete_stateful_set(
                 self.apps_v1_api,
                 self.stateful_set_name,
                 self.namespace,
@@ -1601,9 +1604,9 @@ class KasprApp(BaseResource):
             time.sleep(self.conf.statefulset_deletion_timeout_seconds)
         self.unite()
         # Recreate the statefulset with new storage size PVC template
-        self.create_stateful_set(self.apps_v1_api, self.namespace, self.stateful_set)
+        await self.create_stateful_set(self.apps_v1_api, self.namespace, self.stateful_set)
         # Update existing PVCs
-        pvcs = self.list_persistent_volume_claims(
+        pvcs = await self.list_persistent_volume_claims(
             self.core_v1_api, namespace=self.namespace
         )
         if pvcs and pvcs.items:
@@ -1616,11 +1619,11 @@ class KasprApp(BaseResource):
             for pvc in statefulset_pvc_list:
                 pvc: V1PersistentVolumeClaim
                 pvc.spec.resources.requests["storage"] = self.storage.size
-                self.patch_persistent_volume_claim(
+                await self.patch_persistent_volume_claim(
                     self.core_v1_api, pvc.metadata.name, self.namespace, pvc
                 )
 
-    def patch_volume_mounted_resources(self):
+    async def patch_volume_mounted_resources(self):
         """Update resources as a result of volume mounted resources change."""
         patch = [
             {
@@ -1639,20 +1642,20 @@ class KasprApp(BaseResource):
                 "value": self.env_vars,
             },
         ]
-        if not self.fetch_stateful_set(
+        if not await self.fetch_stateful_set(
             self.apps_v1_api, self.stateful_set_name, self.namespace
         ):
             raise kopf.TemporaryError(
                 f"StatefulSet `{self.stateful_set_name}` not found in `{self.namespace}` namespace."
             )
-        self.patch_stateful_set(
+        await self.patch_stateful_set(
             self.apps_v1_api,
             self.stateful_set_name,
             self.namespace,
             stateful_set=patch,
         )
 
-    def patch_template_service_account(self):
+    async def patch_template_service_account(self):
         patch = [
             {
                 "op": "replace",
@@ -1665,20 +1668,21 @@ class KasprApp(BaseResource):
                 "value": self.service_account.metadata.annotations,
             },
         ]
-        if not self.fetch_service_account(
+        sa = await self.fetch_service_account(
             self.core_v1_api, self.service_account_name, self.namespace
-        ):
+        )
+        if not sa:
             raise kopf.TemporaryError(
                 f"ServiceAccount `{self.service_account_name}` not found in `{self.namespace}` namespace."
             )
-        self.patch_service_account(
+        await self.patch_service_account(
             self.core_v1_api,
             self.service_account_name,
             self.namespace,
             patch,
         )
 
-    def patch_template_pod(self):
+    async def patch_template_pod(self):
         """Update pod template."""
         patch = [
             {
@@ -1687,20 +1691,20 @@ class KasprApp(BaseResource):
                 "value": self.pod_template,
             },
         ]
-        if not self.fetch_stateful_set(
+        if not await self.fetch_stateful_set(
             self.apps_v1_api, self.stateful_set_name, self.namespace
         ):
             raise kopf.TemporaryError(
                 f"StatefulSet `{self.stateful_set_name}` not found in `{self.namespace}` namespace."
             )
-        self.patch_stateful_set(
+        await self.patch_stateful_set(
             self.apps_v1_api,
             self.stateful_set_name,
             self.namespace,
             stateful_set=patch,
         )
 
-    def patch_template_service(self):
+    async def patch_template_service(self):
         """Update pod template with new labels."""
         patch = [
             {
@@ -1714,11 +1718,11 @@ class KasprApp(BaseResource):
                 "value": self.service.metadata.annotations,
             },
         ]
-        if not self.fetch_service(self.core_v1_api, self.service_name, self.namespace):
+        if not await self.fetch_service(self.core_v1_api, self.service_name, self.namespace):
             raise kopf.TemporaryError(
                 f"Service `{self.service_name}` not found in `{self.namespace}` namespace."
             )
-        self.patch_service(
+        await self.patch_service(
             self.core_v1_api,
             self.service_name,
             self.namespace,
@@ -1737,14 +1741,14 @@ class KasprApp(BaseResource):
         ]
         kopf.adopt(children)
 
-    def search(self, namespace: str, apps: List[str] = None):
+    async def search(self, namespace: str, apps: List[str] = None):
         """Search for KasprApps in kubernetes."""
         label_selector = (
             ",".join(f"{self.KASPR_APP_NAME_LABEL}={app}" for app in apps)
             if apps
             else None
         )
-        return self.list_custom_objects(
+        return await self.list_custom_objects(
             self.custom_objects_api,
             namespace=namespace,
             group=self.GROUP_NAME,
@@ -1771,7 +1775,7 @@ class KasprApp(BaseResource):
 
     async def fetch_app_status(self) -> Dict:
         """Fetch status of application's statefulset/pods"""
-        stateful_set = self.fetch_stateful_set(
+        stateful_set = await self.fetch_stateful_set(
             self.apps_v1_api, self.stateful_set_name, self.namespace
         )
         if not stateful_set:
@@ -1976,27 +1980,33 @@ class KasprApp(BaseResource):
         return getattr(self.config, "definitions_dir", self.DEFAULT_DEFINITIONS_DIR)
 
     @cached_property
+    def api_client(self) -> ApiClient:
+        if self._api_client is None:
+            self._api_client = ApiClient()
+        return self._api_client
+    
+    @cached_property
     def apps_v1_api(self) -> AppsV1Api:
         if self._apps_v1_api is None:
-            self._apps_v1_api = AppsV1Api()
+            self._apps_v1_api = AppsV1Api(self.api_client)
         return self._apps_v1_api
 
     @cached_property
     def core_v1_api(self) -> CoreV1Api:
         if self._core_v1_api is None:
-            self._core_v1_api = CoreV1Api()
+            self._core_v1_api = CoreV1Api(self.api_client)
         return self._core_v1_api
 
     @cached_property
     def autoscaling_v2_api(self) -> AutoscalingV2Api:
         if self._autoscaling_v2_api is None:
-            self._autoscaling_v2_api = AutoscalingV2Api()
+            self._autoscaling_v2_api = AutoscalingV2Api(self.api_client)
         return self._autoscaling_v2_api
 
     @cached_property
     def custom_objects_api(self) -> CustomObjectsApi:
         if self._custom_objects_api is None:
-            self._custom_objects_api = CustomObjectsApi()
+            self._custom_objects_api = CustomObjectsApi(self.api_client)
         return self._custom_objects_api
 
     @cached_property

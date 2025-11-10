@@ -6,10 +6,13 @@ import kaspr.handlers.kasprwebview as kasprwebview
 from kaspr.types.settings import Settings
 from kaspr.resources.kasprapp import KasprApp
 from kaspr.web import KasprWebClient
+from kubernetes_asyncio import config
 
 # Configure Kopf settings
 @kopf.on.startup()
 async def setup(settings: kopf.OperatorSettings, memo: kopf.Memo, logger: logging.Logger, **kwargs):
+
+    await config.load_kube_config()
 
     memo.conf = Settings()  
     KasprApp.conf = memo.conf

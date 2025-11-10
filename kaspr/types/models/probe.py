@@ -1,4 +1,4 @@
-from kubernetes.client import V1Probe
+from kubernetes_asyncio.client import V1Probe
 
 class Probe(V1Probe):
 

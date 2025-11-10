@@ -7,7 +7,6 @@ from benedict import benedict
 from kaspr.types.schemas import KasprAgentSpecSchema
 from kaspr.types.models import KasprAgentSpec
 from kaspr.resources import KasprAgent, KasprApp
-from kaspr.utils.helpers import utc_now
 
 KIND = "KasprAgent"
 APP_NOT_FOUND = "AppNotFound"
@@ -37,8 +36,8 @@ async def reconciliation(
     spec_model: KasprAgentSpec = KasprAgentSpecSchema().load(spec)
     agent = KasprAgent.from_spec(name, KIND, namespace, spec_model, dict(labels))
     # Warn if the agent's app does not exists.
-    app = KasprApp.default().fetch(agent.app_name, namespace)
-    agent.create()
+    app = await KasprApp.default().fetch(agent.app_name, namespace)
+    await agent.create()
     # fetch the agent's app and update it's status.
     patch.status.update(
         {
@@ -110,7 +109,7 @@ async def monitor_agent(
                 name, KIND, namespace, spec_model, dict(labels)
             )
             # Warn if the agent's app does not exists.
-            app = KasprApp.default().fetch(agent.app_name, namespace)
+            app = await KasprApp.default().fetch(agent.app_name, namespace)
             if app is None and _status.app.status == APP_FOUND:
                 kopf.warn(
                     body,
@@ -149,7 +148,7 @@ async def reconcile(name, spec, namespace, labels, logger: logging.Logger, **kwa
     agent = KasprAgent.from_spec(name, KIND, namespace, spec_model, dict(labels))
     try:
         logger.debug(f"Reconciling {KIND}/{name} in {namespace} namespace.")
-        agent.synchronize()
+        await agent.synchronize()
         logger.debug(f"Reconciled {KIND}/{name} in {namespace} namespace.")
     except Exception as e:
         logger.error(f"Unexpected error during reconcilation: {e}")

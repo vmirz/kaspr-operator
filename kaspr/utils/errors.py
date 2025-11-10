@@ -1,19 +1,19 @@
 import json
-import kubernetes
+import kubernetes_asyncio
 
 _ALREADY_EXISTS = "alreadyexists"
 _NOT_FOUND = "notfound"
 
 
-def already_exists_error(ex: kubernetes.client.ApiException) -> bool:
-    if not isinstance(ex, kubernetes.client.ApiException):
+def already_exists_error(ex: kubernetes_asyncio.client.ApiException) -> bool:
+    if not isinstance(ex, kubernetes_asyncio.client.ApiException):
         return False
     else:
         err = json.loads(ex.body)
         return err.get("reason", "").lower() == _ALREADY_EXISTS
-    
-def not_found_error(ex: kubernetes.client.ApiException) -> bool:
-    if not isinstance(ex, kubernetes.client.ApiException):
+
+def not_found_error(ex: kubernetes_asyncio.client.ApiException) -> bool:
+    if not isinstance(ex, kubernetes_asyncio.client.ApiException):
         return False
     else:
         err = json.loads(ex.body)

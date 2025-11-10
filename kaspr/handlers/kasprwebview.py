@@ -7,7 +7,6 @@ from benedict import benedict
 from kaspr.types.schemas import KasprWebViewSpecSchema
 from kaspr.types.models import KasprWebViewSpec
 from kaspr.resources import KasprWebView, KasprApp
-from kaspr.utils.helpers import utc_now
 
 KIND = "KasprWebView"
 APP_NOT_FOUND = "AppNotFound"
@@ -36,8 +35,8 @@ async def reconciliation(
     """Reconcile KasprWebView resources."""
     spec_model: KasprWebViewSpec = KasprWebViewSpecSchema().load(spec)
     webview = KasprWebView.from_spec(name, KIND, namespace, spec_model, dict(labels))
-    app = KasprApp.default().fetch(webview.app_name, namespace)
-    webview.create()
+    app = await KasprApp.default().fetch(webview.app_name, namespace)
+    await webview.create()
     # fetch the webviews's app and update it's status.
     patch.status.update(
         {
@@ -110,7 +109,7 @@ async def monitor_webview(
                 name, KIND, namespace, spec_model, dict(labels)
             )
             # Warn if the webview's app does not exists.
-            app = KasprApp.default().fetch(webview.app_name, namespace)
+            app = await KasprApp.default().fetch(webview.app_name, namespace)
             if app is None and _status.app.status == APP_FOUND:
                 kopf.warn(
                     body,
@@ -150,7 +149,7 @@ async def reconcile(name, spec, namespace, labels, logger: logging.Logger, **kwa
     webview = KasprWebView.from_spec(name, KIND, namespace, spec_model, dict(labels))
     try:
         logger.debug(f"Reconciling {KIND}/{name} in {namespace} namespace.")
-        webview.synchronize()
+        await webview.synchronize()
         logger.debug(f"Reconciled {KIND}/{name} in {namespace} namespace.")
     except Exception as e:
         logger.error(f"Unexpected error during reconcilation: {e}")

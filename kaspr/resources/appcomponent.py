@@ -6,7 +6,7 @@ from kaspr.utils.helpers import ordered_dict_to_dict
 from kaspr.types.models import KasprAppComponents, KasprResourceT
 from kaspr.types.schemas import KasprAppComponentsSchema
 
-from kubernetes.client import (
+from kubernetes_asyncio.client import (
     CoreV1Api,
     CustomObjectsApi,
     V1ObjectMeta,
@@ -70,31 +70,31 @@ class BaseAppComponent(BaseResource):
             labels=_labels,
         )
 
-    def synchronize(self):
+    async def synchronize(self):
         """Compare current state with desired state for all child resources and create/patch as needed."""
-        self.sync_config_map()
+        await self.sync_config_map()
 
-    def sync_config_map(self):
+    async def sync_config_map(self):
         """Sync config map."""
-        config_map: V1ConfigMap = self.fetch_config_map(
+        config_map: V1ConfigMap = await self.fetch_config_map(
             self.core_v1_api, self.config_map_name, self.namespace
         )
         if not config_map:
-            self.create_config_map(self.core_v1_api, self.namespace, self.config_map)
+            await self.create_config_map(self.core_v1_api, self.namespace, self.config_map)
         else:
             actual = self.prepare_config_map_watch_fields(config_map)
             desired = self.prepare_config_map_watch_fields(self.config_map)
             if self.compute_hash(actual) != self.compute_hash(desired):
-                self.patch_config_map(
+                await self.patch_config_map(
                     self.core_v1_api,
                     self.config_map_name,
                     self.namespace,
                     config_map=self.prepare_config_map_patch(self.config_map),
                 )
 
-    def fetch(self, name: str, namespace: str):
+    async def fetch(self, name: str, namespace: str):
         """Fetch kaspr resource from kubernetes."""
-        return self.get_custom_object(
+        return await self.get_custom_object(
             self.custom_objects_api,
             namespace=namespace,
             group=self.GROUP_NAME,
@@ -103,13 +103,13 @@ class BaseAppComponent(BaseResource):
             name=name,
         )
 
-    def search(self, namespace: str, apps: List[str] = None):
+    async def search(self, namespace: str, apps: List[str] = None):
         """Search for component type in kubernetes."""
 
         label_selector = (
             ",".join(f"kaspr.io/app={app}" for app in apps) if apps else None
         )
-        return self.list_custom_objects(
+        return await self.list_custom_objects(
             self.custom_objects_api,
             namespace=namespace,
             group=self.GROUP_NAME,
@@ -118,9 +118,9 @@ class BaseAppComponent(BaseResource):
             label_selector=label_selector,
         )
 
-    def patch_config_map(self):
+    async def patch_config_map(self):
         """Update resources as a result of app settings change."""
-        self.patch_config_map(
+        await self.patch_config_map(
             self.core_v1_api,
             self.config_map_name,
             self.namespace,
@@ -189,7 +189,7 @@ class BaseAppComponent(BaseResource):
             "data": config_map.data,
         }
 
-    def create(self):
+    async def create(self):
         """Create component resources."""
         # we can remove this once validation admission is implemented
         if not self.app_name:
@@ -197,7 +197,7 @@ class BaseAppComponent(BaseResource):
                 f"Missing required label: {self.KASPR_APP_NAME_LABEL}"
             )
         self.unite()
-        self.create_config_map(self.core_v1_api, self.namespace, self.config_map)
+        await self.create_config_map(self.core_v1_api, self.namespace, self.config_map)
 
     def unite(self):
         """Ensure all child resources are owned by the root resource"""
