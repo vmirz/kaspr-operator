@@ -6,7 +6,7 @@ from kaspr.utils.helpers import canonicalize_dict
 from kaspr.common.models.labels import Labels
 from kaspr.common.models.version import Version
 from kaspr.utils.errors import already_exists_error
-from kubernetes.client import (
+from kubernetes_asyncio.client import (
     ApiException,
     V1ResourceRequirements,
     V1Probe,
@@ -99,25 +99,25 @@ class BaseResource:
         """Prepare hash annotation for k8s resources."""
         return {"kaspr.io/resource-hash": str(hash)}
 
-    def fetch_service(
+    async def fetch_service(
         self, core_v1_api: CoreV1Api, name: str, namespace: str
     ) -> V1Service:
         """Retrieve the latest state of a service"""
         try:
-            return core_v1_api.read_namespaced_service(name=name, namespace=namespace)
+            return await core_v1_api.read_namespaced_service(name=name, namespace=namespace)
         except ApiException as ex:
             if ex.status == 404:
                 return None
             raise
 
-    def create_service(
+    async def create_service(
         self, core_v1_api: CoreV1Api, namespace: str, service: V1Service
     ) -> None:
         try:
-            core_v1_api.create_namespaced_service(namespace=namespace, body=service)
+            await core_v1_api.create_namespaced_service(namespace=namespace, body=service)
         except ApiException as ex:
             if already_exists_error(ex):
-                self.replace_service(
+                await self.replace_service(
                     core_v1_api,
                     name=service.metadata.name,
                     namespace=namespace,
@@ -126,29 +126,29 @@ class BaseResource:
             else:
                 raise
 
-    def replace_service(
+    async def replace_service(
         self, core_v1_api: CoreV1Api, name: str, namespace: str, service: V1Service
     ):
-        core_v1_api.replace_namespaced_service(
+        await core_v1_api.replace_namespaced_service(
             name=name,
             namespace=namespace,
             body=service,
         )
 
-    def patch_service(
+    async def patch_service(
         self, core_v1_api: CoreV1Api, name: str, namespace: str, service: V1Service
     ):
-        core_v1_api.patch_namespaced_service(
+        await core_v1_api.patch_namespaced_service(
             name=name,
             namespace=namespace,
             body=service,
         )
 
-    def fetch_service_account(
+    async def fetch_service_account(
         self, core_v1_api: CoreV1Api, name: str, namespace: str
     ) -> V1ServiceAccount:
         try:
-            return core_v1_api.read_namespaced_service_account(
+            return await core_v1_api.read_namespaced_service_account(
                 name=name, namespace=namespace
             )
         except ApiException as ex:
@@ -156,16 +156,16 @@ class BaseResource:
                 return None
             raise
 
-    def create_service_account(
+    async def create_service_account(
         self, core_v1_api: CoreV1Api, namespace: str, service_account: V1ServiceAccount
     ) -> None:
         try:
-            core_v1_api.create_namespaced_service_account(
+            await core_v1_api.create_namespaced_service_account(
                 namespace=namespace, body=service_account
             )
         except ApiException as ex:
             if already_exists_error(ex):
-                self.replace_service_account(
+                await self.replace_service_account(
                     core_v1_api,
                     name=service_account.metadata.name,
                     namespace=namespace,
@@ -174,43 +174,43 @@ class BaseResource:
             else:
                 raise
 
-    def replace_service_account(
+    async def replace_service_account(
         self,
         core_v1_api: CoreV1Api,
         name: str,
         namespace: str,
         service_account: V1ServiceAccount,
     ) -> None:
-        core_v1_api.replace_namespaced_service_account(
+        await core_v1_api.replace_namespaced_service_account(
             name=name,
             namespace=namespace,
             body=service_account,
         )
 
-    def patch_service_account(
+    async def patch_service_account(
         self,
         core_v1_api: CoreV1Api,
         name: str,
         namespace: str,
         service_account: V1ServiceAccount,
     ) -> None:
-        core_v1_api.patch_namespaced_service_account(
+        await core_v1_api.patch_namespaced_service_account(
             name=name,
             namespace=namespace,
             body=service_account,
         )
 
-    def fetch_stateful_set(
+    async def fetch_stateful_set(
         self, apps_v1_api: AppsV1Api, name: str, namespace: str
     ) -> V1StatefulSet:
         try:
-            return apps_v1_api.read_namespaced_stateful_set(name=name, namespace=namespace)
+            return await apps_v1_api.read_namespaced_stateful_set(name=name, namespace=namespace)
         except ApiException as ex:
             if ex.status == 404:
                 return None
             raise
 
-    def create_stateful_set(
+    async def create_stateful_set(
         self,
         apps_v1_api: AppsV1Api,
         namespace: str,
@@ -218,12 +218,12 @@ class BaseResource:
     ):
         try:
             # Create the Statefulset in default namespace
-            apps_v1_api.create_namespaced_stateful_set(
+            await apps_v1_api.create_namespaced_stateful_set(
                 namespace=namespace, body=stateful_set
             )
         except ApiException as ex:
             if already_exists_error(ex):
-                self.replace_stateful_set(
+                await self.replace_stateful_set(
                     apps_v1_api,
                     name=stateful_set.metadata.name,
                     namespace=namespace,
@@ -232,29 +232,29 @@ class BaseResource:
             else:
                 raise
 
-    def replace_stateful_set(
+    async def replace_stateful_set(
         self,
         apps_v1_api: AppsV1Api,
         name: str,
         namespace: str,
         stateful_set: V1StatefulSet,
     ):
-        apps_v1_api.replace_namespaced_stateful_set(
+        await apps_v1_api.replace_namespaced_stateful_set(
             name=name, namespace=namespace, body=stateful_set
         )
 
-    def patch_stateful_set(
+    async def patch_stateful_set(
         self,
         apps_v1_api: AppsV1Api,
         name: str,
         namespace: str,
         stateful_set: V1StatefulSet,
     ):
-        apps_v1_api.patch_namespaced_stateful_set(
+        await apps_v1_api.patch_namespaced_stateful_set(
             name=name, namespace=namespace, body=stateful_set
         )
 
-    def delete_stateful_set(
+    async def delete_stateful_set(
         self,
         apps_v1_api: AppsV1Api,
         name: str,
@@ -262,37 +262,37 @@ class BaseResource:
         delete_options: V1DeleteOptions,
     ):
         try:
-            apps_v1_api.delete_namespaced_stateful_set(name, namespace, body=delete_options)
+            await apps_v1_api.delete_namespaced_stateful_set(name, namespace, body=delete_options)
         except ApiException as ex:
             if ex.status == 404:
                 return
             raise
 
-    def fetch_secret(
+    async def fetch_secret(
         self, core_v1_api: CoreV1Api, name: str, namespace: str
     ) -> V1Service:
-        return core_v1_api.read_namespaced_secret(name=name, namespace=namespace)
+        return await core_v1_api.read_namespaced_secret(name=name, namespace=namespace)
     
-    def fetch_config_map(
+    async def fetch_config_map(
         self, core_v1_api: CoreV1Api, name: str, namespace: str
     ) -> V1ConfigMap:
         try:
-            return core_v1_api.read_namespaced_config_map(name=name, namespace=namespace)
+            return await core_v1_api.read_namespaced_config_map(name=name, namespace=namespace)
         except ApiException as ex:
             if ex.status == 404:
                 return None
             raise
 
-    def create_config_map(
+    async def create_config_map(
         self, core_v1_api: CoreV1Api, namespace: str, config_map: V1ConfigMap
     ):
         try:
-            core_v1_api.create_namespaced_config_map(
+            await core_v1_api.create_namespaced_config_map(
                 namespace=namespace, body=config_map
             )
         except ApiException as ex:
             if already_exists_error(ex):
-                self.replace_config_map(
+                await self.replace_config_map(
                     core_v1_api,
                     name=config_map.metadata.name,
                     namespace=namespace,
@@ -301,37 +301,37 @@ class BaseResource:
             else:
                 raise
 
-    def replace_config_map(
+    async def replace_config_map(
         self, core_v1_api: CoreV1Api, name: str, namespace: str, config_map: V1ConfigMap
     ):
-        core_v1_api.replace_namespaced_config_map(
+        await core_v1_api.replace_namespaced_config_map(
             name=name,
             namespace=namespace,
             body=config_map,
         )
 
-    def patch_config_map(
+    async def patch_config_map(
         self, core_v1_api: CoreV1Api, name: str, namespace: str, config_map: V1ConfigMap
     ):
-        core_v1_api.patch_namespaced_config_map(
+        await core_v1_api.patch_namespaced_config_map(
             name=name,
             namespace=namespace,
             body=config_map,
         )
 
-    def create_persistent_volume_claim(
+    async def create_persistent_volume_claim(
         self,
         core_v1_api: CoreV1Api,
         namespace: str,
         pvc: V1PersistentVolumeClaim,
     ):
         try:
-            core_v1_api.create_namespaced_persistent_volume_claim(
+            await core_v1_api.create_namespaced_persistent_volume_claim(
                 namespace=namespace, body=pvc
             )
         except ApiException as ex:
             if already_exists_error(ex):
-                self.replace_persistent_volume_claim(
+                await self.replace_persistent_volume_claim(
                     core_v1_api,
                     name=pvc.metadata.name,
                     namespace=namespace,
@@ -340,11 +340,11 @@ class BaseResource:
             else:
                 raise
         
-    def fetch_persistent_volume_claim(
+    async def fetch_persistent_volume_claim(
         self, core_v1_api: CoreV1Api, name: str, namespace: str
     ) -> V1PersistentVolumeClaim:
         try:
-            return core_v1_api.read_namespaced_persistent_volume_claim(
+            return await core_v1_api.read_namespaced_persistent_volume_claim(
                 name=name, namespace=namespace
             )
         except ApiException as ex:
@@ -352,38 +352,38 @@ class BaseResource:
                 return None
             raise
     
-    def replace_persistent_volume_claim(
+    async def replace_persistent_volume_claim(
         self,
         core_v1_api: CoreV1Api,
         name: str,
         namespace: str,
         pvc: V1PersistentVolumeClaim,
     ):
-        core_v1_api.replace_namespaced_persistent_volume_claim(
+        await core_v1_api.replace_namespaced_persistent_volume_claim(
             name=name,
             namespace=namespace,
             body=pvc,
         )
 
-    def list_persistent_volume_claims(
+    async def list_persistent_volume_claims(
         self, core_v1_api: CoreV1Api, namespace: str
     ) -> List[V1PersistentVolumeClaim]:
-        return core_v1_api.list_namespaced_persistent_volume_claim(namespace=namespace)
+        return await core_v1_api.list_namespaced_persistent_volume_claim(namespace=namespace)
 
-    def patch_persistent_volume_claim(
+    async def patch_persistent_volume_claim(
         self,
         core_v1_api: CoreV1Api,
         name: str,
         namespace: str,
         pvc: V1PersistentVolumeClaim,
     ):
-        core_v1_api.patch_namespaced_persistent_volume_claim(
+        await core_v1_api.patch_namespaced_persistent_volume_claim(
             name=name,
             namespace=namespace,
             body=pvc,
         )
 
-    def get_custom_object(
+    async def get_custom_object(
         self,
         custom_objects_api: CustomObjectsApi,
         namespace: str,
@@ -393,7 +393,7 @@ class BaseResource:
         name: str,
     ):
         try:
-            return custom_objects_api.get_namespaced_custom_object(
+            return await custom_objects_api.get_namespaced_custom_object(
                 group=group,
                 version=version,
                 namespace=namespace,
@@ -405,7 +405,7 @@ class BaseResource:
                 return None
             raise
 
-    def list_custom_objects(
+    async def list_custom_objects(
         self,
         custom_objects_api: CustomObjectsApi,
         namespace: str,
@@ -414,7 +414,7 @@ class BaseResource:
         plural: str,
         label_selector: str = None,
     ):
-        return custom_objects_api.list_namespaced_custom_object(
+        return await custom_objects_api.list_namespaced_custom_object(
             group=group,
             version=version,
             namespace=namespace,
@@ -422,29 +422,29 @@ class BaseResource:
             label_selector=label_selector,
         )
     
-    def fetch_hpa(
+    async def fetch_hpa(
         self, autoscaling_v2_api: AutoscalingV2Api, name: str, namespace: str
     ) -> V2HorizontalPodAutoscaler:
         try:
-            return autoscaling_v2_api.read_namespaced_horizontal_pod_autoscaler(name=name, namespace=namespace)
+            return await autoscaling_v2_api.read_namespaced_horizontal_pod_autoscaler(name=name, namespace=namespace)
         except ApiException as ex:
             if ex.status == 404:
                 return None
             raise
 
-    def create_hpa(
+    async def create_hpa(
         self,
         autoscaling_v2_api: AutoscalingV2Api,
         namespace: str,
         hpa: V2HorizontalPodAutoscaler,
     ):
         try:
-            autoscaling_v2_api.create_namespaced_horizontal_pod_autoscaler(
+            await autoscaling_v2_api.create_namespaced_horizontal_pod_autoscaler(
                 namespace=namespace, body=hpa
             )
         except ApiException as ex:
             if already_exists_error(ex):
-                self.replace_hpa(
+                await self.replace_hpa(
                     autoscaling_v2_api,
                     name=hpa.metadata.name,
                     namespace=namespace,
@@ -453,36 +453,36 @@ class BaseResource:
             else:
                 raise
 
-    def replace_hpa(
+    async def replace_hpa(
         self,
         autoscaling_v2_api: AutoscalingV2Api,
         name: str,
         namespace: str,
         hpa: V2HorizontalPodAutoscaler,
     ):
-        autoscaling_v2_api.replace_namespaced_horizontal_pod_autoscaler(
+        await autoscaling_v2_api.replace_namespaced_horizontal_pod_autoscaler(
             name=name, namespace=namespace, body=hpa
         )
 
-    def patch_hpa(
+    async def patch_hpa(
         self,
         autoscaling_v2_api: AutoscalingV2Api,
         name: str,
         namespace: str,
         hpa: V2HorizontalPodAutoscaler,
     ):
-        autoscaling_v2_api.patch_namespaced_horizontal_pod_autoscaler(
+        await autoscaling_v2_api.patch_namespaced_horizontal_pod_autoscaler(
             name=name, namespace=namespace, body=hpa
         )
 
-    def delete_hpa(
+    async def delete_hpa(
         self,
         autoscaling_v2_api: AutoscalingV2Api,
         name: str,
         namespace: str
     ):
         try:
-            autoscaling_v2_api.delete_namespaced_horizontal_pod_autoscaler(name, namespace)
+            await autoscaling_v2_api.delete_namespaced_horizontal_pod_autoscaler(name, namespace)
         except ApiException as ex:
             if ex.status == 404:
                 return

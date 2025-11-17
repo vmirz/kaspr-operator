@@ -11,8 +11,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the operator code into the container
 COPY kaspr/ ./kaspr/
+COPY run_operator.py ./
 
 # Set PYTHONPATH to include the app directory
 ENV PYTHONPATH "${PYTHONPATH}:/usr/src/app"
 
-CMD kopf run /usr/src/app/kaspr/app.py --verbose --all-namespaces
+# Default arguments for the operator (can be overridden)
+CMD ["python3", "/usr/src/app/run_operator.py", "--verbose", "--all-namespaces"]

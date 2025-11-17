@@ -7,7 +7,6 @@ from benedict import benedict
 from kaspr.types.schemas import KasprTaskSpecSchema
 from kaspr.types.models import KasprTaskSpec
 from kaspr.resources import KasprTask, KasprApp
-from kaspr.utils.helpers import utc_now
 
 KIND = "KasprTask"
 APP_NOT_FOUND = "AppNotFound"
@@ -36,8 +35,8 @@ async def reconciliation(
     """Reconcile KasprTask resources."""
     spec_model: KasprTaskSpec = KasprTaskSpecSchema().load(spec)
     task = KasprTask.from_spec(name, KIND, namespace, spec_model, dict(labels))
-    app = KasprApp.default().fetch(task.app_name, namespace)
-    task.create()
+    app = await KasprApp.default().fetch(task.app_name, namespace)
+    await task.create()
     # fetch the task's app and update its status.
     patch.status.update(
         {
@@ -110,7 +109,7 @@ async def monitor_task(
                 name, KIND, namespace, spec_model, dict(labels)
             )
             # Warn if the task's app does not exists.
-            app = KasprApp.default().fetch(task.app_name, namespace)
+            app = await KasprApp.default().fetch(task.app_name, namespace)
             if app is None and _status.app.status == APP_FOUND:
                 kopf.warn(
                     body,
@@ -150,7 +149,7 @@ async def reconcile(name, spec, namespace, labels, logger: logging.Logger, **kwa
     task = KasprTask.from_spec(name, KIND, namespace, spec_model, dict(labels))
     try:
         logger.debug(f"Reconciling {KIND}/{name} in {namespace} namespace.")
-        task.synchronize()
+        await task.synchronize()
         logger.debug(f"Reconciled {KIND}/{name} in {namespace} namespace.")
     except Exception as e:
         logger.error(f"Unexpected error during reconcilation: {e}")
