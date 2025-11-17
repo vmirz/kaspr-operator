@@ -32,6 +32,41 @@ names_in_queue = set()
 # The actual queue for ordered processing
 reconciliation_queue: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
 
+
+async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, List]:
+    """Fetch all resources related to a KasprApp in parallel.
+    
+    Args:
+        name: The name of the KasprApp
+        namespace: The namespace of the KasprApp
+        
+    Returns:
+        Dictionary with keys: 'agents', 'webviews', 'tables', 'tasks'
+        Each containing a list of resource items
+    """
+    agent_task, webview_task, table_task, task_task = await asyncio.gather(
+        KasprAgent.default().search(namespace, apps=[name]),
+        KasprWebView.default().search(namespace, apps=[name]),
+        KasprTable.default().search(namespace, apps=[name]),
+        KasprTask.default().search(namespace, apps=[name]),
+        return_exceptions=True
+    )
+    
+    # Handle potential errors and extract items
+    def extract_items(result, resource_type: str):
+        if isinstance(result, Exception):
+            # Log error but return empty list to allow partial results
+            return []
+        return result.get("items", []) if result else []
+    
+    return {
+        "agents": extract_items(agent_task, "agents"),
+        "webviews": extract_items(webview_task, "webviews"),
+        "tables": extract_items(table_task, "tables"),
+        "tasks": extract_items(task_task, "tasks"),
+    }
+
+
 async def request_reconciliation(name, **kwargs):
     """Request reconciliation for the KasprApp.
     
@@ -83,23 +118,32 @@ async def update_status(
         # Always update observedGeneration to match the current generation
         patch.status["observedGeneration"] = gen
 
-        # Get the current status of the app
-        _actual_status = await app.fetch_app_status()
+        # Fetch app status and related resources in parallel
+        app_status_task = app.fetch_app_status()
+        related_resources_task = fetch_app_related_resources(name, namespace)
+        
+        _actual_status, related_resources = await asyncio.gather(
+            app_status_task, 
+            related_resources_task,
+            return_exceptions=True
+        )
+        
+        # Handle potential errors from fetch_app_status
+        if isinstance(_actual_status, Exception):
+            logger.error(f"Failed to fetch app status: {_actual_status}")
+            _actual_status = None
+        
+        # Handle potential errors from fetch_app_related_resources
+        if isinstance(related_resources, Exception):
+            logger.error(f"Failed to fetch related resources: {related_resources}")
+            related_resources = {"agents": [], "webviews": [], "tables": [], "tasks": []}
+        
         if not _actual_status:
             return
 
         # Always update kasprVersion if changed
         if _actual_status.get("kasprVersion") and _actual_status["kasprVersion"] != _status.get("kasprVersion"):
             patch.status["kasprVersion"] = _actual_status["kasprVersion"]
-
-        # DEPRECATED FIELDS
-        # TODO: Remove after v0.8.7
-        # --------------------------------
-        if _status.get("desiredReplicas") is not None:
-            patch.status["desiredReplicas"] = None
-        if _status.get("availableReplicas") is not None:
-            patch.status["availableReplicas"] = None
-        # --------------------------------
 
         if _actual_status.get("availableMembers") is not None and _actual_status.get("desiredMembers") is not None:
             availableMembers = f"{_actual_status['availableMembers']}/{_actual_status['desiredMembers']}"
@@ -109,6 +153,33 @@ async def update_status(
         # Update members status if changed (using deep comparison for nested data)
         if _actual_status.get("members") is not None and not deep_compare_dict(_actual_status["members"], _status.get("members")):
             patch.status["members"] = _actual_status["members"]
+        
+        # Update related resources status in a specific order under "resources" field
+        # Extract resource names
+        agents_names = [agent["metadata"]["name"] for agent in related_resources["agents"]]
+        webviews_names = [webview["metadata"]["name"] for webview in related_resources["webviews"]]
+        tables_names = [table["metadata"]["name"] for table in related_resources["tables"]]
+        tasks_names = [task["metadata"]["name"] for task in related_resources["tasks"]]
+        
+        # Get current resources from status
+        current_resources = _status.get("resources", {})
+        
+        # Check if any resources changed
+        resources_changed = (
+            agents_names != current_resources.get("agents") or
+            webviews_names != current_resources.get("webviews") or
+            tables_names != current_resources.get("tables") or
+            tasks_names != current_resources.get("tasks")
+        )
+        
+        # Update all resources together to maintain order
+        if resources_changed:
+            patch.status["resources"] = {
+                "agents": agents_names,
+                "webviews": webviews_names,
+                "tables": tables_names,
+                "tasks": tasks_names,
+            }
 
         conds = _status.get("conditions", [])
 
@@ -663,12 +734,11 @@ async def monitor_related_resources(
             webviews: List[KasprWebView] = []
             tables: List[KasprTable] = []
             tasks: List[KasprTask] = []
-            agent_resources = await KasprAgent.default().search(namespace, apps=[name])
-            webview_resources = await KasprWebView.default().search(namespace, apps=[name])
-            table_resources = await KasprTable.default().search(namespace, apps=[name])
-            task_resources = await KasprTask.default().search(namespace, apps=[name])
+            
+            # Fetch all related resources in parallel
+            related_resources = await fetch_app_related_resources(name, namespace)
 
-            for agent in agent_resources.get("items", []) if agent_resources else []:
+            for agent in related_resources["agents"]:
                 agents.append(
                     KasprAgent.from_spec(
                         agent["metadata"]["name"],
@@ -679,9 +749,7 @@ async def monitor_related_resources(
                     )
                 )
 
-            for webview in (
-                webview_resources.get("items", []) if webview_resources else []
-            ):
+            for webview in related_resources["webviews"]:
                 webviews.append(
                     KasprWebView.from_spec(
                         webview["metadata"]["name"],
@@ -692,7 +760,7 @@ async def monitor_related_resources(
                     )
                 )
 
-            for table in table_resources.get("items", []) if table_resources else []:
+            for table in related_resources["tables"]:
                 tables.append(
                     KasprTable.from_spec(
                         table["metadata"]["name"],
@@ -703,7 +771,7 @@ async def monitor_related_resources(
                     )
                 )
 
-            for task in task_resources.get("items", []) if task_resources else []:
+            for task in related_resources["tasks"]:
                 tasks.append(
                     KasprTask.from_spec(
                         task["metadata"]["name"],
