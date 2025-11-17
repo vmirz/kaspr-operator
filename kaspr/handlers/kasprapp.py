@@ -4,6 +4,7 @@ import time
 from logging import Logger
 from collections import defaultdict
 from typing import List, Dict
+from kubernetes_asyncio.client import ApiException
 from kaspr.types.schemas.kasprapp_spec import (
     KasprAppSpecSchema,
 )
@@ -15,6 +16,7 @@ from kaspr.types.schemas import (
 )
 from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable, KasprTask
 from kaspr.utils.helpers import upsert_condition, deep_compare_dict
+from kaspr.utils.errors import convert_api_exception
 
 APP_KIND = "KasprApp"
 
@@ -412,6 +414,10 @@ async def on_storage_size_update(
         return
     try:
         await app.patch_storage_size()
+    except ApiException as e:
+        logger.error(f"Failed to patch storage size for KasprApp: {e}")
+        on_error(e, spec, meta, status, patch, **kwargs)
+        convert_api_exception(e)
     except Exception as e:
         logger.error(f"Failed to patch storage size for KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
