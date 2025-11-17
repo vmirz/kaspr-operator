@@ -16,7 +16,18 @@ from kubernetes_asyncio.client.api_client import ApiClient
 async def setup(
     settings: kopf.OperatorSettings, memo: kopf.Memo, logger: logging.Logger, **kwargs
 ):
-    await config.load_kube_config()
+    # Load Kubernetes config - try in-cluster first (for production), then local kubeconfig (for dev)
+    try:
+        config.load_incluster_config()
+        logger.info("Loaded in-cluster Kubernetes configuration")
+    except config.ConfigException:
+        logger.info("In-cluster config not found, trying local kubeconfig")
+        try:
+            await config.load_kube_config()
+            logger.info("Loaded local Kubernetes configuration")
+        except config.ConfigException as e:
+            logger.error(f"Failed to load Kubernetes configuration: {e}")
+            raise
 
     memo.conf = Settings()
     KasprApp.conf = memo.conf
