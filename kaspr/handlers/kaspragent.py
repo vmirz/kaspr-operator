@@ -84,7 +84,7 @@ async def patch_resource(name, patch, **kwargs):
             set_patch(request)
 
 
-@kopf.daemon(kind=KIND, initial_delay=5.0)
+@kopf.daemon(kind=KIND, cancellation_backoff=2.0, cancellation_timeout=5.0, initial_delay=5.0)
 async def monitor_agent(
     stopped,
     name,
