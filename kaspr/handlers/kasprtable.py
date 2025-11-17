@@ -7,7 +7,6 @@ from benedict import benedict
 from kaspr.types.schemas import KasprTableSpecSchema
 from kaspr.types.models import KasprTableSpec
 from kaspr.resources import KasprTable, KasprApp
-from kaspr.utils.helpers import utc_now
 
 KIND = "KasprTable"
 APP_NOT_FOUND = "AppNotFound"
@@ -36,8 +35,8 @@ async def reconciliation(
     """Reconcile KasprTable resources."""
     spec_model: KasprTableSpec = KasprTableSpecSchema().load(spec)
     table = KasprTable.from_spec(name, KIND, namespace, spec_model, dict(labels))
-    app = KasprApp.default().fetch(table.app_name, namespace)
-    table.create()
+    app = await KasprApp.default().fetch(table.app_name, namespace)
+    await table.create()
     # fetch the table's app and update it's status.
     patch.status.update(
         {
@@ -110,7 +109,7 @@ async def monitor_table(
                 name, KIND, namespace, spec_model, dict(labels)
             )
             # Warn if the table's app does not exists.
-            app = KasprApp.default().fetch(table.app_name, namespace)
+            app = await KasprApp.default().fetch(table.app_name, namespace)
             if app is None and _status.app.status == APP_FOUND:
                 kopf.warn(
                     body,
@@ -150,7 +149,7 @@ async def reconcile(name, spec, namespace, labels, logger: logging.Logger, **kwa
     table = KasprTable.from_spec(name, KIND, namespace, spec_model, dict(labels))
     try:
         logger.debug(f"Reconciling {KIND}/{name} in {namespace} namespace.")
-        table.synchronize()
+        await table.synchronize()
         logger.debug(f"Reconciled {KIND}/{name} in {namespace} namespace.")
     except Exception as e:
         logger.error(f"Unexpected error during reconcilation: {e}")

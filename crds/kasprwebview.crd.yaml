@@ -206,6 +206,17 @@ spec:
                                 description: Python code to run.
                             required:
                               - python
+                          filter:
+                            type: object
+                            properties:
+                              entrypoint:
+                                type: string
+                                description: Name of the function to run.                               
+                              python:
+                                type: string
+                                description: Python code to run.
+                            required:
+                              - python                              
                           topicSend:
                             description: Send a message to a kafka topic.
                             type: object
