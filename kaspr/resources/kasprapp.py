@@ -299,7 +299,9 @@ class KasprApp(BaseResource):
             self.core_v1_api, self.headless_service_name, self.namespace
         )
         if not headless_service:
-            await self.create_service(self.core_v1_api, self.namespace, self.headless_service)
+            await self.create_service(
+                self.core_v1_api, self.namespace, self.headless_service
+            )
         else:
             actual = self.prepare_headless_service_watch_fields(headless_service)
             desired = self.prepare_headless_service_watch_fields(self.headless_service)
@@ -404,10 +406,14 @@ class KasprApp(BaseResource):
         )
         # If reconciliation is paused, delete HPA so it does not interfere with manual changes to statefulset
         if hpa and self.reconciliation_paused:
-            await self.delete_hpa(self.autoscaling_v2_api, self.hpa_name, self.namespace)
+            await self.delete_hpa(
+                self.autoscaling_v2_api, self.hpa_name, self.namespace
+            )
             return
         elif hpa and self.replicas == 0:
-            await self.delete_hpa(self.autoscaling_v2_api, self.hpa_name, self.namespace)
+            await self.delete_hpa(
+                self.autoscaling_v2_api, self.hpa_name, self.namespace
+            )
             return
         elif self.replicas > 0:
             if not hpa:
@@ -925,7 +931,7 @@ class KasprApp(BaseResource):
                 )
             )
         return volume_mounts
-    
+
     def prepare_task_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
         for task in self.tasks if self.tasks else []:
@@ -950,7 +956,7 @@ class KasprApp(BaseResource):
 
     def prepare_task_mount_path(self, task: KasprTask) -> str:
         return f"{self.definitions_dir_path}/{task.file_name}"
-    
+
     def prepare_volume_mounts(self) -> List[V1VolumeMount]:
         volume_mounts = []
         volume_mounts.extend(
@@ -1107,7 +1113,7 @@ class KasprApp(BaseResource):
                 )
             )
         return volumes
-    
+
     def prepare_task_volumes(self) -> List[V1Volume]:
         volumes = []
         for task in self.tasks if self.tasks else []:
@@ -1490,7 +1496,9 @@ class KasprApp(BaseResource):
         if self.replicas == 0:
             # If replicas is set to 0, we don't want to patch the HPA as that would
             # result in an invalid configuration. Instead we just delete the HPA
-            await self.delete_hpa(self.autoscaling_v2_api, self.hpa_name, self.namespace)
+            await self.delete_hpa(
+                self.autoscaling_v2_api, self.hpa_name, self.namespace
+            )
             await self.patch_stateful_set(
                 self.apps_v1_api,
                 self.stateful_set_name,
@@ -1605,7 +1613,9 @@ class KasprApp(BaseResource):
             time.sleep(self.conf.statefulset_deletion_timeout_seconds)
         self.unite()
         # Recreate the statefulset with new storage size PVC template
-        await self.create_stateful_set(self.apps_v1_api, self.namespace, self.stateful_set)
+        await self.create_stateful_set(
+            self.apps_v1_api, self.namespace, self.stateful_set
+        )
         # Update existing PVCs
         pvcs = await self.list_persistent_volume_claims(
             self.core_v1_api, namespace=self.namespace
@@ -1719,7 +1729,9 @@ class KasprApp(BaseResource):
                 "value": self.service.metadata.annotations,
             },
         ]
-        if not await self.fetch_service(self.core_v1_api, self.service_name, self.namespace):
+        if not await self.fetch_service(
+            self.core_v1_api, self.service_name, self.namespace
+        ):
             raise kopf.TemporaryError(
                 f"Service `{self.service_name}` not found in `{self.namespace}` namespace."
             )
@@ -1769,7 +1781,7 @@ class KasprApp(BaseResource):
     def tables_status(self) -> Dict:
         """Return status of all tables."""
         return [table.info() for table in self.tables]
-    
+
     def tasks_status(self) -> Dict:
         """Return status of all tasks."""
         return [task.info() for task in self.tasks]
@@ -1802,26 +1814,34 @@ class KasprApp(BaseResource):
         available_replicas = (
             stateful_set.status.available_replicas if stateful_set.status else 0
         )
+        rollout_in_progress = (
+            (
+                stateful_set.status.current_replicas
+                != stateful_set.status.updated_replicas
+            )
+            if stateful_set.status and hasattr(stateful_set.status, "updated_replicas")
+            else False
+        )
 
         return {
             "kasprVersion": kaspr_ver,
             "availableMembers": available_replicas,
             "desiredMembers": self.replicas,
+            "rolloutInProgress": rollout_in_progress,
             "members": [
                 {
-                    "id": status["id"],
+                    "id": status.get("id"),
                     "leader": status.get("leader"),
                     "rebalancing": status.get("rebalancing"),
                     "recovering": status.get("recovering"),
                 }
                 for status in member_statuses
             ]
-            if available_replicas > 0 else [],
+            if available_replicas > 0
+            else [],
         }
 
-    async def fetch_all_member_statuses(
-        self, available_replicas: int
-    ) -> List[Dict]:
+    async def fetch_all_member_statuses(self, available_replicas: int) -> List[Dict]:
         """Fetch status from all available worker instances concurrently.
 
         Args:
@@ -1848,7 +1868,8 @@ class KasprApp(BaseResource):
 
         try:
             results = await asyncio.wait_for(
-                asyncio.gather(*tasks, return_exceptions=True), timeout=self.conf.client_status_check_timeout_seconds
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=self.conf.client_status_check_timeout_seconds,
             )
 
             # Filter out failed calls and collect successful results
@@ -1859,11 +1880,9 @@ class KasprApp(BaseResource):
                     continue
                 idx, status = result
                 if status is not None:
-                    member_statuses.append({
-                        "id": idx, 
-                        "lastProbeTime": now(), 
-                        **status
-                    })
+                    member_statuses.append(
+                        {"id": idx, "lastUpdateTime": now(), **status}
+                    )
 
             if not member_statuses:
                 self.logger.warning("All worker status checks failed")
@@ -1871,7 +1890,9 @@ class KasprApp(BaseResource):
             return member_statuses
 
         except asyncio.TimeoutError:
-            self.logger.warning(f"Timed out fetching member statuses after {self.conf.client_status_check_timeout_seconds} seconds.")
+            self.logger.warning(
+                f"Timed out fetching member statuses after {self.conf.client_status_check_timeout_seconds} seconds."
+            )
             return []
 
     def prepare_member_url(self, pod_index: int) -> str:
@@ -1896,56 +1917,60 @@ class KasprApp(BaseResource):
 
     async def request_rebalance(self):
         """Request a cluster rebalance when the app cluster is in ready state.
-        
+
         Ready state is defined as:
         - availableReplicas equals desiredReplicas
         - At least one member is a leader
-        
+
         Raises:
             Exception: If cluster is not in ready state or rebalance fails
         """
         status = await self.fetch_app_status()
-        
+
         if not status:
             self.logger.warning("Cannot request rebalance: status not available")
             return
-        
+
         # Check if cluster is in ready state
         available_replicas = status.get("availableReplicas", 0)
         desired_replicas = status.get("desiredReplicas", 0)
         members = status.get("members", [])
-        
+
         if available_replicas != desired_replicas:
             self.logger.warning(
                 f"Cannot request rebalance: cluster not ready "
                 f"(available={available_replicas}, desired={desired_replicas})"
             )
             return
-        
+
         if not members:
             self.logger.warning("Cannot request rebalance: no member status available")
             return
-        
+
         # Find the leader member
         leader_idx = None
         for member_status in members:
             if member_status.get("leader"):
                 leader_idx = member_status["id"]
                 break
-        
+
         if leader_idx is None:
             self.logger.warning("Cannot request rebalance: no leader found in cluster")
             return
-        
+
         # Request rebalance on the leader member
         try:
             # Convert string index to int for prepare_member_url
             leader_url = self.prepare_member_url(int(leader_idx))
-            self.logger.info(f"Requesting rebalance on leader member {leader_idx} at {leader_url}")
+            self.logger.info(
+                f"Requesting rebalance on leader member {leader_idx} at {leader_url}"
+            )
             await self.web_client.rebalance(leader_url)
             self.logger.info(f"Rebalance successfully requested on member {leader_idx}")
         except Exception as e:
-            self.logger.error(f"Failed to request rebalance on member {leader_idx}: {e}")
+            self.logger.error(
+                f"Failed to request rebalance on member {leader_idx}: {e}"
+            )
             raise
 
     @property
@@ -1989,7 +2014,7 @@ class KasprApp(BaseResource):
             else:
                 self._api_client = ApiClient()
         return self._api_client
-    
+
     @cached_property
     def apps_v1_api(self) -> AppsV1Api:
         if self._apps_v1_api is None:

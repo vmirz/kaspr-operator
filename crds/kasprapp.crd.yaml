@@ -963,10 +963,15 @@ spec:
                 observedGeneration:
                   type: integer
                   format: int64
+                  description: The generation observed by the controller.
                 kasprVersion:
                   type: string
                 availableMembers:
+                  description: Number of members that are ready and meet the availability requirements.
                   type: string
+                rolloutInProgress:
+                  description: Whether a rollout is currently in progress.
+                  type: boolean
                 conditions:
                   type: array
                   x-kubernetes-list-type: map
@@ -1010,15 +1015,55 @@ spec:
                     properties:
                       id:
                         type: integer
-                      lastProbeTime:
-                        type: string
-                        format: date-time
                       leader:
                         type: boolean
+                        nullable: true
                       rebalancing:
                         type: boolean
+                        nullable: true
                       recovering:
                         type: boolean
+                        nullable: true
+                linkedResources:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  properties:
+                    agents:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                          hash:
+                            type: string
+                    tables:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                          hash:
+                            type: string
+                    tasks:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                          hash:
+                            type: string
+                    webviews:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                          hash:
+                            type: string
       subresources:
         status: {}      
       additionalPrinterColumns:

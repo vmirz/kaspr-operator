@@ -153,32 +153,45 @@ async def update_status(
         # Update members status if changed (using deep comparison for nested data)
         if _actual_status.get("members") is not None and not deep_compare_dict(_actual_status["members"], _status.get("members")):
             patch.status["members"] = _actual_status["members"]
+
+        if _actual_status.get("rolloutInProgress") is not None and _actual_status.get("rolloutInProgress") != _status.get("rolloutInProgress"):
+            patch.status["rolloutInProgress"] = _actual_status["rolloutInProgress"]
+
+        # Update related resources status in a specific order under "linkedResources" field
+        # Extract resource name and hash from each resource
+        def extract_resource_info(resources):
+            """Extract name and hash from resource list."""
+            return [
+                {
+                    "name": resource["metadata"]["name"],
+                    "hash": resource.get("status", {}).get("hash", "")
+                }
+                for resource in resources
+            ]
         
-        # Update related resources status in a specific order under "resources" field
-        # Extract resource names
-        agents_names = [agent["metadata"]["name"] for agent in related_resources["agents"]]
-        webviews_names = [webview["metadata"]["name"] for webview in related_resources["webviews"]]
-        tables_names = [table["metadata"]["name"] for table in related_resources["tables"]]
-        tasks_names = [task["metadata"]["name"] for task in related_resources["tasks"]]
+        agents_info = extract_resource_info(related_resources["agents"])
+        webviews_info = extract_resource_info(related_resources["webviews"])
+        tables_info = extract_resource_info(related_resources["tables"])
+        tasks_info = extract_resource_info(related_resources["tasks"])
         
         # Get current resources from status
-        current_resources = _status.get("resources", {})
+        current_resources = _status.get("linkedResources", {})
         
-        # Check if any resources changed
+        # Check if any resources changed (using deep comparison for nested structures)
         resources_changed = (
-            agents_names != current_resources.get("agents") or
-            webviews_names != current_resources.get("webviews") or
-            tables_names != current_resources.get("tables") or
-            tasks_names != current_resources.get("tasks")
+            not deep_compare_dict({"agents": agents_info}, {"agents": current_resources.get("agents", [])}) or
+            not deep_compare_dict({"webviews": webviews_info}, {"webviews": current_resources.get("webviews", [])}) or
+            not deep_compare_dict({"tables": tables_info}, {"tables": current_resources.get("tables", [])}) or
+            not deep_compare_dict({"tasks": tasks_info}, {"tasks": current_resources.get("tasks", [])})
         )
         
         # Update all resources together to maintain order
         if resources_changed:
-            patch.status["resources"] = {
-                "agents": agents_names,
-                "webviews": webviews_names,
-                "tables": tables_names,
-                "tasks": tasks_names,
+            patch.status["linkedResources"] = {
+                "agents": agents_info,
+                "webviews": webviews_info,
+                "tables": tables_info,
+                "tasks": tasks_info,
             }
 
         conds = _status.get("conditions", [])
@@ -223,7 +236,7 @@ async def update_status(
                     "type": "Ready",
                     "status": "True",
                     "reason": "Healthy",
-                    "message": "Kaspr app is ready",
+                    "message": "App is ready",
                     "observedGeneration": gen,
                 },
             )
@@ -685,7 +698,8 @@ async def process_reconciliation_requests(name, namespace, spec, meta, status, p
     if stopped:
         return
     try:
-        if not reconciliation_queue[name].empty():
+        queue_is_empty = reconciliation_queue[name].empty()
+        if not queue_is_empty:
             reconciliation_queue[name].get_nowait()
             start_time = time.time()
             await reconcile(name, namespace, spec, meta, status, patch, annotations, logger, **kwargs)
