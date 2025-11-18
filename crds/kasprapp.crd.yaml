@@ -1035,8 +1035,16 @@ spec:
                         properties:
                           name:
                             type: string
+                            description: The name of the agent resource
                           hash:
                             type: string
+                            description: Hash of the agent resource for change detection
+                          topicName:
+                            type: string
+                            description: Comma-separated topic names the agent subscribes to (from input.topic.name)
+                          topicPattern:
+                            type: string
+                            description: Topic pattern the agent subscribes to (from input.topic.pattern)
                     tables:
                       type: array
                       items:
@@ -1044,8 +1052,13 @@ spec:
                         properties:
                           name:
                             type: string
+                            description: The name of the table resource
                           hash:
                             type: string
+                            description: Hash of the table resource for change detection
+                          tableName:
+                            type: string
+                            description: The table name that determines the changelog topic name (from spec.name)
                     tasks:
                       type: array
                       items:
@@ -1053,8 +1066,10 @@ spec:
                         properties:
                           name:
                             type: string
+                            description: The name of the task resource
                           hash:
                             type: string
+                            description: Hash of the task resource for change detection
                     webviews:
                       type: array
                       items:
@@ -1062,8 +1077,13 @@ spec:
                         properties:
                           name:
                             type: string
+                            description: The name of the webview resource
                           hash:
                             type: string
+                            description: Hash of the webview resource for change detection
+                rebalanceRequired:
+                  type: boolean
+                  description: Indicates that a rebalance is required due to subscription changes
       subresources:
         status: {}      
       additionalPrinterColumns:

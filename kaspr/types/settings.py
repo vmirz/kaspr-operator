@@ -66,6 +66,11 @@ CLIENT_STATUS_CHECK_TIMEOUT_SECONDS = float(
     _getenv("CLIENT_STATUS_CHECK_TIMEOUT_SECONDS", 10.0)
 )
 
+#: Enable automatic rebalance when Kafka subscriptions change
+AUTO_REBALANCE_ENABLED = bool(
+    _getenv("AUTO_REBALANCE_ENABLED", True)
+)
+
 class Settings:
     """Operator settings"""
 
@@ -75,6 +80,7 @@ class Settings:
     statefulset_deletion_timeout_seconds: int = STATEFULSET_DELETION_TIMEOUT_SECONDS
     client_status_check_enabled: bool = CLIENT_STATUS_CHECK_ENABLED
     client_status_check_timeout_seconds: float = CLIENT_STATUS_CHECK_TIMEOUT_SECONDS
+    auto_rebalance_enabled: bool = AUTO_REBALANCE_ENABLED
 
     def __init__(
         self,
@@ -85,6 +91,7 @@ class Settings:
         statefulset_deletion_timeout_seconds: int = None,
         client_status_check_enabled: bool = None,
         client_status_check_timeout_seconds: float = None,
+        auto_rebalance_enabled: bool = None,
         **kwargs,
     ):
         if initial_max_replicas is not None:
@@ -105,4 +112,7 @@ class Settings:
 
         if client_status_check_timeout_seconds is not None:
             self.client_status_check_timeout_seconds = client_status_check_timeout_seconds
+
+        if auto_rebalance_enabled is not None:
+            self.auto_rebalance_enabled = auto_rebalance_enabled
             

@@ -767,17 +767,18 @@ class KasprApp(BaseResource):
                 )
             )
 
-        # include consumer group instance id (for static membership)
-        # the value is derived from the pod name, which is why we configure
-        # here instead of in the config map
-        env_vars.append(
-            V1EnvVar(
-                name=self.config.env_for("consumer_group_instance_id"),
-                value_from=V1EnvVarSource(
-                    field_ref=V1ObjectFieldSelector(field_path="metadata.name")
-                ),
+        if self.static_group_membership_enabled:
+            # include consumer group instance id (for static membership)
+            # the value is derived from the pod name, which is why we configure
+            # here instead of in the config map
+            env_vars.append(
+                V1EnvVar(
+                    name=self.config.env_for("consumer_group_instance_id"),
+                    value_from=V1EnvVarSource(
+                        field_ref=V1ObjectFieldSelector(field_path="metadata.name")
+                    ),
+                )
             )
-        )
 
         # include web host as FQDN of the pod
         # e.g. <pod_name>.<headless_service_name>.<namespace>.svc
@@ -1915,7 +1916,7 @@ class KasprApp(BaseResource):
             return True
         return False
 
-    async def request_rebalance(self):
+    async def request_rebalance(self) -> bool:
         """Request a cluster rebalance when the app cluster is in ready state.
 
         Ready state is defined as:
@@ -1928,8 +1929,7 @@ class KasprApp(BaseResource):
         status = await self.fetch_app_status()
 
         if not status:
-            self.logger.warning("Cannot request rebalance: status not available")
-            return
+            return False, "App status not available"
 
         # Check if cluster is in ready state
         available_replicas = status.get("availableReplicas", 0)
@@ -1941,11 +1941,11 @@ class KasprApp(BaseResource):
                 f"Cannot request rebalance: cluster not ready "
                 f"(available={available_replicas}, desired={desired_replicas})"
             )
-            return
+            return False, "Cluster not ready"
 
         if not members:
             self.logger.warning("Cannot request rebalance: no member status available")
-            return
+            return False, "No member status available"
 
         # Find the leader member
         leader_idx = None
@@ -1955,8 +1955,8 @@ class KasprApp(BaseResource):
                 break
 
         if leader_idx is None:
-            self.logger.warning("Cannot request rebalance: no leader found in cluster")
-            return
+            self.logger.warning("Cannot request rebalance: leader member not found")
+            return False, "Leader member not found"
 
         # Request rebalance on the leader member
         try:
@@ -1967,11 +1967,19 @@ class KasprApp(BaseResource):
             )
             await self.web_client.rebalance(leader_url)
             self.logger.info(f"Rebalance successfully requested on member {leader_idx}")
+            return True, "Rebalance requested successfully"
         except Exception as e:
             self.logger.error(
                 f"Failed to request rebalance on member {leader_idx}: {e}"
             )
             raise
+
+    @cached_property
+    def static_group_membership_enabled(self) -> bool:
+        """Check if static group membership is enabled."""
+        return "kaspr.io/disable-static-group-membership" not in self.annotations or (
+            self.annotations["kaspr.io/disable-static-group-membership"].lower() != "true"
+        )
 
     @property
     def reconciliation_paused(self) -> bool:
