@@ -1084,15 +1084,21 @@ spec:
                 rebalanceRequired:
                   type: boolean
                   description: Indicates that a rebalance is required due to subscription changes
+                rebalancingMembers:
+                  type: string
+                  description: Count of members currently rebalancing
       subresources:
         status: {}      
       additionalPrinterColumns:
-      - name: Ready
-        jsonPath: .status.conditions[?(@.type=="Ready")].status
-        type: string
       - name: Version
         jsonPath: .status.kasprVersion
         type: string
+      - name: Ready
+        jsonPath: .status.conditions[?(@.type=="Ready")].status
+        type: string        
       - name: Members
         jsonPath: .status.availableMembers
+        type: string
+      - name: Rebalancing
+        jsonPath: .status.rebalancingMembers
         type: string
