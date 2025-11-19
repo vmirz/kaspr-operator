@@ -963,10 +963,15 @@ spec:
                 observedGeneration:
                   type: integer
                   format: int64
+                  description: The generation observed by the controller.
                 kasprVersion:
                   type: string
                 availableMembers:
+                  description: Number of members that are ready and meet the availability requirements.
                   type: string
+                rolloutInProgress:
+                  description: Whether a rollout is currently in progress.
+                  type: boolean
                 conditions:
                   type: array
                   x-kubernetes-list-type: map
@@ -1010,15 +1015,75 @@ spec:
                     properties:
                       id:
                         type: integer
-                      lastProbeTime:
-                        type: string
-                        format: date-time
                       leader:
                         type: boolean
+                        nullable: true
                       rebalancing:
                         type: boolean
+                        nullable: true
                       recovering:
                         type: boolean
+                        nullable: true
+                linkedResources:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  properties:
+                    agents:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            description: The name of the agent resource
+                          hash:
+                            type: string
+                            description: Hash of the agent resource for change detection
+                          topicName:
+                            type: string
+                            description: Comma-separated topic names the agent subscribes to (from input.topic.name)
+                          topicPattern:
+                            type: string
+                            description: Topic pattern the agent subscribes to (from input.topic.pattern)
+                    tables:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            description: The name of the table resource
+                          hash:
+                            type: string
+                            description: Hash of the table resource for change detection
+                          tableName:
+                            type: string
+                            description: The table name that determines the changelog topic name (from spec.name)
+                    tasks:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            description: The name of the task resource
+                          hash:
+                            type: string
+                            description: Hash of the task resource for change detection
+                    webviews:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          name:
+                            type: string
+                            description: The name of the webview resource
+                          hash:
+                            type: string
+                            description: Hash of the webview resource for change detection
+                rebalanceRequired:
+                  type: boolean
+                  description: Indicates that a rebalance is required due to subscription changes
       subresources:
         status: {}      
       additionalPrinterColumns:
