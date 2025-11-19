@@ -32,6 +32,8 @@ names_in_queue = set()
 # The actual queue for ordered processing
 reconciliation_queue: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
 
+TRUTHY = ("true", "1", "yes", "True", "Yes", "YES")
+
 
 async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, List]:
     """Fetch all resources related to a KasprApp in parallel.
@@ -500,6 +502,13 @@ async def _attempt_auto_rebalance(
 ):
     """Attempt automatic rebalance if required and conditions are met.
     
+    This function calls app.request_rebalance() directly rather than using the
+    kaspr.io/rebalance annotation mechanism for performance and simplicity:
+    - Half the API calls (no annotation patch operations)
+    - No race conditions between handlers
+    - Simpler control flow within single status update
+    - rebalanceRequired flag provides natural retry mechanism
+    
     Does not raise errors to avoid rolling back status patches. The rebalanceRequired
     flag will persist and trigger retry on next status update cycle.
     
@@ -521,7 +530,7 @@ async def _attempt_auto_rebalance(
     # Check app-level annotation override
     app_auto_rebalance = annotations.get("kaspr.io/auto-rebalance")
     if app_auto_rebalance is not None:
-        auto_rebalance_enabled = app_auto_rebalance.lower() in ("true", "1", "yes")
+        auto_rebalance_enabled = app_auto_rebalance.lower() in TRUTHY
 
     if not auto_rebalance_enabled:
         logger.debug(f"Automatic rebalance disabled for {name}")
@@ -1265,7 +1274,11 @@ async def on_reconciliation_resumed(
 async def on_rebalance_requested(
     name, body, spec, namespace, annotations, patch, logger: Logger, **kwargs
 ):
-    """Handle ad-hoc rebalance request via annotation.
+    """Handle user-initiated rebalance request via annotation.
+    
+    This handler is for manual/user-triggered rebalances only. Automatic rebalances
+    triggered by subscription changes use a separate direct-call path for better
+    performance and simpler control flow (see _attempt_auto_rebalance).
 
     When kaspr.io/rebalance annotation is added, this handler:
     1. Attempts to rebalance the cluster

@@ -2,7 +2,7 @@ import re
 import os
 from typing import Any
 
-_TRUE, _FALSE = {"True", "true"}, {"False", "false"}
+_TRUE, _FALSE = {"True", "true", "yes", "1"}, {"False", "false", "no", "0"}
 
 
 def _getenv(name: str, *default: Any) -> Any:
