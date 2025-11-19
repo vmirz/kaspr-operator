@@ -3,10 +3,14 @@
 Wrapper script to run the kaspr-operator with Kopf.
 
 This script applies the kubernetes_asyncio patch BEFORE Kopf is loaded,
-then launches Kopf programmatically.
+then launches Kopf's CLI with all standard arguments.
 
 Usage:
-    python run_operator.py [--verbose] [--all-namespaces] [other kopf args]
+    python run_operator.py [any kopf run arguments]
+    
+Examples:
+    python run_operator.py --verbose --all-namespaces
+    python run_operator.py -n my-namespace --log-format=json
 """
 
 # CRITICAL: Apply patch BEFORE any kopf imports
@@ -15,49 +19,18 @@ patch_kopf_thirdparty()
 
 # Now safe to import and run kopf  # noqa: E402
 import sys  # noqa: E402
-import logging  # noqa: E402
 
 if __name__ == '__main__':
     # Import kopf after patch is applied
-    import kopf  # noqa: E402
+    import kopf.cli  # noqa: E402
     
     # Import the operator module (which registers handlers via decorators)
     import kaspr.app  # noqa: E402, F401
     
-    # Parse command line arguments
-    import argparse
-    parser = argparse.ArgumentParser(description='Run the Kaspr Operator')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose logging')
-    parser.add_argument('--all-namespaces', '-A', action='store_true', help='Watch all namespaces')
-    parser.add_argument('--namespace', '-n', type=str, help='Watch specific namespace')
-    parser.add_argument('--dev', action='store_true', help='Run in development mode')
-    parser.add_argument('--standalone', action='store_true', default=True, help='Run in standalone mode (default)')
+    # Inject 'run' as the command since we're calling the CLI directly
+    # This makes it behave as if user called: kopf run <args>
     
-    args, unknown = parser.parse_known_args()
+    sys.argv.insert(1, 'run')
     
-    # Set up logging based on verbosity
-    log_level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format='[%(asctime)s] %(name)-20s [%(levelname)-8s] %(message)s',
-    )
-    
-    # Prepare kopf.run arguments
-    run_kwargs = {
-        'standalone': args.standalone,
-    }
-    
-    # Handle namespace watching
-    if args.all_namespaces:
-        run_kwargs['clusterwide'] = True
-    elif args.namespace:
-        run_kwargs['namespaces'] = [args.namespace]
-    else:
-        # Default to clusterwide if neither is specified
-        run_kwargs['clusterwide'] = True
-    
-    # Run the operator using kopf.run (CLI-compatible interface)
-    # This handles signal handlers, logging setup, and other CLI features
-    sys.exit(kopf.run(
-        **run_kwargs
-    ))
+    # Call Kopf's CLI main entry point - it handles all argument parsing
+    sys.exit(kopf.cli.main(prog_name="kopf"))
