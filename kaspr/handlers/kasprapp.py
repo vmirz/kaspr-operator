@@ -184,6 +184,10 @@ def _detect_agent_subscription_changes(
 ) -> bool:
     """Detect if agent subscription-affecting changes occurred.
     
+    Compares the set of topics subscribed across all agents. A subscription change
+    only occurs if the collective set of topics/patterns differs, not just if the
+    number of agents changes (since multiple agents can subscribe to the same topics).
+    
     Args:
         current_agents: Current agent info from status
         new_agents: New agent info from cluster
@@ -193,40 +197,54 @@ def _detect_agent_subscription_changes(
     Returns:
         True if subscription-affecting changes detected
     """
-    if len(new_agents) != len(current_agents):
-        logger.info(f"Agent count changed for {app_name}: {len(current_agents)} -> {len(new_agents)}")
+    def extract_topic_subscriptions(agents: List[Dict]) -> tuple[set, set]:
+        """Extract sets of topic names and patterns from agents.
+        
+        Returns:
+            Tuple of (topic_names_set, topic_patterns_set)
+        """
+        topic_names = set()
+        topic_patterns = set()
+        
+        for agent in agents:
+            # Handle topic names (comma-separated string)
+            topic_name = agent.get("topicName")
+            if topic_name:
+                # Split comma-separated topics and add each to the set
+                for topic in topic_name.split(","):
+                    stripped = topic.strip()
+                    if stripped:
+                        topic_names.add(stripped)
+            
+            # Handle topic patterns
+            topic_pattern = agent.get("topicPattern")
+            if topic_pattern:
+                topic_patterns.add(topic_pattern.strip())
+        
+        return topic_names, topic_patterns
+    
+    # Extract topic subscriptions from both states
+    current_names, current_patterns = extract_topic_subscriptions(current_agents)
+    new_names, new_patterns = extract_topic_subscriptions(new_agents)
+    
+    # Compare the sets of subscribed topics
+    if current_names != new_names:
+        added_names = new_names - current_names
+        removed_names = current_names - new_names
+        logger.info(
+            f"Topic name subscriptions changed for {app_name}. "
+            f"Added: {added_names or 'none'}, Removed: {removed_names or 'none'}"
+        )
         return True
     
-    # Create maps by name for comparison
-    current_agents_map = {a["name"]: a for a in current_agents}
-    new_agents_map = {a["name"]: a for a in new_agents}
-
-    # Check for new agents
-    for agent_name, new_agent in new_agents_map.items():
-        current_agent = current_agents_map.get(agent_name)
-        if not current_agent:
-            logger.info(f"New agent detected: {agent_name}")
-            return True
-
-        # Compare only subscription-relevant fields
-        new_topic_name = new_agent.get("topicName")
-        current_topic_name = current_agent.get("topicName")
-        new_topic_pattern = new_agent.get("topicPattern")
-        current_topic_pattern = current_agent.get("topicPattern")
-
-        if new_topic_name != current_topic_name:
-            logger.info(f"Agent {agent_name} topic name changed: {current_topic_name} -> {new_topic_name}")
-            return True
-
-        if new_topic_pattern != current_topic_pattern:
-            logger.info(f"Agent {agent_name} topic pattern changed: {current_topic_pattern} -> {new_topic_pattern}")
-            return True
-
-    # Check for removed agents
-    for agent_name in current_agents_map:
-        if agent_name not in new_agents_map:
-            logger.info(f"Agent removed: {agent_name}")
-            return True
+    if current_patterns != new_patterns:
+        added_patterns = new_patterns - current_patterns
+        removed_patterns = current_patterns - new_patterns
+        logger.info(
+            f"Topic pattern subscriptions changed for {app_name}. "
+            f"Added: {added_patterns or 'none'}, Removed: {removed_patterns or 'none'}"
+        )
+        return True
     
     return False
 
@@ -321,6 +339,17 @@ def _update_basic_status_fields(
     ) != _status.get("rolloutInProgress"):
         patch.status["rolloutInProgress"] = _actual_status["rolloutInProgress"]
 
+    # Aggregate rebalancing status from members
+    # Format: "<count of rebalancing members>/<available members>"
+    if _actual_status.get("members") is not None:
+        rebalancing_count = sum(
+            1 for member in _actual_status["members"] if member.get("rebalancing", False)
+        )
+        available_members = _actual_status.get("availableMembers", 0)
+        rebalancing_members = f"{rebalancing_count}/{available_members}"
+        if rebalancing_members != _status.get("rebalancingMembers"):
+            patch.status["rebalancingMembers"] = rebalancing_members
+
 
 def _update_linked_resources_status(
     patch,
@@ -355,6 +384,23 @@ def _update_linked_resources_status(
 
     # Get current resources from status
     current_resources = _status.get("linkedResources", {})
+    
+    # Check if this is the first time tracking resources (migration safety)
+    # If linkedResources doesn't exist or is empty, initialize without triggering rebalance
+    is_first_tracking = not current_resources or not any(
+        current_resources.get(key) for key in ["agents", "tables", "webviews", "tasks"]
+    )
+
+    if is_first_tracking:
+        # First time tracking - initialize status without triggering rebalance
+        patch.status["linkedResources"] = {
+            "agents": agents_info,
+            "webviews": webviews_info,
+            "tables": tables_info,
+            "tasks": tasks_info,
+        }
+        logger.info(f"Initialized linkedResources tracking for {name} (no rebalance triggered)")
+        return False
 
     # Check if any resources changed (using deep comparison for nested structures)
     resources_changed = (
