@@ -1024,6 +1024,10 @@ spec:
                       recovering:
                         type: boolean
                         nullable: true
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                        description: Timestamp of last state change for this member
                 linkedResources:
                   type: object
                   x-kubernetes-preserve-unknown-fields: true

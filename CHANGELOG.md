@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.11.2
+--
+### Added
+* **Member State Tracking**: Added `lastTransitionTime` to member objects to track when state changes occur (leader, rebalancing, recovering)
+* **Rebalancing Visibility**: Added `rebalancingMembers` status field showing count in "X/Y" format (e.g., "1/3" = 1 rebalancing out of 3 available members)
+  * Displayed in `kubectl get kasprapp` output for quick visibility
+  * Aggregated from individual member rebalancing status
+
+### Changed
+* **Improved Subscription Change Detection**: Enhanced logic to compare topic-level subscriptions rather than agent counts
+  * Handles comma-separated topic names correctly
+  * Multiple agents can subscribe to same topics without triggering false rebalance
+  * Only actual topic subscription changes trigger rebalance
+* **Migration Safety**: First-time initialization of `linkedResources` tracking doesn't trigger rebalance on existing apps
+  * Prevents unnecessary rebalances when operator is upgraded
+  * Graceful transition for existing deployments
+
+### Fixed
+* **False Positive Rebalances**: Agent/table count changes no longer trigger rebalance unless actual topic subscriptions change
+
 ## 0.11.0
 --
 ### Added
