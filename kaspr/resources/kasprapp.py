@@ -1593,6 +1593,30 @@ class KasprApp(BaseResource):
             stateful_set=patch,
         )
 
+    async def terminate_member(self, member_id: int) -> bool:
+        """Terminate a member pod by its ID.
+        
+        Args:
+            member_id: The member ID (corresponds to StatefulSet ordinal)
+            
+        Returns:
+            True if termination succeeded, False otherwise
+        """            
+        pod_name = f"{self.component_name}-{member_id}"
+        
+        try:
+            await self.delete_pod(
+                self.core_v1_api,
+                pod_name,
+                self.namespace,
+                delete_options=V1DeleteOptions(grace_period_seconds=10),
+            )
+            self.logger.info(f"Terminated member {member_id} pod {pod_name}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to terminate pod {pod_name} for member {member_id}: {e}")
+            return False
+
     async def patch_storage_size(self):
         # We can't directly patch the stateful set PVC template with new storage size.
         # So must must do the following:
@@ -1829,17 +1853,7 @@ class KasprApp(BaseResource):
             "availableMembers": available_replicas,
             "desiredMembers": self.replicas,
             "rolloutInProgress": rollout_in_progress,
-            "members": [
-                {
-                    "id": status.get("id"),
-                    "leader": status.get("leader"),
-                    "rebalancing": status.get("rebalancing"),
-                    "recovering": status.get("recovering"),
-                }
-                for status in member_statuses
-            ]
-            if available_replicas > 0
-            else [],
+            "members": member_statuses if available_replicas > 0 else [],
         }
 
     async def fetch_all_member_statuses(self, available_replicas: int) -> List[Dict]:

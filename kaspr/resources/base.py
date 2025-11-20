@@ -487,3 +487,29 @@ class BaseResource:
             if ex.status == 404:
                 return
             raise
+
+    async def delete_pod(
+        self,
+        core_v1_api: CoreV1Api,
+        name: str,
+        namespace: str,
+        delete_options: V1DeleteOptions = None
+    ):
+        """Delete a pod.
+        
+        Args:
+            core_v1_api: CoreV1Api instance
+            name: Name of the pod to delete
+            namespace: Namespace of the pod
+            delete_options: Optional delete options (e.g., grace period, propagation policy)
+        """
+        try:
+            await core_v1_api.delete_namespaced_pod(
+                name=name,
+                namespace=namespace,
+                body=delete_options
+            )
+        except ApiException as ex:
+            if ex.status == 404:
+                return
+            raise

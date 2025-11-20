@@ -71,6 +71,16 @@ AUTO_REBALANCE_ENABLED = bool(
     _getenv("AUTO_REBALANCE_ENABLED", True)
 )
 
+#: Enable hung member detection and automatic recovery
+HUNG_MEMBER_DETECTION_ENABLED = bool(
+    _getenv("HUNG_MEMBER_DETECTION_ENABLED", True)
+)
+
+#: Threshold in seconds to consider a member hung in rebalancing state
+HUNG_REBALANCING_THRESHOLD_SECONDS = int(
+    _getenv("HUNG_REBALANCING_THRESHOLD_SECONDS", 300)
+)
+
 class Settings:
     """Operator settings"""
 
@@ -81,6 +91,8 @@ class Settings:
     client_status_check_enabled: bool = CLIENT_STATUS_CHECK_ENABLED
     client_status_check_timeout_seconds: float = CLIENT_STATUS_CHECK_TIMEOUT_SECONDS
     auto_rebalance_enabled: bool = AUTO_REBALANCE_ENABLED
+    hung_member_detection_enabled: bool = HUNG_MEMBER_DETECTION_ENABLED
+    hung_rebalancing_threshold_seconds: int = HUNG_REBALANCING_THRESHOLD_SECONDS
 
     def __init__(
         self,
@@ -92,6 +104,8 @@ class Settings:
         client_status_check_enabled: bool = None,
         client_status_check_timeout_seconds: float = None,
         auto_rebalance_enabled: bool = None,
+        hung_member_detection_enabled: bool = None,
+        hung_rebalancing_threshold_seconds: int = None,
         **kwargs,
     ):
         if initial_max_replicas is not None:
@@ -115,4 +129,10 @@ class Settings:
 
         if auto_rebalance_enabled is not None:
             self.auto_rebalance_enabled = auto_rebalance_enabled
+
+        if hung_member_detection_enabled is not None:
+            self.hung_member_detection_enabled = hung_member_detection_enabled
+
+        if hung_rebalancing_threshold_seconds is not None:
+            self.hung_rebalancing_threshold_seconds = hung_rebalancing_threshold_seconds
             

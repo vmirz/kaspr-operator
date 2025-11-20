@@ -4,6 +4,7 @@ import time
 from logging import Logger
 from collections import defaultdict
 from typing import List, Dict
+from datetime import datetime, timezone, timedelta
 from kubernetes_asyncio.client import ApiException
 from kaspr.types.schemas.kasprapp_spec import (
     KasprAppSpecSchema,
@@ -339,21 +340,39 @@ def _update_basic_status_fields(
             current_member = current_members_map.get(member_id, {})
             
             # Check if any state has changed (leader, rebalancing, recovering)
-            state_changed = (
-                new_member.get("leader") != current_member.get("leader") or
-                new_member.get("rebalancing") != current_member.get("rebalancing") or
-                new_member.get("recovering") != current_member.get("recovering")
-            )
+            leader_changed = new_member.get("leader") != current_member.get("leader")
+            rebalancing_changed = new_member.get("rebalancing") != current_member.get("rebalancing")
+            recovering_changed = new_member.get("recovering") != current_member.get("recovering")
+            state_changed = leader_changed or rebalancing_changed or recovering_changed
+            
+            # Build filtered member object with only desired properties
+            filtered_member = {
+                "id": member_id,
+                "leader": new_member.get("leader"),
+                "rebalancing": new_member.get("rebalancing"),
+                "recovering": new_member.get("recovering"),
+            }
             
             # Preserve or update lastTransitionTime
             if state_changed or "lastTransitionTime" not in current_member:
                 # State changed or first time seeing this member - update timestamp
-                new_member["lastTransitionTime"] = now()
+                filtered_member["lastTransitionTime"] = now()
+                
+                # Log specific state changes
+                if state_changed:
+                    changes = []
+                    if leader_changed:
+                        changes.append(f"leader: {current_member.get('leader')} -> {new_member.get('leader')}")
+                    if rebalancing_changed:
+                        changes.append(f"rebalancing: {current_member.get('rebalancing')} -> {new_member.get('rebalancing')}")
+                    if recovering_changed:
+                        changes.append(f"recovering: {current_member.get('recovering')} -> {new_member.get('recovering')}")
+                    logger.info(f"Member {member_id} state changed: {', '.join(changes)}")
             else:
                 # No state change - preserve existing timestamp
-                new_member["lastTransitionTime"] = current_member.get("lastTransitionTime")
+                filtered_member["lastTransitionTime"] = current_member.get("lastTransitionTime")
             
-            updated_members.append(new_member)
+            updated_members.append(filtered_member)
         
         # Only patch if members actually changed
         if not deep_compare_dict({"members": updated_members}, {"members": current_members}):
@@ -374,6 +393,144 @@ def _update_basic_status_fields(
         rebalancing_members = f"{rebalancing_count}/{available_members}"
         if rebalancing_members != _status.get("rebalancingMembers"):
             patch.status["rebalancingMembers"] = rebalancing_members
+
+
+def _is_rollout_complete(conds: List[Dict]) -> bool:
+    """Check if rollout is complete by examining Progressing condition.
+    
+    Returns True if Progressing condition status is False.
+    """
+    for cond in conds:
+        if cond.get("type") == "Progressing":
+            return cond.get("status") == "False"
+    return False
+
+
+async def _detect_hung_members(
+    _status: Dict,
+    app: KasprApp,
+    logger: Logger
+) -> List[int]:
+    """Detect members hung in rebalancing state.
+    
+    Identifies members that meet ALL criteria:
+    - rebalancing=true AND recovering=false
+    - lastTransitionTime > threshold seconds ago
+    - App's Progressing condition is False (rollout complete)
+    - Has active or standby assignments (member with no assignments is not hung)
+    
+    Threshold can be overridden per-app via annotation:
+    kaspr.io/hung-rebalancing-threshold-seconds: "600"
+    
+    Returns:
+        List of hung member IDs
+    """
+    # Check if hung member detection is enabled
+    detection_enabled = app.conf.hung_member_detection_enabled
+    
+    # Check app-level annotation override
+    if app.annotations:
+        app_detection_enabled = app.annotations.get("kaspr.io/hung-member-detection-enabled")
+        if app_detection_enabled is not None:
+            detection_enabled = app_detection_enabled.lower() in TRUTHY
+    
+    if not detection_enabled:
+        logger.debug("Hung member detection is disabled")
+        return []
+    
+    # Check if rollout is complete
+    conds = _status.get("conditions", [])
+    if not _is_rollout_complete(conds):
+        logger.debug("Skipping hung member detection - rollout in progress")
+        return []
+    
+    # Get threshold from annotation or use default
+    threshold_seconds = app.conf.hung_rebalancing_threshold_seconds
+    if app.annotations:
+        annotation_threshold = app.annotations.get(
+            "kaspr.io/hung-rebalancing-threshold-seconds"
+        )
+        if annotation_threshold:
+            try:
+                threshold_seconds = int(annotation_threshold)
+                logger.debug(
+                    f"Using per-app hung rebalancing threshold: {threshold_seconds}s"
+                )
+            except ValueError:
+                logger.warning(
+                    f"Invalid hung-rebalancing-threshold-seconds annotation value: {annotation_threshold}, using default: {threshold_seconds}s"
+                )
+    
+    threshold_time = datetime.now(timezone.utc) - timedelta(seconds=threshold_seconds)
+    members = _status.get("members", [])
+    
+    hung_members = []
+    for member in members:
+        if (
+            member.get("rebalancing") is True
+            and member.get("recovering") is False
+        ):
+            # Check if member has assignments (must have actives or standbys)
+            assignment = member.get("assignment", {})
+            actives = assignment.get("actives", {})
+            standbys = assignment.get("standbys", {})
+            
+            if not actives and not standbys:
+                # Member has no assignments, not hung
+                continue
+            
+            last_transition = member.get("lastTransitionTime")
+            if last_transition:
+                try:
+                    transition_dt = datetime.fromisoformat(
+                        last_transition.replace("Z", "+00:00")
+                    )
+                    if transition_dt < threshold_time:
+                        hung_members.append(member)
+                except (ValueError, AttributeError) as e:
+                    logger.warning(
+                        f"Failed to parse lastTransitionTime for member {member.get('id')}: {e}"
+                    )
+    
+    if not hung_members:
+        return []
+    
+    # Log detected hung members
+    hung_member_ids = [m.get('id') for m in hung_members]
+    logger.warning(
+        f"Detected {len(hung_members)} hung rebalancing member(s): "
+        f"{hung_member_ids} (hung for {threshold_seconds}+ seconds)"
+    )
+    
+    return hung_member_ids
+
+
+async def _terminate_hung_members(
+    app: KasprApp,
+    hung_member_ids: List[int],
+    logger: Logger
+):
+    """Terminate pods for hung members.
+    
+    Args:
+        app: KasprApp instance
+        hung_member_ids: List of member IDs to terminate
+        logger: Logger instance
+    """
+    if not hung_member_ids:
+        return
+        
+    # Delete all pods in parallel with 15 second timeout
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(
+                *[app.terminate_member(member_id) for member_id in hung_member_ids],
+                return_exceptions=True
+            ),
+            timeout=15.0
+        )
+    except asyncio.TimeoutError:
+        logger.error("Timeout waiting for hung member pod deletions to complete (15s limit exceeded)")
 
 
 def _update_linked_resources_status(
@@ -478,7 +635,8 @@ def _update_conditions(
     _actual_status: Dict,
     gen: int,
     cur_gen: int,
-    app
+    app,
+    hung_member_ids: List[int] = None
 ):
     """Update status conditions based on reconciliation state.
     
@@ -489,8 +647,36 @@ def _update_conditions(
         gen: Current generation
         cur_gen: Current observed generation
         app: KasprApp instance
+        hung_member_ids: List of member IDs hung in rebalancing (if any)
     """
     conds = _status.get("conditions", [])
+    
+    # If hung members detected, override Ready condition
+    if hung_member_ids:
+        conds = upsert_condition(
+            conds,
+            {
+                "type": "Progressing",
+                "status": "False",
+                "reason": "ReconcileComplete",
+                "message": "All resources are in desired state",
+                "observedGeneration": gen,
+            },
+        )
+        conds = upsert_condition(
+            conds,
+            {
+                "type": "Ready",
+                "status": "False",
+                "reason": "HungMembers",
+                "message": f"Members {hung_member_ids} hung in rebalancing state - terminating pods",
+                "observedGeneration": gen,
+            },
+        )
+        patch.status["conditions"] = conds
+        return
+    
+    # Normal condition updates
 
     # If we are reconciling a new generation, set Progressing True, Ready False
     if cur_gen != gen:
@@ -694,11 +880,17 @@ async def update_status(
         # Update linked resources and detect subscription changes
         _update_linked_resources_status(patch, _status, app, related_resources, name, logger)
 
+        # Detect hung rebalancing members
+        hung_member_ids = await _detect_hung_members(_status, app, logger)
+
         # Update conditions based on reconciliation state
-        _update_conditions(patch, _status, _actual_status, gen, cur_gen, app)
+        _update_conditions(patch, _status, _actual_status, gen, cur_gen, app, hung_member_ids)
 
         # Attempt automatic rebalance if required
         await _attempt_auto_rebalance(_status, _actual_status, annotations, app, name, patch, logger)
+
+        # Terminate hung members
+        await _terminate_hung_members(app, hung_member_ids, logger)
 
     except Exception as e:
         logger.exception(e)
