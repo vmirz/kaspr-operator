@@ -15,7 +15,7 @@ from kaspr.types.schemas import (
     KasprTableSpecSchema,
 )
 from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable, KasprTask
-from kaspr.utils.helpers import upsert_condition, deep_compare_dict
+from kaspr.utils.helpers import upsert_condition, deep_compare_dict, now
 from kaspr.utils.errors import convert_api_exception
 
 APP_KIND = "KasprApp"
@@ -328,11 +328,36 @@ def _update_basic_status_fields(
         if availableMembers != _status.get("availableMembers"):
             patch.status["availableMembers"] = availableMembers
 
-    # Update members status if changed (using deep comparison for nested data)
-    if _actual_status.get("members") is not None and not deep_compare_dict(
-        _actual_status["members"], _status.get("members")
-    ):
-        patch.status["members"] = _actual_status["members"]
+    # Update members status with lastTransitionTime tracking
+    if _actual_status.get("members") is not None:
+        current_members = _status.get("members", [])
+        current_members_map = {m.get("id"): m for m in current_members if m.get("id") is not None}
+        
+        updated_members = []
+        for new_member in _actual_status["members"]:
+            member_id = new_member.get("id")
+            current_member = current_members_map.get(member_id, {})
+            
+            # Check if any state has changed (leader, rebalancing, recovering)
+            state_changed = (
+                new_member.get("leader") != current_member.get("leader") or
+                new_member.get("rebalancing") != current_member.get("rebalancing") or
+                new_member.get("recovering") != current_member.get("recovering")
+            )
+            
+            # Preserve or update lastTransitionTime
+            if state_changed or "lastTransitionTime" not in current_member:
+                # State changed or first time seeing this member - update timestamp
+                new_member["lastTransitionTime"] = now()
+            else:
+                # No state change - preserve existing timestamp
+                new_member["lastTransitionTime"] = current_member.get("lastTransitionTime")
+            
+            updated_members.append(new_member)
+        
+        # Only patch if members actually changed
+        if not deep_compare_dict({"members": updated_members}, {"members": current_members}):
+            patch.status["members"] = updated_members
 
     if _actual_status.get("rolloutInProgress") is not None and _actual_status.get(
         "rolloutInProgress"
