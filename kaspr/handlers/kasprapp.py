@@ -34,6 +34,8 @@ names_in_queue = set()
 reconciliation_queue: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
 # Locks to prevent race conditions when enqueueing reconciliation requests
 reconciliation_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+# Track consecutive hung member detections: (app_name, member_id) -> consecutive_count
+hung_member_tracking: Dict[tuple[str, int], int] = {}
 
 TRUTHY = ("true", "1", "yes", "True", "Yes", "YES")
 
@@ -413,6 +415,7 @@ def _is_rollout_complete(conds: List[Dict]) -> bool:
 async def _detect_hung_members(
     _status: Dict,
     app: KasprApp,
+    name: str,
     logger: Logger
 ) -> List[int]:
     """Detect members hung in rebalancing state.
@@ -422,12 +425,13 @@ async def _detect_hung_members(
     - lastTransitionTime > threshold seconds ago
     - App's Progressing condition is False (rollout complete)
     - Has active or standby assignments (member with no assignments is not hung)
+    - Detected as hung for 3 consecutive checks
     
     Threshold can be overridden per-app via annotation:
     kaspr.io/hung-rebalancing-threshold-seconds: "600"
     
     Returns:
-        List of hung member IDs
+        List of hung member IDs ready for termination
     """
     # Check if hung member detection is enabled
     detection_enabled = app.conf.hung_member_detection_enabled
@@ -446,6 +450,10 @@ async def _detect_hung_members(
     conds = _status.get("conditions", [])
     if not _is_rollout_complete(conds):
         logger.debug("Skipping hung member detection - rollout in progress")
+        # Clear tracking for this app since rollout is in progress
+        keys_to_remove = [key for key in hung_member_tracking.keys() if key[0] == name]
+        for key in keys_to_remove:
+            del hung_member_tracking[key]
         return []
     
     # Get threshold from annotation or use default
@@ -468,8 +476,14 @@ async def _detect_hung_members(
     threshold_time = datetime.now(timezone.utc) - timedelta(seconds=threshold_seconds)
     members = _status.get("members", [])
     
-    hung_members = []
+    # Track current hung members for this check
+    current_hung_members = set()
+    members_to_terminate = []
+    
     for member in members:
+        member_id = member.get("id")
+        tracking_key = (name, member_id)
+        
         if (
             member.get("rebalancing") is True
             and member.get("recovering") is False
@@ -481,6 +495,8 @@ async def _detect_hung_members(
             
             if not actives and not standbys:
                 # Member has no assignments, not hung
+                # Reset tracking if it exists
+                hung_member_tracking.pop(tracking_key, None)
                 continue
             
             last_transition = member.get("lastTransitionTime")
@@ -490,23 +506,46 @@ async def _detect_hung_members(
                         last_transition.replace("Z", "+00:00")
                     )
                     if transition_dt < threshold_time:
-                        hung_members.append(member)
+                        # Member appears hung, increment consecutive count
+                        current_hung_members.add(member_id)
+                        consecutive_count = hung_member_tracking.get(tracking_key, 0) + 1
+                        hung_member_tracking[tracking_key] = consecutive_count
+                        
+                        logger.warning(
+                            f"Member {member_id} detected as hung ({consecutive_count}/3) - "
+                            f"rebalancing for {threshold_seconds}+ seconds"
+                        )
+                        
+                        # Only terminate after 3 consecutive detections
+                        if consecutive_count >= 3:
+                            members_to_terminate.append(member_id)
+                    else:
+                        # Member is rebalancing but not past threshold yet
+                        hung_member_tracking.pop(tracking_key, None)
                 except (ValueError, AttributeError) as e:
                     logger.warning(
-                        f"Failed to parse lastTransitionTime for member {member.get('id')}: {e}"
+                        f"Failed to parse lastTransitionTime for member {member_id}: {e}"
                     )
+                    hung_member_tracking.pop(tracking_key, None)
+        else:
+            # Member is not in hung state, reset tracking
+            hung_member_tracking.pop(tracking_key, None)
     
-    if not hung_members:
-        return []
+    # Clean up tracking for members that are no longer hung
+    # (they may have recovered or been terminated)
+    keys_to_remove = [
+        key for key in hung_member_tracking.keys()
+        if key[0] == name and key[1] not in current_hung_members
+    ]
+    for key in keys_to_remove:
+        del hung_member_tracking[key]
     
-    # Log detected hung members
-    hung_member_ids = [m.get('id') for m in hung_members]
-    logger.warning(
-        f"Detected {len(hung_members)} hung rebalancing member(s): "
-        f"{hung_member_ids} (hung for {threshold_seconds}+ seconds)"
-    )
+    if members_to_terminate:
+        logger.warning(
+            f"Members ready for termination after 3 consecutive hung detections: {members_to_terminate}"
+        )
     
-    return hung_member_ids
+    return members_to_terminate
 
 
 async def _terminate_hung_members(
@@ -890,7 +929,7 @@ async def update_status(
         _update_linked_resources_status(patch, _status, app, related_resources, name, logger)
 
         # Detect hung rebalancing members
-        hung_member_ids = await _detect_hung_members(_status, app, logger)
+        hung_member_ids = await _detect_hung_members(_status, app, name, logger)
 
         # Update conditions based on reconciliation state
         _update_conditions(patch, _status, _actual_status, gen, cur_gen, app, hung_member_ids)
@@ -1309,6 +1348,11 @@ async def on_delete(name, **kwargs):
     if name in reconciliation_locks:
         del reconciliation_locks[name]
     names_in_queue.discard(name)
+    
+    # Clean up hung member tracking
+    keys_to_remove = [key for key in hung_member_tracking.keys() if key[0] == name]
+    for key in keys_to_remove:
+        del hung_member_tracking[key]
     names_in_queue.discard(name)
 
 
