@@ -32,6 +32,8 @@ patch_request_queues: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
 names_in_queue = set()
 # The actual queue for ordered processing
 reconciliation_queue: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
+# Locks to prevent race conditions when enqueueing reconciliation requests
+reconciliation_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 TRUTHY = ("true", "1", "yes", "True", "Yes", "YES")
 
@@ -75,10 +77,12 @@ async def request_reconciliation(name, **kwargs):
 
     Enqueues the request only if it's not already in the queue.
     This prevents duplicate processing while preserving order.
+    Uses a lock to ensure atomicity of the check-and-add operation.
     """
-    if name not in names_in_queue:
-        names_in_queue.add(name)
-        await reconciliation_queue[name].put(name)
+    async with reconciliation_locks[name]:
+        if name not in names_in_queue:
+            names_in_queue.add(name)
+            await reconciliation_queue[name].put(name)
 
 
 def on_error(error, spec, meta, status, patch, **_):
@@ -601,7 +605,8 @@ def _update_linked_resources_status(
         )
     )
 
-    subscription_changed = False 
+    subscription_changed = False
+    change_details = []
     
     if resources_changed:
         patch.status["linkedResources"] = {
@@ -615,16 +620,20 @@ def _update_linked_resources_status(
         current_agents = current_resources.get("agents", [])
         if _detect_agent_subscription_changes(current_agents, agents_info, name, logger):
             subscription_changed = True
+            change_details.append("agent topic subscriptions")
         
         if not subscription_changed:
             current_tables = current_resources.get("tables", [])
             if _detect_table_subscription_changes(current_tables, tables_info, name, logger):
                 subscription_changed = True
+                change_details.append("table changelog topics")
 
         # Mark rebalance required if subscriptions changed
         if subscription_changed:
             patch.status["rebalanceRequired"] = True
-            logger.info(f"Subscription change detected for {name}, marking rebalance required")
+            logger.info(
+                f"Subscription change detected for {name}: {', '.join(change_details)} - marking rebalance required"
+            )
     
     return subscription_changed
 
@@ -1292,9 +1301,15 @@ async def general_config_update(
 @kopf.on.delete(kind=APP_KIND)
 async def on_delete(name, **kwargs):
     """Handle deletion of KasprApp resources."""
-    # remove app name from reconciliation queue
+    # Clean up all global state for this resource
     if name in reconciliation_queue:
         del reconciliation_queue[name]
+    if name in patch_request_queues:
+        del patch_request_queues[name]
+    if name in reconciliation_locks:
+        del reconciliation_locks[name]
+    names_in_queue.discard(name)
+    names_in_queue.discard(name)
 
 
 @kopf.timer(APP_KIND, interval=1)
