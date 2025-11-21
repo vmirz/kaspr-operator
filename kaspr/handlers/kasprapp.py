@@ -40,6 +40,15 @@ hung_member_tracking: Dict[tuple[str, int], int] = {}
 TRUTHY = ("true", "1", "yes", "True", "Yes", "YES")
 
 
+def get_sensor():
+    """Get sensor from KasprApp class.
+    
+    Returns:
+        Sensor instance or None
+    """
+    return getattr(KasprApp, 'sensor', None)
+
+
 async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, List]:
     """Fetch all resources related to a KasprApp in parallel.
 
@@ -74,7 +83,7 @@ async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, Li
     }
 
 
-async def request_reconciliation(name, **kwargs):
+async def request_reconciliation(name, namespace: str = None, **kwargs):
     """Request reconciliation for the KasprApp.
 
     Enqueues the request only if it's not already in the queue.
@@ -85,6 +94,12 @@ async def request_reconciliation(name, **kwargs):
         if name not in names_in_queue:
             names_in_queue.add(name)
             await reconciliation_queue[name].put(name)
+            
+            # Instrument queue operation
+            sensor = get_sensor()
+            if sensor and namespace:
+                queue_depth = reconciliation_queue[name].qsize()
+                sensor.on_reconcile_queued(name, namespace, queue_depth)
 
 
 def on_error(error, spec, meta, status, patch, **_):
@@ -416,6 +431,7 @@ async def _detect_hung_members(
     _status: Dict,
     app: KasprApp,
     name: str,
+    namespace: str,
     logger: Logger
 ) -> List[int]:
     """Detect members hung in rebalancing state.
@@ -511,10 +527,20 @@ async def _detect_hung_members(
                         consecutive_count = hung_member_tracking.get(tracking_key, 0) + 1
                         hung_member_tracking[tracking_key] = consecutive_count
                         
+                        # Calculate hung duration
+                        hung_duration = (datetime.now(timezone.utc) - transition_dt).total_seconds()
+                        
                         logger.warning(
                             f"Member {member_id} detected as hung ({consecutive_count}/3) - "
                             f"rebalancing for {threshold_seconds}+ seconds"
                         )
+                        
+                        # Instrument hung member detection
+                        sensor = get_sensor()
+                        if sensor:
+                            sensor.on_hung_member_detected(
+                                name, namespace, member_id, consecutive_count, hung_duration
+                            )
                         
                         # Only terminate after 3 consecutive detections
                         if consecutive_count >= 3:
@@ -551,6 +577,8 @@ async def _detect_hung_members(
 async def _terminate_hung_members(
     app: KasprApp,
     hung_member_ids: List[int],
+    name: str,
+    namespace: str,
     logger: Logger
 ):
     """Terminate pods for hung members.
@@ -561,7 +589,10 @@ async def _terminate_hung_members(
     Args:
         app: KasprApp instance
         hung_member_ids: List of member IDs to terminate
+        name: KasprApp name
+        namespace: Kubernetes namespace
         logger: Logger instance
+        memo: Kopf memo containing sensor
     """
     if not hung_member_ids:
         return
@@ -585,6 +616,12 @@ async def _terminate_hung_members(
             ),
             timeout=15.0
         )
+        
+        # Instrument member terminations
+        sensor = get_sensor()
+        if sensor:
+            for member_id in members_to_terminate:
+                sensor.on_member_terminated(name, namespace, member_id, "hung")
     except asyncio.TimeoutError:
         logger.error("Timeout waiting for hung member pod deletions to complete (15s limit exceeded)")
 
@@ -817,6 +854,7 @@ async def _attempt_auto_rebalance(
     annotations: Dict,
     app: KasprApp,
     name: str,
+    namespace: str,
     logger: Logger
 ):
     """Attempt automatic rebalance if required and conditions are met.
@@ -838,7 +876,9 @@ async def _attempt_auto_rebalance(
         annotations: KasprApp annotations
         app: KasprApp instance
         name: KasprApp name
+        namespace: Kubernetes namespace
         logger: Logger instance
+        memo: Kopf memo containing sensor
     """
     if not status_update.get("rebalanceRequired", _status.get("rebalanceRequired")):
         return
@@ -863,6 +903,15 @@ async def _attempt_auto_rebalance(
     )
 
     if can_rebalance:
+        # Instrument rebalance start
+        sensor = get_sensor()
+        sensor_state = None
+        if sensor:
+            sensor_state = sensor.on_rebalance_triggered(name, namespace, "subscription_change")
+        
+        rebalance_start_time = time.time()
+        success = False
+        
         try:
             logger.info(f"Attempting automatic rebalance for {name} due to subscription changes")
             requested, reason = await app.request_rebalance()
@@ -870,6 +919,7 @@ async def _attempt_auto_rebalance(
             if requested:
                 # Clear the flag on successful rebalance
                 status_update["rebalanceRequired"] = False
+                success = True
                 logger.info(f"Automatic rebalance completed successfully for {name}")
             else:
                 # Rebalance not ready, keep flag set for retry on next status update
@@ -880,6 +930,11 @@ async def _attempt_auto_rebalance(
             # The rebalanceRequired flag remains set and will trigger retry
             logger.error(f"Automatic rebalance failed for {name}: {e}")
             logger.exception(e)
+        finally:
+            # Instrument rebalance complete
+            if sensor and sensor_state is not None:
+                duration = time.time() - rebalance_start_time
+                sensor.on_rebalance_complete(name, namespace, sensor_state, success, duration)
     else:
         # Prerequisites not met, log details
         # Flag remains set and will retry when conditions improve
@@ -948,31 +1003,49 @@ async def update_status(
         _update_linked_resources_status(status_update, _status, app, related_resources, name, logger)
         
         # Detect hung rebalancing members
-        hung_member_ids = await _detect_hung_members(_status, app, name, logger)
+        hung_member_ids = await _detect_hung_members(_status, app, name, namespace, logger)
         
         _update_conditions(status_update, _status, _actual_status, gen, cur_gen, app, hung_member_ids)
-        await _attempt_auto_rebalance(status_update, _status, _actual_status, annotations, app, name, logger)
+        await _attempt_auto_rebalance(status_update, _status, _actual_status, annotations, app, name, namespace, logger)
 
         # Apply all status updates in a single atomic operation
         patch.status.update(status_update)
+        
+        # Instrument status update
+        sensor = get_sensor()
+        if sensor:
+            update_fields = list(status_update.keys())
+            sensor.on_status_update(name, namespace, update_fields)
 
         # Terminate hung members after status update
-        await _terminate_hung_members(app, hung_member_ids, logger)
+        await _terminate_hung_members(app, hung_member_ids, name, namespace, logger)
 
     except Exception as e:
         logger.exception(e)
 
 
 async def reconcile(
-    name, namespace, spec, meta, status, patch, annotations, logger: Logger, **kwargs
+    name, namespace, spec, meta, status, patch, annotations, logger: Logger, trigger_source: str = "manual", **kwargs
 ):
     """Reconcile the KasprApp."""
+    # Instrument reconciliation start
+    sensor = get_sensor()
+    generation = meta.get('generation', 0)
+    sensor_state = None
+    if sensor:
+        sensor_state = sensor.on_reconcile_start(name, namespace, generation, trigger_source)
+    
+    success = True
+    error = None
+    
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(
         name, APP_KIND, namespace, spec_model, annotations, logger=logger
     )
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
+        if sensor:
+            sensor.on_reconcile_complete(name, namespace, sensor_state, True)
         return
     try:
         logger.debug(f"Reconciling {APP_KIND}/{name} in {namespace} namespace.")
@@ -982,9 +1055,15 @@ async def reconcile(
             name, spec, meta, status, patch, namespace, annotations, logger
         )
     except Exception as e:
+        success = False
+        error = e
         logger.error(f"Unexpected error during reconcilation: {e}")
         logger.exception(e)
         on_error(e, spec, meta, status, patch, **kwargs)
+    finally:
+        # Instrument reconciliation complete
+        if sensor:
+            sensor.on_reconcile_complete(name, namespace, sensor_state, success, error)
 
 
 @kopf.on.resume(kind=APP_KIND)
@@ -1452,7 +1531,15 @@ async def process_reconciliation_requests(
     try:
         queue_is_empty = reconciliation_queue[name].empty()
         if not queue_is_empty:
+            queue_start_time = time.time()
             reconciliation_queue[name].get_nowait()
+            
+            # Instrument dequeue with wait time
+            sensor = get_sensor()
+            if sensor:
+                wait_time = time.time() - queue_start_time
+                sensor.on_reconcile_dequeued(name, namespace, wait_time)
+            
             start_time = time.time()
             await reconcile(
                 name,
@@ -1463,6 +1550,7 @@ async def process_reconciliation_requests(
                 patch,
                 annotations,
                 logger,
+                trigger_source="queue",
                 **kwargs,
             )
             execution_time = time.time() - start_time
@@ -1578,9 +1666,9 @@ async def monitor_related_resources(
 
 
 @kopf.timer(APP_KIND, initial_delay=5.0, interval=30.0, backoff=10.0)
-async def periodic_reconciliation(name, **kwargs):
+async def periodic_reconciliation(name, namespace, **kwargs):
     """Reconcile KasprApp resources."""
-    await request_reconciliation(name, **kwargs)
+    await request_reconciliation(name, namespace, **kwargs)
 
 
 @kopf.on.field(
@@ -1592,7 +1680,7 @@ async def on_reconciliation_paused(
     name, diff, spec, namespace, logger: Logger, **kwargs
 ):
     """Handle reconciliation paused event."""
-    await request_reconciliation(name, **kwargs)
+    await request_reconciliation(name, namespace, **kwargs)
 
 
 @kopf.on.field(
@@ -1604,7 +1692,7 @@ async def on_reconciliation_resumed(
     name, diff, spec, namespace, logger: Logger, **kwargs
 ):
     """Handle reconciliation resumed event."""
-    await request_reconciliation(name, **kwargs)
+    await request_reconciliation(name, namespace, **kwargs)
 
 
 @kopf.on.field(
