@@ -16,6 +16,7 @@ from kubernetes_asyncio.client.api_client import ApiClient
 
 from kaspr.resources.base import BaseResource
 from kaspr.common.models.labels import Labels
+from kaspr.sensors import SensorDelegate
 
 
 class BaseAppComponent(BaseResource):
@@ -28,6 +29,7 @@ class BaseAppComponent(BaseResource):
     
     # Shared API client (will be set from KasprApp.shared_api_client)
     shared_api_client: ApiClient = None
+    sensor: SensorDelegate = None
 
     # The are defined by subclass
     KIND = None
@@ -85,17 +87,53 @@ class BaseAppComponent(BaseResource):
             self.core_v1_api, self.config_map_name, self.namespace
         )
         if not config_map:
-            await self.create_config_map(self.core_v1_api, self.namespace, self.config_map)
+            # Instrument create operation
+            sensor_state = self.sensor.on_resource_sync_start(
+                self.app_name, self.cluster, self.config_map.metadata.name, self.namespace, "config_map"
+            )
+            
+            success = True
+            try:
+                await self.create_config_map(self.core_v1_api, self.namespace, self.config_map)
+            except Exception:
+                success = False
+                raise
+            finally:
+                self.sensor.on_resource_sync_complete(
+                    self.app_name, self.cluster, self.config_map.metadata.name, self.namespace, "config_map", sensor_state, "create", success
+                )
         else:
             actual = self.prepare_config_map_watch_fields(config_map)
             desired = self.prepare_config_map_watch_fields(self.config_map)
-            if self.compute_hash(actual) != self.compute_hash(desired):
-                await self.patch_config_map(
-                    self.core_v1_api,
-                    self.config_map_name,
-                    self.namespace,
-                    config_map=self.prepare_config_map_patch(self.config_map),
+            actual_hash = self.compute_hash(actual)
+            desired_hash = self.compute_hash(desired)
+            
+            if actual_hash != desired_hash:
+                # Detect drift
+                self.sensor.on_resource_drift_detected(
+                    self.app_name, self.cluster, self.config_map.metadata.name, self.namespace, "config_map", ["data"]
                 )
+                
+                # Instrument patch operation
+                sensor_state = self.sensor.on_resource_sync_start(
+                    self.app_name, self.cluster, self.config_map.metadata.name, self.namespace, "config_map"
+                )
+                
+                success = True
+                try:
+                    await self.patch_config_map(
+                        self.core_v1_api,
+                        self.config_map_name,
+                        self.namespace,
+                        config_map=self.prepare_config_map_patch(self.config_map),
+                    )
+                except Exception:
+                    success = False
+                    raise
+                finally:
+                    self.sensor.on_resource_sync_complete(
+                        self.app_name, self.cluster, self.config_map.metadata.name, self.namespace, "config_map", sensor_state, "patch", success
+                    )
 
     async def fetch(self, name: str, namespace: str):
         """Fetch kaspr resource from kubernetes."""
