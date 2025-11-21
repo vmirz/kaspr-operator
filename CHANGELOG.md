@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.13.0
+--
+### Added
+* **Operator Observability Framework**: Comprehensive sensor-based monitoring system for operator health and performance
+  * **Sensor Architecture**: Hook-based event system with 15 lifecycle methods covering reconciliation, resources, and member operations
+  * **SensorDelegate Pattern**: Fan-out delegation to multiple monitoring backends with isolated error handling
+  * **Prometheus Integration**: Complete metrics collection backend with 15+ metrics across 3 categories:
+    - **Reconciliation Loop Health** (5 metrics): duration, total operations, errors, queue depth, queue wait time
+    - **Rebalance & Member Health** (7 metrics): rebalance duration/total, state transitions, hung member detection/tracking/duration, terminations
+    - **Resource Sync & Status** (5 metrics): sync duration/total/errors, drift detection, status updates
+  * **Metrics HTTP Server**: Standalone Prometheus endpoint on port 8000 (configurable via `METRICS_PORT`)
+  * **Rich Label Dimensions**: All metrics include `app_name` and `namespace` with context-specific labels (trigger_source, result, member_id, resource_type, etc.)
+  * **Histogram Buckets**: Carefully tuned for expected ranges (reconciliation: 0.1-120s, resource sync: 0.01-10s, rebalance: 1-600s)
+* **Grafana Dashboard**: Production-ready dashboard with 18 panels organized into 3 collapsible rows
+  * Template variables for datasource, app name, and namespace filtering
+  * Time series visualizations with percentile calculations (p50/p95/p99)
+  * Stat panels with color-coded thresholds for queue depth and hung members
+  * Auto-refresh every 30 seconds, 1-hour default time range
+  * Located at `grafana/kaspr-operator-dashboard.json`
+
+### Changed
+* **Instrumented Reconciliation Loop**: Added sensor hooks throughout core operator flow
+  * `reconcile()`: Tracks full reconciliation duration and success/failure
+  * `request_reconciliation()`: Records queue operations and depth
+  * `process_reconciliation_requests()`: Measures queue wait time
+  * `update_status()`: Tracks status field updates
+  * `_detect_hung_members()`: Records detection count, consecutive attempts, and duration
+  * `_terminate_hung_members()`: Logs termination events with member ID and reason
+  * `_attempt_auto_rebalance()`: Measures rebalance duration and outcome
+* **Sensor Access Pattern**: Centralized sensor access via `KasprApp.sensor` class attribute and `get_sensor()` helper
+* **Startup Initialization**: Sensor system initialized in `kaspr/app.py` setup() function alongside other global resources
+
+### Dependencies
+* Added `prometheus-client==0.21.0` for metrics exposition
+
+### Technical Notes
+* Sensor hooks are non-invasive - failures in monitoring don't affect operator control flow
+* State dictionary pattern enables multi-phase operation tracking (start/complete hooks)
+* Metrics server runs in daemon thread to avoid blocking operator
+* All hooks gracefully handle missing sensor instance for backwards compatibility
+* Dashboard compatible with Grafana v12.2.0
+
 ## 0.12.0
 --
 ### Added
