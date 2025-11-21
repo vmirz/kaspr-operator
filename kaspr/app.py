@@ -46,6 +46,7 @@ async def setup(
     sensor_delegate.add(prometheus_monitor)
     memo.sensor = sensor_delegate
     KasprApp.sensor = sensor_delegate
+    BaseAppComponent.sensor = sensor_delegate
     logger.info("Sensor infrastructure initialized with PrometheusMonitor")
 
     # Initialize Prometheus metrics server

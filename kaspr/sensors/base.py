@@ -44,7 +44,8 @@ class OperatorSensor:
 
     def on_reconcile_start(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
         namespace: str,
         generation: int,
         trigger_source: str,
@@ -52,7 +53,8 @@ class OperatorSensor:
         """Called when reconciliation loop begins.
         
         Args:
-            name: KasprApp resource name
+            app_name: Parent KasprApp resource name
+            component_name: Component instance name (agent/table/task/webview)
             namespace: Kubernetes namespace
             generation: Resource generation number
             trigger_source: What triggered reconciliation (field_change, timer, daemon, etc.)
@@ -64,7 +66,8 @@ class OperatorSensor:
 
     def on_reconcile_complete(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
         namespace: str,
         state: Optional[Dict[str, Any]],
         success: bool,
@@ -73,7 +76,8 @@ class OperatorSensor:
         """Called when reconciliation loop completes.
         
         Args:
-            name: KasprApp resource name
+            app_name: Parent KasprApp resource name
+            component_name: Component instance name (agent/table/task/webview)
             namespace: Kubernetes namespace
             state: State dict returned from on_reconcile_start
             success: Whether reconciliation succeeded
@@ -83,14 +87,16 @@ class OperatorSensor:
 
     def on_reconcile_queued(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
         namespace: str,
         queue_depth: int,
     ) -> None:
         """Called when reconciliation request is queued.
         
         Args:
-            name: KasprApp resource name
+            app_name: Parent KasprApp resource name
+            component_name: Component instance name (agent/table/task/webview)
             namespace: Kubernetes namespace
             queue_depth: Current queue depth for this resource
         """
@@ -98,14 +104,16 @@ class OperatorSensor:
 
     def on_reconcile_dequeued(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
         namespace: str,
         wait_time: float,
     ) -> None:
         """Called when reconciliation request is dequeued.
         
         Args:
-            name: KasprApp resource name
+            app_name: Parent KasprApp resource name
+            component_name: Component instance name (agent/table/task/webview)
             namespace: Kubernetes namespace
             wait_time: Time spent in queue (seconds)
         """
@@ -117,14 +125,18 @@ class OperatorSensor:
 
     def on_resource_sync_start(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
+        resource_name: str,
         namespace: str,
         resource_type: str,
     ) -> Optional[Dict[str, Any]]:
         """Called when K8s resource sync begins.
         
         Args:
-            name: KasprApp resource name
+            app_name: Parent KasprApp resource name
+            component_name: Component instance name (agent/table/task/webview)
+            resource_name: Actual K8s resource name being synced
             namespace: Kubernetes namespace
             resource_type: Type of resource (StatefulSet, Service, ConfigMap, etc.)
             
@@ -135,7 +147,9 @@ class OperatorSensor:
 
     def on_resource_sync_complete(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
+        resource_name: str,
         namespace: str,
         resource_type: str,
         state: Optional[Dict[str, Any]],
@@ -146,7 +160,9 @@ class OperatorSensor:
         """Called when K8s resource sync completes.
         
         Args:
-            name: KasprApp resource name
+            app_name: Parent KasprApp resource name
+            component_name: Component instance name (agent/table/task/webview)
+            resource_name: Actual K8s resource name being synced
             namespace: Kubernetes namespace
             resource_type: Type of resource
             state: State dict returned from on_resource_sync_start
@@ -158,7 +174,9 @@ class OperatorSensor:
 
     def on_resource_drift_detected(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
+        resource_name: str,
         namespace: str,
         resource_type: str,
         drift_fields: list[str],
@@ -166,7 +184,9 @@ class OperatorSensor:
         """Called when resource drift is detected during periodic check.
         
         Args:
-            name: KasprApp resource name
+            app_name: Parent KasprApp resource name
+            component_name: Component instance name (agent/table/task/webview)
+            resource_name: Actual K8s resource name with drift
             namespace: Kubernetes namespace
             resource_type: Type of resource with drift
             drift_fields: List of fields that drifted from desired state

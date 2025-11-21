@@ -7,10 +7,20 @@ from benedict import benedict
 from kaspr.types.schemas import KasprWebViewSpecSchema
 from kaspr.types.models import KasprWebViewSpec
 from kaspr.resources import KasprWebView, KasprApp
+from kaspr.sensors import SensorDelegate
 
 KIND = "KasprWebView"
 APP_NOT_FOUND = "AppNotFound"
 APP_FOUND = "AppFound"
+
+
+def get_sensor() -> SensorDelegate:
+    """Get sensor from KasprWebView class.
+    
+    Returns:
+        Sensor instance or None
+    """
+    return getattr(KasprWebView, 'sensor', None)
 
 # Queue of requests to update KasprWebView status
 patch_request_queues: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
@@ -145,15 +155,30 @@ async def monitor_webview(
 @kopf.timer(KIND, initial_delay=5.0, interval=60.0, backoff=10.0)
 async def reconcile(name, spec, namespace, labels, logger: logging.Logger, **kwargs):
     """Full sync."""
-    spec_model: KasprWebViewSpec = KasprWebViewSpecSchema().load(spec)
-    webview = KasprWebView.from_spec(name, KIND, namespace, spec_model, dict(labels))
+    sensor = get_sensor()
+    success = True
+    error = None
+    
     try:
+        spec_model: KasprWebViewSpec = KasprWebViewSpecSchema().load(spec)
+        webview = KasprWebView.from_spec(name, KIND, namespace, spec_model, dict(labels))
+        
+        sensor_state = sensor.on_reconcile_start(
+            webview.app_name, name, namespace, 0, "timer"
+        )
+        
         logger.debug(f"Reconciling {KIND}/{name} in {namespace} namespace.")
         await webview.synchronize()
         logger.debug(f"Reconciled {KIND}/{name} in {namespace} namespace.")
     except Exception as e:
+        success = False
+        error = e
         logger.error(f"Unexpected error during reconcilation: {e}")
         logger.exception(e)
+    finally:
+        sensor.on_reconcile_complete(
+            webview.app_name, name, namespace, sensor_state, success, error
+        )
 
 
 # @kopf.on.validate(kind=KIND)

@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.13.1
+--
+### Added
+* **Comprehensive Grafana Dashboard**: New production-ready dashboard at `grafana-dashboards/kaspr-operator.json` with complete operator metrics visualization
+  * **29 Panels** organized into 3 sections: Reconciliation Health, Kubernetes Resource Sync, and Rebalance & Member Health
+  * **Reconciliation Health Section** (8 panels):
+    - Reconciliation rate by result (success/failure) with color-coded time series
+    - Error rate gauge with threshold alerts (green <5%, yellow 5-10%, orange 10-25%, red >25%)
+    - Total reconciliations counter with success/failure breakdown
+    - Duration percentiles (P50/P95/P99) for performance tracking
+    - Average duration stat with color-coded thresholds
+    - Reconciliations by trigger source (stacked area chart)
+    - Errors by type breakdown
+    - Top 10 most active resources (pie chart)
+  * **Kubernetes Resource Sync Section** (9 panels):
+    - Sync rate by operation (create/patch/delete) with success/failure tracking
+    - Sync rate by resource type (stacked area)
+    - Duration percentiles for sync operations
+    - Total operations counter and error rate gauge
+    - Resource drift detection rate and top 10 drifted fields
+    - Errors by type and detailed per-resource table with success rate gauges
+  * **Rebalance & Member Health Section** (12 panels):
+    - Rebalance rate by result and trigger reason
+    - Total rebalances counter and duration percentiles
+    - Average rebalance duration with color-coded thresholds (green <60s, yellow 60-120s, orange 120-300s, red >300s)
+    - Member state transitions tracking
+    - Hung member detection rate and strike count gauge (3-strike system visualization)
+    - Hung member duration and terminations by reason
+    - Total terminations counter
+    - Status updates by field (stacked area)
+  * **Dashboard Features**:
+    - Template variables: datasource (Prometheus), namespace, and app_name with "All" support
+    - 1-hour default time range with 30-second auto-refresh
+    - Compatible with Grafana v12.2.0, schema version 39
+    - All panels use rate calculations and histogram quantiles for accurate metrics
+    - Consistent color coding: green=success/healthy, red=failure/error, yellow/orange=warning states
+
+### Changed
+* **Improved Dashboard Organization**: Replaced simple scheduler dashboard with comprehensive operator monitoring dashboard
+  * Moved from `grafana/kaspr-operator-dashboard.json` to `grafana-dashboards/kaspr-operator.json`
+  * Added collapsible row sections for better organization
+  * Enhanced metric queries using histogram_quantile for percentile calculations
+  * Improved visualizations with appropriate chart types (time series, gauges, stats, tables, pie charts)
+
+### Technical Notes
+* All dashboard panels use the `kasprop_` metric prefix matching the Prometheus sensor implementation
+* Queries use `$__rate_interval` for optimal rate calculations based on dashboard time range
+* Table panel includes success rate calculations with LCD gauge visualization
+* Hung member strike count gauge shows 0-3 range with color gradients for visual clarity
+
 ## 0.13.0
 --
 ### Added

@@ -52,34 +52,34 @@ class PrometheusMonitor(OperatorSensor):
         # =============================================================================
         
         self.reconcile_duration = Histogram(
-            'kaspr_reconcile_duration_seconds',
+            'kasprop_reconcile_duration_seconds',
             'Time spent in reconciliation loop',
-            labelnames=['app_name', 'namespace', 'trigger_source', 'result'],
+            labelnames=['app_name', 'component_name', 'namespace', 'trigger_source', 'result'],
             buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0],
         )
         
         self.reconcile_total = Counter(
-            'kaspr_reconcile_total',
+            'kasprop_reconcile_total',
             'Total number of reconciliation attempts',
-            labelnames=['app_name', 'namespace', 'trigger_source', 'result'],
+            labelnames=['app_name', 'component_name', 'namespace', 'trigger_source', 'result'],
         )
         
         self.reconcile_errors = Counter(
-            'kaspr_reconcile_errors_total',
+            'kasprop_reconcile_errors_total',
             'Total number of reconciliation errors',
-            labelnames=['app_name', 'namespace', 'error_type'],
+            labelnames=['app_name', 'component_name', 'namespace', 'error_type'],
         )
         
         self.reconcile_queue_depth = Gauge(
-            'kaspr_reconcile_queue_depth',
+            'kasprop_reconcile_queue_depth',
             'Current reconciliation queue depth per resource',
-            labelnames=['app_name', 'namespace'],
+            labelnames=['app_name', 'component_name', 'namespace'],
         )
         
         self.reconcile_queue_wait_seconds = Histogram(
-            'kaspr_reconcile_queue_wait_seconds',
+            'kasprop_reconcile_queue_wait_seconds',
             'Time spent waiting in reconciliation queue',
-            labelnames=['app_name', 'namespace'],
+            labelnames=['app_name', 'component_name', 'namespace'],
             buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0],
         )
         
@@ -88,44 +88,44 @@ class PrometheusMonitor(OperatorSensor):
         # =============================================================================
         
         self.rebalance_duration = Histogram(
-            'kaspr_rebalance_duration_seconds',
+            'kasprop_rebalance_duration_seconds',
             'Time spent in rebalancing',
             labelnames=['app_name', 'namespace', 'trigger_reason', 'result'],
             buckets=[1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0],
         )
         
         self.rebalance_total = Counter(
-            'kaspr_rebalance_total',
+            'kasprop_rebalance_total',
             'Total number of rebalance attempts',
             labelnames=['app_name', 'namespace', 'trigger_reason', 'result'],
         )
         
         self.member_state_transitions = Counter(
-            'kaspr_member_state_transitions_total',
+            'kasprop_member_state_transitions_total',
             'Total number of member state transitions',
             labelnames=['app_name', 'namespace', 'member_id', 'from_state', 'to_state'],
         )
         
         self.hung_members_detected = Counter(
-            'kaspr_hung_members_detected_total',
+            'kasprop_hung_members_detected_total',
             'Total number of hung member detections',
             labelnames=['app_name', 'namespace', 'member_id'],
         )
         
         self.hung_member_consecutive_detections = Gauge(
-            'kaspr_hung_member_consecutive_detections',
+            'kasprop_hung_member_consecutive_detections',
             'Current consecutive hung detection count (3-strike system)',
             labelnames=['app_name', 'namespace', 'member_id'],
         )
         
         self.hung_member_duration_seconds = Gauge(
-            'kaspr_hung_member_duration_seconds',
+            'kasprop_hung_member_duration_seconds',
             'Time member has been in hung state',
             labelnames=['app_name', 'namespace', 'member_id'],
         )
         
         self.member_terminations = Counter(
-            'kaspr_member_terminations_total',
+            'kasprop_member_terminations_total',
             'Total number of member pod terminations',
             labelnames=['app_name', 'namespace', 'member_id', 'reason'],
         )
@@ -135,28 +135,28 @@ class PrometheusMonitor(OperatorSensor):
         # =============================================================================
         
         self.resource_sync_duration = Histogram(
-            'kaspr_resource_sync_duration_seconds',
+            'kasprop_resource_sync_duration_seconds',
             'Time spent syncing Kubernetes resources',
-            labelnames=['app_name', 'namespace', 'resource_type', 'operation', 'result'],
+            labelnames=['app_name', 'component_name', 'resource_name', 'namespace', 'resource_type', 'operation', 'result'],
             buckets=[0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0],
         )
         
         self.resource_sync_total = Counter(
-            'kaspr_resource_sync_total',
+            'kasprop_resource_sync_total',
             'Total number of resource sync operations',
-            labelnames=['app_name', 'namespace', 'resource_type', 'operation', 'result'],
+            labelnames=['app_name', 'component_name', 'resource_name', 'namespace', 'resource_type', 'operation', 'result'],
         )
         
         self.resource_sync_errors = Counter(
-            'kaspr_resource_sync_errors_total',
+            'kasprop_resource_sync_errors_total',
             'Total number of resource sync errors',
-            labelnames=['app_name', 'namespace', 'resource_type', 'error_type'],
+            labelnames=['app_name', 'component_name', 'resource_name', 'namespace', 'resource_type', 'error_type'],
         )
         
         self.resource_drift_detected = Counter(
-            'kaspr_resource_drift_detected_total',
+            'kasprop_resource_drift_detected_total',
             'Total number of resource drift detections',
-            labelnames=['app_name', 'namespace', 'resource_type', 'drift_field'],
+            labelnames=['app_name', 'component_name', 'resource_name', 'namespace', 'resource_type', 'drift_field'],
         )
         
         # =============================================================================
@@ -164,7 +164,7 @@ class PrometheusMonitor(OperatorSensor):
         # =============================================================================
         
         self.status_updates = Counter(
-            'kaspr_status_updates_total',
+            'kasprop_status_updates_total',
             'Total number of status updates',
             labelnames=['app_name', 'namespace', 'update_field'],
         )
@@ -177,7 +177,8 @@ class PrometheusMonitor(OperatorSensor):
 
     def on_reconcile_start(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
         namespace: str,
         generation: int,
         trigger_source: str,
@@ -190,7 +191,8 @@ class PrometheusMonitor(OperatorSensor):
 
     def on_reconcile_complete(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
         namespace: str,
         state: Optional[Dict[str, Any]],
         success: bool,
@@ -203,14 +205,16 @@ class PrometheusMonitor(OperatorSensor):
             result = 'success' if success else 'failure'
             
             self.reconcile_duration.labels(
-                app_name=name,
+                app_name=app_name,
+                component_name=component_name,
                 namespace=namespace,
                 trigger_source=trigger_source,
                 result=result,
             ).observe(duration)
             
             self.reconcile_total.labels(
-                app_name=name,
+                app_name=app_name,
+                component_name=component_name,
                 namespace=namespace,
                 trigger_source=trigger_source,
                 result=result,
@@ -219,32 +223,37 @@ class PrometheusMonitor(OperatorSensor):
             if error:
                 error_type = error.__class__.__name__
                 self.reconcile_errors.labels(
-                    app_name=name,
+                    app_name=app_name,
+                    component_name=component_name,
                     namespace=namespace,
                     error_type=error_type,
                 ).inc()
 
     def on_reconcile_queued(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
         namespace: str,
         queue_depth: int,
     ) -> None:
         """Record reconciliation queue depth."""
         self.reconcile_queue_depth.labels(
-            app_name=name,
+            app_name=app_name,
+            component_name=component_name,
             namespace=namespace,
         ).set(queue_depth)
 
     def on_reconcile_dequeued(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
         namespace: str,
         wait_time: float,
     ) -> None:
         """Record time spent waiting in queue."""
         self.reconcile_queue_wait_seconds.labels(
-            app_name=name,
+            app_name=app_name,
+            component_name=component_name,
             namespace=namespace,
         ).observe(wait_time)
 
@@ -254,7 +263,9 @@ class PrometheusMonitor(OperatorSensor):
 
     def on_resource_sync_start(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
+        resource_name: str,
         namespace: str,
         resource_type: str,
     ) -> Optional[Dict[str, Any]]:
@@ -262,11 +273,14 @@ class PrometheusMonitor(OperatorSensor):
         return {
             'start_time': time.time(),
             'resource_type': resource_type,
+            'resource_name': resource_name,
         }
 
     def on_resource_sync_complete(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
+        resource_name: str,
         namespace: str,
         resource_type: str,
         state: Optional[Dict[str, Any]],
@@ -280,7 +294,9 @@ class PrometheusMonitor(OperatorSensor):
             result = 'success' if success else 'failure'
             
             self.resource_sync_duration.labels(
-                app_name=name,
+                app_name=app_name,
+                component_name=component_name,
+                resource_name=resource_name,
                 namespace=namespace,
                 resource_type=resource_type,
                 operation=operation,
@@ -288,7 +304,9 @@ class PrometheusMonitor(OperatorSensor):
             ).observe(duration)
             
             self.resource_sync_total.labels(
-                app_name=name,
+                app_name=app_name,
+                component_name=component_name,
+                resource_name=resource_name,
                 namespace=namespace,
                 resource_type=resource_type,
                 operation=operation,
@@ -298,7 +316,9 @@ class PrometheusMonitor(OperatorSensor):
             if error:
                 error_type = error.__class__.__name__
                 self.resource_sync_errors.labels(
-                    app_name=name,
+                    app_name=app_name,
+                    component_name=component_name,
+                    resource_name=resource_name,
                     namespace=namespace,
                     resource_type=resource_type,
                     error_type=error_type,
@@ -306,7 +326,9 @@ class PrometheusMonitor(OperatorSensor):
 
     def on_resource_drift_detected(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
+        resource_name: str,
         namespace: str,
         resource_type: str,
         drift_fields: list[str],
@@ -314,7 +336,9 @@ class PrometheusMonitor(OperatorSensor):
         """Record resource drift detection."""
         for field in drift_fields:
             self.resource_drift_detected.labels(
-                app_name=name,
+                app_name=app_name,
+                component_name=component_name,
+                resource_name=resource_name,
                 namespace=namespace,
                 resource_type=resource_type,
                 drift_field=field,
