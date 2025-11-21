@@ -71,7 +71,8 @@ class SensorDelegate(OperatorSensor):
 
     def on_reconcile_start(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
         namespace: str,
         generation: int,
         trigger_source: str,
@@ -87,7 +88,7 @@ class SensorDelegate(OperatorSensor):
         states = {}
         for sensor in self._sensors:
             try:
-                state = sensor.on_reconcile_start(name, namespace, generation, trigger_source)
+                state = sensor.on_reconcile_start(app_name, component_name, namespace, generation, trigger_source)
                 if state is not None:
                     states[sensor] = state
             except Exception as e:
@@ -100,7 +101,8 @@ class SensorDelegate(OperatorSensor):
 
     def on_reconcile_complete(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
         namespace: str,
         state: Optional[Dict[OperatorSensor, Any]],
         success: bool,
@@ -110,7 +112,7 @@ class SensorDelegate(OperatorSensor):
         for sensor in self._sensors:
             try:
                 sensor_state = state.get(sensor) if state else None
-                sensor.on_reconcile_complete(name, namespace, sensor_state, success, error)
+                sensor.on_reconcile_complete(app_name, component_name, namespace, sensor_state, success, error)
             except Exception as e:
                 logger.error(
                     f"Error in {sensor.__class__.__name__}.on_reconcile_complete: {e}",
@@ -119,14 +121,15 @@ class SensorDelegate(OperatorSensor):
 
     def on_reconcile_queued(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
         namespace: str,
         queue_depth: int,
     ) -> None:
         """Delegate reconcile_queued to all sensors."""
         for sensor in self._sensors:
             try:
-                sensor.on_reconcile_queued(name, namespace, queue_depth)
+                sensor.on_reconcile_queued(app_name, component_name, namespace, queue_depth)
             except Exception as e:
                 logger.error(
                     f"Error in {sensor.__class__.__name__}.on_reconcile_queued: {e}",
@@ -135,14 +138,15 @@ class SensorDelegate(OperatorSensor):
 
     def on_reconcile_dequeued(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
         namespace: str,
         wait_time: float,
     ) -> None:
         """Delegate reconcile_dequeued to all sensors."""
         for sensor in self._sensors:
             try:
-                sensor.on_reconcile_dequeued(name, namespace, wait_time)
+                sensor.on_reconcile_dequeued(app_name, component_name, namespace, wait_time)
             except Exception as e:
                 logger.error(
                     f"Error in {sensor.__class__.__name__}.on_reconcile_dequeued: {e}",
@@ -155,7 +159,9 @@ class SensorDelegate(OperatorSensor):
 
     def on_resource_sync_start(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
+        resource_name: str,
         namespace: str,
         resource_type: str,
     ) -> Optional[Dict[OperatorSensor, Any]]:
@@ -166,7 +172,7 @@ class SensorDelegate(OperatorSensor):
         states = {}
         for sensor in self._sensors:
             try:
-                state = sensor.on_resource_sync_start(name, namespace, resource_type)
+                state = sensor.on_resource_sync_start(app_name, component_name, resource_name, namespace, resource_type)
                 if state is not None:
                     states[sensor] = state
             except Exception as e:
@@ -179,7 +185,9 @@ class SensorDelegate(OperatorSensor):
 
     def on_resource_sync_complete(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
+        resource_name: str,
         namespace: str,
         resource_type: str,
         state: Optional[Dict[OperatorSensor, Any]],
@@ -192,7 +200,7 @@ class SensorDelegate(OperatorSensor):
             try:
                 sensor_state = state.get(sensor) if state else None
                 sensor.on_resource_sync_complete(
-                    name, namespace, resource_type, sensor_state, operation, success, error
+                    app_name, component_name, resource_name, namespace, resource_type, sensor_state, operation, success, error
                 )
             except Exception as e:
                 logger.error(
@@ -202,7 +210,9 @@ class SensorDelegate(OperatorSensor):
 
     def on_resource_drift_detected(
         self,
-        name: str,
+        app_name: str,
+        component_name: str,
+        resource_name: str,
         namespace: str,
         resource_type: str,
         drift_fields: list[str],
@@ -210,7 +220,7 @@ class SensorDelegate(OperatorSensor):
         """Delegate resource_drift_detected to all sensors."""
         for sensor in self._sensors:
             try:
-                sensor.on_resource_drift_detected(name, namespace, resource_type, drift_fields)
+                sensor.on_resource_drift_detected(app_name, component_name, resource_name, namespace, resource_type, drift_fields)
             except Exception as e:
                 logger.error(
                     f"Error in {sensor.__class__.__name__}.on_resource_drift_detected: {e}",

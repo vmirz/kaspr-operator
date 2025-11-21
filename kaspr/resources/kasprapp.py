@@ -77,6 +77,7 @@ from kaspr.resources.base import BaseResource
 from kaspr.resources import KasprAgent, KasprWebView, KasprTable, KasprTask
 from kaspr.common.models.labels import Labels
 from kaspr.web import KasprWebClient
+from kaspr.sensors import SensorDelegate
 
 
 class KasprApp(BaseResource):
@@ -85,6 +86,7 @@ class KasprApp(BaseResource):
     logger: Logger
     conf: Settings
     web_client: KasprWebClient
+    sensor: SensorDelegate
     shared_api_client: ApiClient = None  # Shared across all KasprApp instances
 
     KIND = "KasprApp"
@@ -281,17 +283,53 @@ class KasprApp(BaseResource):
             self.core_v1_api, self.service_name, self.namespace
         )
         if not service:
-            await self.create_service(self.core_v1_api, self.namespace, self.service)
+            # Instrument create operation
+            sensor_state = self.sensor.on_resource_sync_start(
+                self.cluster, self.cluster, self.service.metadata.name, self.namespace, "service"
+            )
+            
+            success = True
+            try:
+                await self.create_service(self.core_v1_api, self.namespace, self.service)
+            except Exception:
+                success = False
+                raise
+            finally:
+                self.sensor.on_resource_sync_complete(
+                    self.cluster, self.cluster, self.service.metadata.name, self.namespace, "service", sensor_state, "create", success
+                )
         else:
             actual = self.prepare_service_watch_fields(service)
             desired = self.prepare_service_watch_fields(self.service)
-            if self.compute_hash(actual) != self.compute_hash(desired):
-                await self.patch_service(
-                    self.core_v1_api,
-                    self.service_name,
-                    self.namespace,
-                    service=self.prepare_service_patch(self.service),
+            actual_hash = self.compute_hash(actual)
+            desired_hash = self.compute_hash(desired)
+            
+            if actual_hash != desired_hash:
+                # Detect drift
+                self.sensor.on_resource_drift_detected(
+                    self.cluster, self.cluster, self.service.metadata.name, self.namespace, "service", ["spec"]
                 )
+                
+                # Instrument patch operation
+                sensor_state = self.sensor.on_resource_sync_start(
+                    self.cluster, self.cluster, self.service.metadata.name, self.namespace, "service"
+                )
+                
+                success = True
+                try:
+                    await self.patch_service(
+                        self.core_v1_api,
+                        self.service_name,
+                        self.namespace,
+                        service=self.prepare_service_patch(self.service),
+                    )
+                except Exception:
+                    success = False
+                    raise
+                finally:
+                    self.sensor.on_resource_sync_complete(
+                        self.cluster, self.cluster, self.service.metadata.name, self.namespace, "service", sensor_state, "patch", success
+                    )
 
     async def sync_headless_service(self):
         """Check current state of headless service and create/patch if needed"""
@@ -299,19 +337,55 @@ class KasprApp(BaseResource):
             self.core_v1_api, self.headless_service_name, self.namespace
         )
         if not headless_service:
-            await self.create_service(
-                self.core_v1_api, self.namespace, self.headless_service
+            # Instrument create operation
+            sensor_state = self.sensor.on_resource_sync_start(
+                self.cluster, self.cluster, self.headless_service.metadata.name, self.namespace, "headless_service"
             )
+            
+            success = True
+            try:
+                await self.create_service(
+                    self.core_v1_api, self.namespace, self.headless_service
+                )
+            except Exception:
+                success = False
+                raise
+            finally:
+                self.sensor.on_resource_sync_complete(
+                    self.cluster, self.cluster, self.headless_service.metadata.name, self.namespace, "headless_service", sensor_state, "create", success
+                )
         else:
             actual = self.prepare_headless_service_watch_fields(headless_service)
             desired = self.prepare_headless_service_watch_fields(self.headless_service)
-            if self.compute_hash(actual) != self.compute_hash(desired):
-                await self.patch_service(
-                    self.core_v1_api,
-                    self.headless_service_name,
-                    self.namespace,
-                    service=self.prepare_headless_service_patch(self.headless_service),
+            actual_hash = self.compute_hash(actual)
+            desired_hash = self.compute_hash(desired)
+            
+            if actual_hash != desired_hash:
+                # Detect drift
+                self.sensor.on_resource_drift_detected(
+                    self.cluster, self.cluster, self.headless_service.metadata.name, self.namespace, "headless_service", ["spec"]
                 )
+                
+                # Instrument patch operation
+                sensor_state = self.sensor.on_resource_sync_start(
+                    self.cluster, self.cluster, self.headless_service.metadata.name, self.namespace, "headless_service"
+                )
+                
+                success = True
+                try:
+                    await self.patch_service(
+                        self.core_v1_api,
+                        self.headless_service_name,
+                        self.namespace,
+                        service=self.prepare_headless_service_patch(self.headless_service),
+                    )
+                except Exception:
+                    success = False
+                    raise
+                finally:
+                    self.sensor.on_resource_sync_complete(
+                        self.cluster, self.cluster, self.headless_service.metadata.name, self.namespace, "headless_service", sensor_state, "patch", success
+                    )
 
     async def sync_service_account(self):
         """Check current state of service account and create/patch if needed."""
@@ -319,9 +393,23 @@ class KasprApp(BaseResource):
             self.core_v1_api, self.service_account_name, self.namespace
         )
         if not service_account:
-            await self.create_service_account(
-                self.core_v1_api, self.namespace, self.service_account
+            # Instrument create operation
+            sensor_state = self.sensor.on_resource_sync_start(
+                self.cluster, self.cluster, self.service_account.metadata.name, self.namespace, "service_account"
             )
+            
+            success = True
+            try:
+                await self.create_service_account(
+                    self.core_v1_api, self.namespace, self.service_account
+                )
+            except Exception:
+                success = False
+                raise
+            finally:
+                self.sensor.on_resource_sync_complete(
+                    self.cluster, self.cluster, self.service_account.metadata.name, self.namespace, "service_account", sensor_state, "create", success
+                )
         else:
             ...
             # not much to patch for a service account
@@ -332,23 +420,59 @@ class KasprApp(BaseResource):
             self.core_v1_api, self.config_map_name, self.namespace
         )
         if not settings_config_map:
-            await self.create_config_map(
-                self.core_v1_api, self.namespace, self.settings_config_map
+            # Instrument create operation
+            sensor_state = self.sensor.on_resource_sync_start(
+                self.cluster, self.cluster, self.settings_config_map.metadata.name, self.namespace, "config_map"
             )
+            
+            success = True
+            try:
+                await self.create_config_map(
+                    self.core_v1_api, self.namespace, self.settings_config_map
+                )
+            except Exception:
+                success = False
+                raise
+            finally:
+                self.sensor.on_resource_sync_complete(
+                    self.cluster, self.cluster, self.settings_config_map.metadata.name, self.namespace, "config_map", sensor_state, "create", success
+                )
         else:
             actual = self.prepare_settings_config_map_watch_fields(settings_config_map)
             desired = self.prepare_settings_config_map_watch_fields(
                 self.settings_config_map
             )
-            if self.compute_hash(actual) != self.compute_hash(desired):
-                await self.patch_config_map(
-                    self.core_v1_api,
-                    self.config_map_name,
-                    self.namespace,
-                    config_map=self.prepare_settings_config_map_patch(
-                        self.settings_config_map
-                    ),
+            actual_hash = self.compute_hash(actual)
+            desired_hash = self.compute_hash(desired)
+            
+            if actual_hash != desired_hash:
+                # Detect drift
+                self.sensor.on_resource_drift_detected(
+                    self.cluster, self.cluster, self.settings_config_map.metadata.name, self.namespace, "config_map", ["data"]
                 )
+                
+                # Instrument patch operation
+                sensor_state = self.sensor.on_resource_sync_start(
+                    self.cluster, self.cluster, self.settings_config_map.metadata.name, self.namespace, "config_map"
+                )
+                
+                success = True
+                try:
+                    await self.patch_config_map(
+                        self.core_v1_api,
+                        self.config_map_name,
+                        self.namespace,
+                        config_map=self.prepare_settings_config_map_patch(
+                            self.settings_config_map
+                        ),
+                    )
+                except Exception:
+                    success = False
+                    raise
+                finally:
+                    self.sensor.on_resource_sync_complete(
+                        self.cluster, self.cluster, self.settings_config_map.metadata.name, self.namespace, "config_map", sensor_state, "patch", success
+                    )
 
     async def sync_stateful_set(self):
         """Check current state of stateful set and create/patch if needed."""
@@ -360,9 +484,23 @@ class KasprApp(BaseResource):
             return
 
         if not stateful_set:
-            await self.create_stateful_set(
-                self.apps_v1_api, self.namespace, self.stateful_set
+            # Instrument create operation
+            sensor_state = self.sensor.on_resource_sync_start(
+                self.cluster, self.cluster, self.stateful_set.metadata.name, self.namespace, "stateful_set"
             )
+            
+            success = True
+            try:
+                await self.create_stateful_set(
+                    self.apps_v1_api, self.namespace, self.stateful_set
+                )
+            except Exception:
+                success = False
+                raise
+            finally:
+                self.sensor.on_resource_sync_complete(
+                    self.cluster, self.cluster, self.stateful_set.metadata.name, self.namespace, "stateful_set", sensor_state, "create", success
+                )
         else:
             actual = self.prepare_statefulset_watch_fields(stateful_set)
             desired = self.prepare_statefulset_watch_fields(self.stateful_set)
@@ -373,18 +511,40 @@ class KasprApp(BaseResource):
             elif desired["spec"]["replicas"] is None:
                 desired["spec"]["replicas"] = actual["spec"]["replicas"]
 
-            if self.compute_hash(actual) != self.compute_hash(desired):
-                await self.patch_stateful_set(
-                    self.apps_v1_api,
-                    self.stateful_set_name,
-                    self.namespace,
-                    stateful_set=self.prepare_statefulset_patch(
-                        self.stateful_set,
-                        replicas_override=self.prepare_statefulset_desired_replicas(
-                            actual
-                        ),
-                    ),
+            actual_hash = self.compute_hash(actual)
+            desired_hash = self.compute_hash(desired)
+            
+            if actual_hash != desired_hash:
+                # Detect drift
+                self.sensor.on_resource_drift_detected(
+                    self.cluster, self.cluster, self.stateful_set.metadata.name, self.namespace, "stateful_set", ["spec"]
                 )
+                
+                # Instrument patch operation
+                sensor_state = self.sensor.on_resource_sync_start(
+                    self.cluster, self.cluster, self.stateful_set.metadata.name, self.namespace, "stateful_set"
+                )
+                
+                success = True
+                try:
+                    await self.patch_stateful_set(
+                        self.apps_v1_api,
+                        self.stateful_set_name,
+                        self.namespace,
+                        stateful_set=self.prepare_statefulset_patch(
+                            self.stateful_set,
+                            replicas_override=self.prepare_statefulset_desired_replicas(
+                                actual
+                            ),
+                        ),
+                    )
+                except Exception:
+                    success = False
+                    raise
+                finally:
+                    self.sensor.on_resource_sync_complete(
+                        self.cluster, self.cluster, self.stateful_set.metadata.name, self.namespace, "stateful_set", sensor_state, "patch", success
+                    )
 
     async def sync_auth_credentials(self):
         """Sync credentials secret; We only need to check that password secret exists."""
@@ -406,28 +566,92 @@ class KasprApp(BaseResource):
         )
         # If reconciliation is paused, delete HPA so it does not interfere with manual changes to statefulset
         if hpa and self.reconciliation_paused:
-            await self.delete_hpa(
-                self.autoscaling_v2_api, self.hpa_name, self.namespace
+            # Instrument delete operation
+            sensor_state = self.sensor.on_resource_sync_start(
+                self.cluster, self.cluster, self.hpa_name, self.namespace, "hpa"
             )
+            
+            success = True
+            try:
+                await self.delete_hpa(
+                    self.autoscaling_v2_api, self.hpa_name, self.namespace
+                )
+            except Exception:
+                success = False
+                raise
+            finally:
+                self.sensor.on_resource_sync_complete(
+                    self.cluster, self.cluster, self.hpa_name, self.namespace, "hpa", sensor_state, "delete", success
+                )
             return
         elif hpa and self.replicas == 0:
-            await self.delete_hpa(
-                self.autoscaling_v2_api, self.hpa_name, self.namespace
+            # Instrument delete operation
+            sensor_state = self.sensor.on_resource_sync_start(
+                self.cluster, self.cluster, self.hpa_name, self.namespace, "hpa"
             )
+            
+            success = True
+            try:
+                await self.delete_hpa(
+                    self.autoscaling_v2_api, self.hpa_name, self.namespace
+                )
+            except Exception:
+                success = False
+                raise
+            finally:
+                self.sensor.on_resource_sync_complete(
+                    self.cluster, self.cluster, self.hpa_name, self.namespace, "hpa", sensor_state, "delete", success
+                )
             return
         elif self.replicas > 0:
             if not hpa:
-                await self.create_hpa(self.autoscaling_v2_api, self.namespace, self.hpa)
+                # Instrument create operation
+                sensor_state = self.sensor.on_resource_sync_start(
+                    self.cluster, self.cluster, self.hpa.metadata.name, self.namespace, "hpa"
+                )
+                
+                success = True
+                try:
+                    await self.create_hpa(self.autoscaling_v2_api, self.namespace, self.hpa)
+                except Exception:
+                    success = False
+                    raise
+                finally:
+                    self.sensor.on_resource_sync_complete(
+                        self.cluster, self.cluster, self.hpa.metadata.name, self.namespace, "hpa", sensor_state, "create", success
+                    )
             else:
                 actual = self.prepare_hpa_watch_fields(hpa)
                 desired = self.prepare_hpa_watch_fields(self.hpa)
-                if self.compute_hash(actual) != self.compute_hash(desired):
-                    await self.patch_hpa(
-                        self.autoscaling_v2_api,
-                        self.hpa_name,
-                        self.namespace,
-                        hpa=self.prepare_hpa_patch(self.hpa),
+                actual_hash = self.compute_hash(actual)
+                desired_hash = self.compute_hash(desired)
+                
+                if actual_hash != desired_hash:
+                    # Detect drift
+                    self.sensor.on_resource_drift_detected(
+                        self.cluster, self.cluster, self.hpa.metadata.name, self.namespace, "hpa", ["spec"]
                     )
+                    
+                    # Instrument patch operation
+                    sensor_state = self.sensor.on_resource_sync_start(
+                        self.cluster, self.cluster, self.hpa.metadata.name, self.namespace, "hpa"
+                    )
+                    
+                    success = True
+                    try:
+                        await self.patch_hpa(
+                            self.autoscaling_v2_api,
+                            self.hpa_name,
+                            self.namespace,
+                            hpa=self.prepare_hpa_patch(self.hpa),
+                        )
+                    except Exception:
+                        success = False
+                        raise
+                    finally:
+                        self.sensor.on_resource_sync_complete(
+                            self.cluster, self.cluster, self.hpa.metadata.name, self.namespace, "hpa", sensor_state, "patch", success
+                        )
 
     async def recreate_statefulset(self, stateful_set: V1StatefulSet):
         """Check if statefulset needs migrations and perform them."""

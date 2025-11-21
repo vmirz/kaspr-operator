@@ -99,7 +99,7 @@ async def request_reconciliation(name, namespace: str = None, **kwargs):
             sensor = get_sensor()
             if sensor and namespace:
                 queue_depth = reconciliation_queue[name].qsize()
-                sensor.on_reconcile_queued(name, namespace, queue_depth)
+                sensor.on_reconcile_queued(name, name, namespace, queue_depth)
 
 
 def on_error(error, spec, meta, status, patch, **_):
@@ -1033,7 +1033,7 @@ async def reconcile(
     generation = meta.get('generation', 0)
     sensor_state = None
     if sensor:
-        sensor_state = sensor.on_reconcile_start(name, namespace, generation, trigger_source)
+        sensor_state = sensor.on_reconcile_start(name, name, namespace, generation, trigger_source)
     
     success = True
     error = None
@@ -1045,7 +1045,7 @@ async def reconcile(
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         if sensor:
-            sensor.on_reconcile_complete(name, namespace, sensor_state, True)
+            sensor.on_reconcile_complete(name, name, namespace, sensor_state, True)
         return
     try:
         logger.debug(f"Reconciling {APP_KIND}/{name} in {namespace} namespace.")
@@ -1063,7 +1063,7 @@ async def reconcile(
     finally:
         # Instrument reconciliation complete
         if sensor:
-            sensor.on_reconcile_complete(name, namespace, sensor_state, success, error)
+            sensor.on_reconcile_complete(name, name, namespace, sensor_state, success, error)
 
 
 @kopf.on.resume(kind=APP_KIND)
@@ -1538,7 +1538,7 @@ async def process_reconciliation_requests(
             sensor = get_sensor()
             if sensor:
                 wait_time = time.time() - queue_start_time
-                sensor.on_reconcile_dequeued(name, namespace, wait_time)
+                sensor.on_reconcile_dequeued(name, name, namespace, wait_time)
             
             start_time = time.time()
             await reconcile(

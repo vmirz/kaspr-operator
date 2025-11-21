@@ -7,10 +7,20 @@ from benedict import benedict
 from kaspr.types.schemas import KasprTaskSpecSchema
 from kaspr.types.models import KasprTaskSpec
 from kaspr.resources import KasprTask, KasprApp
+from kaspr.sensors import SensorDelegate
 
 KIND = "KasprTask"
 APP_NOT_FOUND = "AppNotFound"
 APP_FOUND = "AppFound"
+
+
+def get_sensor() -> SensorDelegate:
+    """Get sensor from KasprTask class.
+    
+    Returns:
+        Sensor instance or None
+    """
+    return getattr(KasprTask, 'sensor', None)
 
 # Queue of requests to update KasprTask status
 patch_request_queues: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
@@ -145,12 +155,27 @@ async def monitor_task(
 @kopf.timer(KIND, initial_delay=5.0, interval=60.0, backoff=10.0)
 async def reconcile(name, spec, namespace, labels, logger: logging.Logger, **kwargs):
     """Full sync."""
-    spec_model: KasprTaskSpec = KasprTaskSpecSchema().load(spec)
-    task = KasprTask.from_spec(name, KIND, namespace, spec_model, dict(labels))
+    sensor = get_sensor()
+    success = True
+    error = None
+    
     try:
+        spec_model: KasprTaskSpec = KasprTaskSpecSchema().load(spec)
+        task = KasprTask.from_spec(name, KIND, namespace, spec_model, dict(labels))
+        
+        sensor_state = sensor.on_reconcile_start(
+            task.app_name, name, namespace, 0, "timer"
+        )
+        
         logger.debug(f"Reconciling {KIND}/{name} in {namespace} namespace.")
         await task.synchronize()
         logger.debug(f"Reconciled {KIND}/{name} in {namespace} namespace.")
     except Exception as e:
+        success = False
+        error = e
         logger.error(f"Unexpected error during reconcilation: {e}")
         logger.exception(e)
+    finally:
+        sensor.on_reconcile_complete(
+            task.app_name, name, namespace, sensor_state, success, error
+        )
