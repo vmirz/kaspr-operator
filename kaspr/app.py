@@ -7,6 +7,7 @@ from kaspr.types.settings import Settings
 from kaspr.resources.kasprapp import KasprApp
 from kaspr.resources.appcomponent import BaseAppComponent
 from kaspr.web import KasprWebClient
+from kaspr.sensors import init_metrics_server, SensorDelegate, PrometheusMonitor
 from kubernetes_asyncio import config
 from kubernetes_asyncio.client.api_client import ApiClient
 
@@ -38,6 +39,22 @@ async def setup(
     KasprApp.shared_api_client = shared_client
     BaseAppComponent.shared_api_client = shared_client
     logger.info("Shared Kubernetes API client initialized")
+
+    # Initialize sensor infrastructure
+    sensor_delegate = SensorDelegate()
+    prometheus_monitor = PrometheusMonitor()
+    sensor_delegate.add(prometheus_monitor)
+    memo.sensor = sensor_delegate
+    KasprApp.sensor = sensor_delegate
+    logger.info("Sensor infrastructure initialized with PrometheusMonitor")
+
+    # Initialize Prometheus metrics server
+    try:
+        init_metrics_server()
+    except Exception as e:
+        logger.error(f"Failed to start metrics server: {e}")
+        # Don't fail operator startup if metrics server fails
+        logger.warning("Continuing without metrics server")
 
     if not KasprApp.conf.client_status_check_enabled:
         logger.warning(
