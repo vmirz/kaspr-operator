@@ -306,7 +306,7 @@ def _detect_table_subscription_changes(
 
 
 def _update_basic_status_fields(
-    patch,
+    status_update: Dict,
     _status: Dict,
     _actual_status: Dict,
     app,
@@ -315,7 +315,7 @@ def _update_basic_status_fields(
     """Update basic status fields like kasprVersion, availableMembers, etc.
     
     Args:
-        patch: Kopf patch object
+        status_update: Dictionary to accumulate status updates
         _status: Current status from CRD
         _actual_status: Actual status from cluster
         app: KasprApp instance
@@ -325,7 +325,7 @@ def _update_basic_status_fields(
     if _actual_status.get("kasprVersion") and _actual_status[
         "kasprVersion"
     ] != _status.get("kasprVersion"):
-        patch.status["kasprVersion"] = _actual_status["kasprVersion"]
+        status_update["kasprVersion"] = _actual_status["kasprVersion"]
 
     if (
         _actual_status.get("availableMembers") is not None
@@ -333,7 +333,7 @@ def _update_basic_status_fields(
     ):
         availableMembers = f"{_actual_status['availableMembers']}/{_actual_status['desiredMembers']}"
         if availableMembers != _status.get("availableMembers"):
-            patch.status["availableMembers"] = availableMembers
+            status_update["availableMembers"] = availableMembers
 
     # Update members status with lastTransitionTime tracking
     if _actual_status.get("members") is not None:
@@ -380,14 +380,14 @@ def _update_basic_status_fields(
             
             updated_members.append(filtered_member)
         
-        # Only patch if members actually changed
+        # Only update if members actually changed
         if not deep_compare_dict({"members": updated_members}, {"members": current_members}):
-            patch.status["members"] = updated_members
+            status_update["members"] = updated_members
 
     if _actual_status.get("rolloutInProgress") is not None and _actual_status.get(
         "rolloutInProgress"
     ) != _status.get("rolloutInProgress"):
-        patch.status["rolloutInProgress"] = _actual_status["rolloutInProgress"]
+        status_update["rolloutInProgress"] = _actual_status["rolloutInProgress"]
 
     # Aggregate rebalancing status from members
     # Format: "<count of rebalancing members>/<available members>"
@@ -398,7 +398,7 @@ def _update_basic_status_fields(
         available_members = _actual_status.get("availableMembers", 0)
         rebalancing_members = f"{rebalancing_count}/{available_members}"
         if rebalancing_members != _status.get("rebalancingMembers"):
-            patch.status["rebalancingMembers"] = rebalancing_members
+            status_update["rebalancingMembers"] = rebalancing_members
 
 
 def _is_rollout_complete(conds: List[Dict]) -> bool:
@@ -555,6 +555,9 @@ async def _terminate_hung_members(
 ):
     """Terminate pods for hung members.
     
+    Limits termination to max 5 at a time to prevent overwhelming
+    the Kafka cluster with simultaneous rebalances.
+    
     Args:
         app: KasprApp instance
         hung_member_ids: List of member IDs to terminate
@@ -562,12 +565,22 @@ async def _terminate_hung_members(
     """
     if not hung_member_ids:
         return
-        
-    # Delete all pods in parallel with 15 second timeout
+    
+    # Limit to max 5 members per cycle to avoid overwhelming the cluster
+    max_concurrent_terminations = 5
+    members_to_terminate = hung_member_ids[:max_concurrent_terminations]
+    
+    if len(hung_member_ids) > max_concurrent_terminations:
+        logger.info(
+            f"Limiting termination to {max_concurrent_terminations} members this cycle. "
+            f"Remaining {len(hung_member_ids) - max_concurrent_terminations} will be handled in next cycle."
+        )
+    
+    # Delete selected pods in parallel with 15 second timeout
     try:
         await asyncio.wait_for(
             asyncio.gather(
-                *[app.terminate_member(member_id) for member_id in hung_member_ids],
+                *[app.terminate_member(member_id) for member_id in members_to_terminate],
                 return_exceptions=True
             ),
             timeout=15.0
@@ -577,7 +590,7 @@ async def _terminate_hung_members(
 
 
 def _update_linked_resources_status(
-    patch,
+    status_update: Dict,
     _status: Dict,
     app: KasprApp,
     related_resources: Dict,
@@ -587,8 +600,9 @@ def _update_linked_resources_status(
     """Update linkedResources status and detect subscription changes.
     
     Args:
-        patch: Kopf patch object
+        status_update: Dictionary to accumulate status updates
         _status: Current status from CRD
+        app: KasprApp instance
         related_resources: Related resources fetched from cluster
         name: KasprApp name
         logger: Logger instance
@@ -597,7 +611,7 @@ def _update_linked_resources_status(
         True if subscription-affecting changes detected
     """
 
-    patch.status["rebalanceRequired"] = False
+    status_update["rebalanceRequired"] = False
 
     if not app.static_group_membership_enabled:
         return False
@@ -618,7 +632,7 @@ def _update_linked_resources_status(
 
     if is_first_tracking:
         # First time tracking - initialize status without triggering rebalance
-        patch.status["linkedResources"] = {
+        status_update["linkedResources"] = {
             "agents": agents_info,
             "webviews": webviews_info,
             "tables": tables_info,
@@ -648,7 +662,7 @@ def _update_linked_resources_status(
     change_details = []
     
     if resources_changed:
-        patch.status["linkedResources"] = {
+        status_update["linkedResources"] = {
             "agents": agents_info,
             "webviews": webviews_info,
             "tables": tables_info,
@@ -669,7 +683,7 @@ def _update_linked_resources_status(
 
         # Mark rebalance required if subscriptions changed
         if subscription_changed:
-            patch.status["rebalanceRequired"] = True
+            status_update["rebalanceRequired"] = True
             logger.info(
                 f"Subscription change detected for {name}: {', '.join(change_details)} - marking rebalance required"
             )
@@ -678,7 +692,7 @@ def _update_linked_resources_status(
 
 
 def _update_conditions(
-    patch,
+    status_update: Dict,
     _status: Dict,
     _actual_status: Dict,
     gen: int,
@@ -689,7 +703,7 @@ def _update_conditions(
     """Update status conditions based on reconciliation state.
     
     Args:
-        patch: Kopf patch object
+        status_update: Dictionary to accumulate status updates
         _status: Current status from CRD
         _actual_status: Actual status from cluster
         gen: Current generation
@@ -721,7 +735,7 @@ def _update_conditions(
                 "observedGeneration": gen,
             },
         )
-        patch.status["conditions"] = conds
+        status_update["conditions"] = conds
         return
     
     # Normal condition updates
@@ -793,16 +807,16 @@ def _update_conditions(
             },
         )
 
-    patch.status["conditions"] = conds
+    status_update["conditions"] = conds
 
 
 async def _attempt_auto_rebalance(
+    status_update: Dict,
     _status: Dict,
     _actual_status: Dict,
     annotations: Dict,
     app: KasprApp,
     name: str,
-    patch,
     logger: Logger
 ):
     """Attempt automatic rebalance if required and conditions are met.
@@ -818,15 +832,15 @@ async def _attempt_auto_rebalance(
     flag will persist and trigger retry on next status update cycle.
     
     Args:
+        status_update: Dictionary to accumulate status updates
         _status: Current status from CRD
         _actual_status: Actual status from cluster
         annotations: KasprApp annotations
         app: KasprApp instance
         name: KasprApp name
-        patch: Kopf patch object
         logger: Logger instance
     """
-    if not _status.get("rebalanceRequired"):
+    if not status_update.get("rebalanceRequired", _status.get("rebalanceRequired")):
         return
     
     # Check operator-level config
@@ -855,7 +869,7 @@ async def _attempt_auto_rebalance(
 
             if requested:
                 # Clear the flag on successful rebalance
-                patch.status["rebalanceRequired"] = False
+                status_update["rebalanceRequired"] = False
                 logger.info(f"Automatic rebalance completed successfully for {name}")
             else:
                 # Rebalance not ready, keep flag set for retry on next status update
@@ -883,7 +897,11 @@ async def _attempt_auto_rebalance(
 async def update_status(
     name, spec, meta, status, patch, namespace, annotations, logger: Logger, **kwargs
 ):
-    """Update KasprApp status based on the actual state of the app."""
+    """Update KasprApp status based on the actual state of the app.
+    
+    Batches all status updates into a single atomic patch operation to prevent
+    conflicts and improve consistency.
+    """
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(
         name, APP_KIND, namespace, spec_model, annotations, logger=logger
@@ -893,8 +911,11 @@ async def update_status(
         gen = meta.get("generation", 0)
         cur_gen = _status.get("observedGeneration")
 
+        # Build status update dictionary atomically
+        status_update = {}
+        
         # Always update observedGeneration to match the current generation
-        patch.status["observedGeneration"] = gen
+        status_update["observedGeneration"] = gen
 
         # Fetch app status and related resources in parallel
         app_status_task = app.fetch_app_status()
@@ -922,22 +943,20 @@ async def update_status(
         if not _actual_status:
             return
 
-        # Update basic status fields
-        _update_basic_status_fields(patch, _status, _actual_status, app, logger)
-
-        # Update linked resources and detect subscription changes
-        _update_linked_resources_status(patch, _status, app, related_resources, name, logger)
-
+        # Build all status updates atomically before patching
+        _update_basic_status_fields(status_update, _status, _actual_status, app, logger)
+        _update_linked_resources_status(status_update, _status, app, related_resources, name, logger)
+        
         # Detect hung rebalancing members
         hung_member_ids = await _detect_hung_members(_status, app, name, logger)
+        
+        _update_conditions(status_update, _status, _actual_status, gen, cur_gen, app, hung_member_ids)
+        await _attempt_auto_rebalance(status_update, _status, _actual_status, annotations, app, name, logger)
 
-        # Update conditions based on reconciliation state
-        _update_conditions(patch, _status, _actual_status, gen, cur_gen, app, hung_member_ids)
+        # Apply all status updates in a single atomic operation
+        patch.status.update(status_update)
 
-        # Attempt automatic rebalance if required
-        await _attempt_auto_rebalance(_status, _actual_status, annotations, app, name, patch, logger)
-
-        # Terminate hung members
+        # Terminate hung members after status update
         await _terminate_hung_members(app, hung_member_ids, logger)
 
     except Exception as e:
@@ -1447,8 +1466,8 @@ async def process_reconciliation_requests(
                 **kwargs,
             )
             execution_time = time.time() - start_time
-            logger.debug(
-                f"Reconcile for {name} completed in {execution_time:.2f} seconds"
+            logger.info(
+                f"Reconciliation for {name} completed in {execution_time:.2f} seconds"
             )
             # Allow this name to be requeued after processing
             names_in_queue.remove(name)
