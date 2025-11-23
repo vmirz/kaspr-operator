@@ -49,7 +49,7 @@ def get_sensor():
     return getattr(KasprApp, 'sensor', None)
 
 
-async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, List]:
+async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, any]:
     """Fetch all resources related to a KasprApp in parallel.
 
     Args:
@@ -57,8 +57,9 @@ async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, Li
         namespace: The namespace of the KasprApp
 
     Returns:
-        Dictionary with keys: 'agents', 'webviews', 'tables', 'tasks'
-        Each containing a list of resource items
+        Dictionary with keys: 'agents', 'webviews', 'tables', 'tasks', 'success'
+        Each resource key contains a list of resource items
+        'success' is True only if ALL fetches succeeded
     """
     agent_task, webview_task, table_task, task_task = await asyncio.gather(
         KasprAgent.default().search(namespace, apps=[name]),
@@ -68,10 +69,15 @@ async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, Li
         return_exceptions=True,
     )
 
+    # Track whether all fetches succeeded
+    all_succeeded = True
+    
     # Handle potential errors and extract items
     def extract_items(result, resource_type: str):
+        nonlocal all_succeeded
         if isinstance(result, Exception):
             # Log error but return empty list to allow partial results
+            all_succeeded = False
             return []
         return result.get("items", []) if result else []
 
@@ -80,6 +86,7 @@ async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, Li
         "webviews": extract_items(webview_task, "webviews"),
         "tables": extract_items(table_task, "tables"),
         "tasks": extract_items(task_task, "tasks"),
+        "success": all_succeeded,
     }
 
 
@@ -614,7 +621,7 @@ async def _terminate_hung_members(
                 *[app.terminate_member(member_id) for member_id in members_to_terminate],
                 return_exceptions=True
             ),
-            timeout=15.0
+            timeout=120.0
         )
         
         # Instrument member terminations
@@ -651,6 +658,13 @@ def _update_linked_resources_status(
     status_update["rebalanceRequired"] = False
 
     if not app.static_group_membership_enabled:
+        return False
+
+    # Only evaluate subscription changes if fetch was fully successful
+    # to avoid false positives from empty lists due to fetch failures
+    fetch_succeeded = related_resources.get("success", False)
+    if not fetch_succeeded:
+        logger.warning(f"Skipping subscription change detection for {name} - resource fetch failed")
         return False
 
     agents_info = _extract_agent_info(related_resources["agents"])
@@ -993,6 +1007,7 @@ async def update_status(
                 "webviews": [],
                 "tables": [],
                 "tasks": [],
+                "success": False,
             }
 
         if not _actual_status:
