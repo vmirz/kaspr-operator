@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.2
+--
+### Fixed
+* **False Positive Subscription Change Detection**: Fixed issue where failed resource fetches would trigger incorrect rebalance requests
+  * Added success tracking to `fetch_app_related_resources()` to detect when any resource fetch fails
+  * Subscription change evaluation now only occurs when all related resources (agents, tables, webviews, tasks) are successfully fetched
+  * Prevents false positives from empty resource lists when Kubernetes API calls fail
+  * Logs warning message when skipping subscription detection due to fetch failures
+
+### Technical Notes
+* `fetch_app_related_resources()` now returns a `success` boolean alongside resource lists
+* `_update_linked_resources_status()` checks fetch success before comparing resource states
+* Error handling maintains partial results for non-subscription operations while safely skipping subscription change logic
+
 ## 0.13.1
 --
 ### Added

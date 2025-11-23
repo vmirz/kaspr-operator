@@ -63,7 +63,7 @@ CLIENT_STATUS_CHECK_ENABLED = bool(
 
 #: Timeout in seconds for status check calls to all app members
 CLIENT_STATUS_CHECK_TIMEOUT_SECONDS = float(
-    _getenv("CLIENT_STATUS_CHECK_TIMEOUT_SECONDS", 10.0)
+    _getenv("CLIENT_STATUS_CHECK_TIMEOUT_SECONDS", 15.0)
 )
 
 #: Enable automatic rebalance when Kafka subscriptions change
