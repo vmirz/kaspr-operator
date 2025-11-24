@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.13.3
+--
+### Changed
+* **Hung Member Detection**: Removed assignment requirement from hung member detection logic
+  * Members with any assignment state (including zero assignments) are now eligible for hung detection
+  * Previously, members without active or standby assignments were skipped during hung detection
+  * Info log entry is now created when a member has no assignments but still meets other hung criteria
+  * All other hung detection criteria remain unchanged:
+    - Member must be in rebalancing state (`rebalancing=true` and `recovering=false`)
+    - Must exceed configured threshold (default 300s, configurable via `kaspr.io/hung-rebalancing-threshold-seconds`)
+    - App's rollout must be complete (Progressing condition is False)
+    - Must be detected for 3 consecutive checks before termination
+
+### Technical Notes
+* Updated `_detect_hung_members()` function to remove assignment filtering
+* Docstring updated to reflect that zero-assignment members are now eligible for hung detection
+* Info logging added: `"Member {member_id} has no assignments but meets other hung criteria"`
+
 ## 0.13.2
 --
 ### Fixed
