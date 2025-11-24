@@ -447,7 +447,6 @@ async def _detect_hung_members(
     - rebalancing=true AND recovering=false
     - lastTransitionTime > threshold seconds ago
     - App's Progressing condition is False (rollout complete)
-    - Has active or standby assignments (member with no assignments is not hung)
     - Detected as hung for 3 consecutive checks
     
     Threshold can be overridden per-app via annotation:
@@ -511,16 +510,14 @@ async def _detect_hung_members(
             member.get("rebalancing") is True
             and member.get("recovering") is False
         ):
-            # Check if member has assignments (must have actives or standbys)
+            # Check if member has assignments (for info logging only)
             assignment = member.get("assignment", {})
             actives = assignment.get("actives", {})
             standbys = assignment.get("standbys", {})
             
             if not actives and not standbys:
-                # Member has no assignments, not hung
-                # Reset tracking if it exists
-                hung_member_tracking.pop(tracking_key, None)
-                continue
+                # Member has no assignments but still eligible for hung detection
+                logger.info(f"Member {member_id} has no assignments but meets other hung criteria")
             
             last_transition = member.get("lastTransitionTime")
             if last_transition:
