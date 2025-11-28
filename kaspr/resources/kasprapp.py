@@ -104,6 +104,14 @@ class KasprApp(BaseResource):
     DEFAULT_DEFINITIONS_DIR = "/var/lib/data/definitions"
     DEFAULT_WEB_PORT = 6065
     INITIAL_MAX_REPLICAS = 1
+    
+    # Python packages defaults
+    DEFAULT_PACKAGES_PVC_SIZE = "256Mi"
+    DEFAULT_PACKAGES_CACHE_ENABLED = True
+    DEFAULT_PACKAGES_ACCESS_MODE = "ReadWriteMany"
+    DEFAULT_PACKAGES_DELETE_CLAIM = True
+    DEFAULT_PACKAGES_INSTALL_RETRIES = 3
+    DEFAULT_PACKAGES_INSTALL_TIMEOUT = 600
 
     replicas: int
     image: str

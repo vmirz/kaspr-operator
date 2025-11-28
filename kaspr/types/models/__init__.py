@@ -65,6 +65,13 @@ from .kasprtask_spec import (
     KasprTaskProcessorsSpec,
     KasprTaskSpec,
 )
+from .python_packages import (
+    PythonPackagesCache,
+    PythonPackagesInstallPolicy,
+    PythonPackagesResources,
+    PythonPackagesSpec,
+    PythonPackagesStatus,
+)
 
 __all__ = [
     "MetadataTemplate",
@@ -126,4 +133,9 @@ __all__ = [
     "KasprTaskProcessorsInit",
     "KasprTaskProcessorsSpec",
     "KasprTaskSpec",
+    "PythonPackagesCache",
+    "PythonPackagesInstallPolicy",
+    "PythonPackagesResources",
+    "PythonPackagesSpec",
+    "PythonPackagesStatus",
 ]

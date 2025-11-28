@@ -78,7 +78,7 @@ class KasprAppSpecSchema(BaseSchema):
         data_key="readinessProbe",
         load_default=lambda: ProbeSchema().load({}),
     )
-    storage = fields.Nested(KasprAppStorageSchema(), data_key="storage", default=None)
+    storage = fields.Nested(KasprAppStorageSchema(), data_key="storage", dump_default=None)
     template = fields.Nested(
         KasprAppTemplateSchema(),
         data_key="template",
