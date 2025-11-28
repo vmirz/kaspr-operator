@@ -1,0 +1,23 @@
+apiVersion: kaspr.io/v1
+kind: KasprApp
+metadata:
+  name: minimal-packages-example
+  namespace: default
+spec:
+  replicas: 1
+  image: my-registry/kaspr-app:latest
+  
+  kafka:
+    bootstrapServers: "kafka-broker:9092"
+    topics:
+      - input-topic
+  
+  storage:
+    size: "1Gi"
+  
+  # Minimal Python packages configuration
+  # All nested fields use sensible defaults
+  pythonPackages:
+    packages:
+      - "pandas"
+      - "requests"

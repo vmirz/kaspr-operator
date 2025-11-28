@@ -1,0 +1,52 @@
+apiVersion: kaspr.io/v1
+kind: KasprApp
+metadata:
+  name: python-packages-example
+  namespace: default
+spec:
+  # Basic app configuration
+  replicas: 1
+  image: my-registry/kaspr-app:latest
+  
+  # Kafka configuration
+  kafka:
+    bootstrapServers: "kafka-broker:9092"
+    topics:
+      - input-topic
+      - output-topic
+  
+  # Storage configuration
+  storage:
+    size: "1Gi"
+    storageClass: "standard"
+  
+  # Python packages configuration
+  pythonPackages:
+    # List of packages to install
+    packages:
+      - "pandas==2.0.0"
+      - "numpy>=1.24.0"
+      - "scikit-learn"
+      - "requests[security]>=2.28.0"
+    
+    # Cache configuration (optional)
+    cache:
+      enabled: true              # Default: true
+      size: "512Mi"              # Default: "256Mi"
+      storageClass: "fast-ssd"   # Optional: use specific storage class
+      accessMode: "ReadWriteMany" # Default: "ReadWriteMany"
+      deleteClaim: true          # Default: true - delete PVC when KasprApp is deleted
+    
+    # Install policy configuration (optional)
+    installPolicy:
+      retries: 5                 # Default: 3
+      timeout: 900               # Default: 600 (seconds)
+    
+    # Resource limits for init container (optional)
+    resources:
+      limits:
+        cpu: "1"
+        memory: "1Gi"
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
