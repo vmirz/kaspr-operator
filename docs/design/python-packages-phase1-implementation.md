@@ -29,6 +29,46 @@ This document outlines the step-by-step implementation plan for Phase 1 (MVP) of
 5. `PythonPackagesStatus` model for status reporting
 6. Corresponding Marshmallow schemas for validation
 
+**Model Pattern:**
+All models must inherit from `BaseModel` (from `kaspr.types.base`), following the established pattern in `kaspr/types/models/kasprapp_spec.py`. 
+
+**Important:**
+- Do NOT use `@dataclass`
+- Do NOT set default values in model classes
+- Default values should be defined as constants in resource classes (e.g., `kaspr/resources/kasprapp.py`)
+
+Example:
+```python
+from typing import Optional, List
+from kaspr.types.base import BaseModel
+
+class PythonPackagesCache(BaseModel):
+    """Python packages cache configuration."""
+    enabled: Optional[bool]
+    storage_class: Optional[str]
+    size: Optional[str]
+    access_mode: Optional[str]
+    delete_claim: Optional[bool]
+
+class PythonPackagesSpec(BaseModel):
+    """Python packages specification."""
+    packages: List[str]
+    cache: Optional[PythonPackagesCache]
+    # ... other fields
+```
+
+Then in `kaspr/resources/kasprapp.py`, add class constants:
+```python
+class KasprApp(BaseResource):
+    # ... existing constants ...
+    
+    # Python packages defaults
+    DEFAULT_PACKAGES_PVC_SIZE = "256Mi"
+    DEFAULT_PACKAGES_CACHE_ENABLED = True
+    DEFAULT_PACKAGES_ACCESS_MODE = "ReadWriteMany"
+    DEFAULT_PACKAGES_DELETE_CLAIM = True
+```
+
 **Validation:**
 - [ ] Unit tests for model instantiation
 - [ ] Unit tests for schema validation (valid/invalid inputs)
@@ -170,8 +210,8 @@ Following the established pattern of `prepare_*` methods and `@cached_property` 
    - Name: Use `self.python_packages_pvc_name`
    - Labels: Standard app labels + `kaspr.io/component: python-packages`
    - Access mode: ReadWriteMany (primary), fallback to ReadWriteOnce
-   - Storage class: From spec.pythonPackages.cache.storageClass or default
-   - Size: From spec.pythonPackages.cache.size or default (256Mi)
+   - Storage class: From spec.pythonPackages.cache.storageClass or default (None)
+   - Size: From spec.pythonPackages.cache.size or `self.DEFAULT_PACKAGES_PVC_SIZE` (256Mi)
    - Include hash annotation via `prepare_hash_annotation()`
 
 4. Add `@cached_property` accessor:
@@ -445,17 +485,17 @@ Following the established pattern:
 1. Add metrics in `kaspr/sensors/prometheus.py`:
    ```python
    package_install_duration_seconds = Histogram(
-       'kaspr_package_install_duration_seconds',
+       'kasprop_package_install_duration_seconds',
        'Time taken to install Python packages',
        ['app_name', 'namespace']
    )
    package_install_total = Counter(
-       'kaspr_package_install_total',
+       'kasprop_package_install_total',
        'Total number of package installations',
        ['app_name', 'namespace', 'result']  # result: success/failure
    )
    package_install_errors_total = Counter(
-       'kaspr_package_install_errors_total',
+       'kasprop_package_install_errors_total',
        'Total number of package installation errors',
        ['app_name', 'namespace', 'error_type']
    )
@@ -651,9 +691,9 @@ Create a comprehensive manual testing guide with specific test scenarios, expect
 
 10. **Metrics Validation**
     - Access operator metrics endpoint
-    - Verify `kaspr_package_install_duration_seconds` recorded
-    - Check `kaspr_package_install_total{result="success"}` incremented
-    - Trigger failure, verify `kaspr_package_install_errors_total` incremented
+    - Verify `kasprop_package_install_duration_seconds` recorded
+    - Check `kasprop_package_install_total{result="success"}` incremented
+    - Trigger failure, verify `kasprop_package_install_errors_total` incremented
     - Validate metric labels (app_name, namespace)
 
 **Testing Checklist Format:**
