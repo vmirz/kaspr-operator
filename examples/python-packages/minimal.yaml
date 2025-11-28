@@ -1,0 +1,15 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: example-minimal-packages
+  namespace: default
+spec:
+  version: "latest"
+  replicas: 1
+  bootstrapServers: "kafka:9092"
+  
+  # Minimal Python packages configuration
+  pythonPackages:
+    packages:
+      - requests
+      - pandas
