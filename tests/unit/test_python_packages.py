@@ -314,3 +314,220 @@ class TestPythonPackagesStatus:
         data = {}
         result = schema.load(data)
         assert isinstance(result, PythonPackagesStatus)
+
+
+class TestPythonPackagesUtilities:
+    """Tests for Python packages utility functions."""
+    
+    def test_compute_packages_hash_basic(self):
+        """Test hash computation with basic package list."""
+        from kaspr.utils.python_packages import compute_packages_hash
+        
+        spec = PythonPackagesSpec(packages=["requests", "numpy"])
+        hash1 = compute_packages_hash(spec)
+        
+        # Hash should be deterministic
+        hash2 = compute_packages_hash(spec)
+        assert hash1 == hash2
+        
+        # Hash should be 16 characters
+        assert len(hash1) == 16
+        
+        # Hash should be hex
+        assert all(c in '0123456789abcdef' for c in hash1)
+    
+    def test_compute_packages_hash_order_independence(self):
+        """Test that package order doesn't affect hash."""
+        from kaspr.utils.python_packages import compute_packages_hash
+        
+        spec1 = PythonPackagesSpec(packages=["requests", "numpy", "pandas"])
+        spec2 = PythonPackagesSpec(packages=["pandas", "numpy", "requests"])
+        
+        hash1 = compute_packages_hash(spec1)
+        hash2 = compute_packages_hash(spec2)
+        
+        # Hash should be the same regardless of order
+        assert hash1 == hash2
+    
+    def test_compute_packages_hash_different_packages(self):
+        """Test that different packages produce different hashes."""
+        from kaspr.utils.python_packages import compute_packages_hash
+        
+        spec1 = PythonPackagesSpec(packages=["requests", "numpy"])
+        spec2 = PythonPackagesSpec(packages=["requests", "pandas"])
+        
+        hash1 = compute_packages_hash(spec1)
+        hash2 = compute_packages_hash(spec2)
+        
+        # Different packages should produce different hashes
+        assert hash1 != hash2
+    
+    def test_compute_packages_hash_with_install_policy(self):
+        """Test hash includes install policy."""
+        from kaspr.utils.python_packages import compute_packages_hash
+        
+        spec1 = PythonPackagesSpec(
+            packages=["requests"],
+            install_policy=PythonPackagesInstallPolicy(retries=3)
+        )
+        spec2 = PythonPackagesSpec(
+            packages=["requests"],
+            install_policy=PythonPackagesInstallPolicy(retries=5)
+        )
+        
+        hash1 = compute_packages_hash(spec1)
+        hash2 = compute_packages_hash(spec2)
+        
+        # Different install policies should produce different hashes
+        assert hash1 != hash2
+    
+    def test_validate_package_name_valid(self):
+        """Test package name validation with valid names."""
+        from kaspr.utils.python_packages import validate_package_name
+        
+        valid_packages = [
+            "requests",
+            "numpy",
+            "scikit-learn",
+            "python_dateutil",
+            "requests==2.28.0",
+            "numpy>=1.24.0",
+            "pandas>=2.0.0,<3.0.0",
+            "scipy[all]",
+            "tensorflow>=2.0.0",
+            "Django~=4.2.0",
+            "pillow!=9.0.0",
+            "boto3>1.0.0",
+            "urllib3<2.0.0",
+        ]
+        
+        for package in valid_packages:
+            assert validate_package_name(package), f"Expected {package} to be valid"
+    
+    def test_validate_package_name_invalid(self):
+        """Test package name validation with invalid names."""
+        from kaspr.utils.python_packages import validate_package_name
+        
+        invalid_packages = [
+            "",  # Empty string
+            "   ",  # Whitespace only
+            "-invalid",  # Starts with hyphen
+            "_invalid",  # Starts with underscore
+            "in valid",  # Contains space
+            "in@valid",  # Contains invalid character
+        ]
+        
+        for package in invalid_packages:
+            assert not validate_package_name(package), f"Expected {package} to be invalid"
+    
+    def test_validate_package_name_edge_cases(self):
+        """Test package name validation edge cases."""
+        from kaspr.utils.python_packages import validate_package_name
+        
+        assert not validate_package_name(None)
+        assert not validate_package_name(123)
+        assert not validate_package_name([])
+        assert not validate_package_name({})
+    
+    def test_generate_install_script_basic(self):
+        """Test basic install script generation."""
+        from kaspr.utils.python_packages import generate_install_script
+        
+        spec = PythonPackagesSpec(packages=["requests", "numpy"])
+        script = generate_install_script(spec)
+        
+        assert "#!/bin/bash" in script
+        assert "requests" in script
+        assert "numpy" in script
+        assert "pip install" in script
+        assert "flock" in script
+        assert "/opt/kaspr/packages" in script
+    
+    def test_generate_install_script_with_install_policy(self):
+        """Test script generation with custom install policy."""
+        from kaspr.utils.python_packages import generate_install_script
+        
+        spec = PythonPackagesSpec(
+            packages=["pandas"],
+            install_policy=PythonPackagesInstallPolicy(
+                retries=5,
+                timeout=1200,
+                on_failure="allow"
+            )
+        )
+        script = generate_install_script(spec)
+        
+        assert "pandas" in script
+        assert "max_attempts=5" in script
+        assert "timeout 1200s" in script
+        assert "On failure: allow" in script
+    
+    def test_generate_install_script_custom_paths(self):
+        """Test script generation with custom paths."""
+        from kaspr.utils.python_packages import generate_install_script
+        
+        spec = PythonPackagesSpec(packages=["scipy"])
+        script = generate_install_script(
+            spec,
+            cache_path="/custom/cache",
+            lock_file="/custom/lock",
+        )
+        
+        assert "/custom/cache" in script
+        assert "/custom/lock" in script
+    
+    def test_generate_install_script_invalid_package(self):
+        """Test script generation fails with invalid package names."""
+        from kaspr.utils.python_packages import generate_install_script
+        
+        spec = PythonPackagesSpec(packages=["invalid package"])
+        
+        with pytest.raises(ValueError) as exc_info:
+            generate_install_script(spec)
+        
+        assert "Invalid package names" in str(exc_info.value)
+    
+    def test_generate_install_script_retry_logic(self):
+        """Test that script contains proper retry logic."""
+        from kaspr.utils.python_packages import generate_install_script
+        
+        spec = PythonPackagesSpec(
+            packages=["requests"],
+            install_policy=PythonPackagesInstallPolicy(retries=3)
+        )
+        script = generate_install_script(spec)
+        
+        # Check for retry logic
+        assert "while [ $attempt -le $max_attempts ]" in script
+        assert "attempt=$((attempt + 1))" in script
+        assert "Retrying in" in script
+    
+    def test_generate_install_script_lock_mechanism(self):
+        """Test that script contains flock-based locking."""
+        from kaspr.utils.python_packages import generate_install_script
+        
+        spec = PythonPackagesSpec(packages=["numpy"])
+        script = generate_install_script(spec)
+        
+        # Check for flock usage
+        assert "flock -x" in script
+        assert "exec 200>" in script
+        assert ".install.lock" in script
+        assert "Acquired installation lock" in script
+    
+    def test_generate_install_script_error_handling(self):
+        """Test that script contains proper error handling."""
+        from kaspr.utils.python_packages import generate_install_script
+        
+        spec = PythonPackagesSpec(
+            packages=["pandas"],
+            install_policy=PythonPackagesInstallPolicy(on_failure="block")
+        )
+        script = generate_install_script(spec)
+        
+        # Check for error handling
+        assert "set -e" in script
+        assert "exit_code=$?" in script
+        assert "Installation failed" in script
+        assert "blocking pod startup" in script
+
