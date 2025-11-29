@@ -4,7 +4,6 @@ metadata:
   name: example-with-packages
   namespace: default
 spec:
-  version: "latest"
   replicas: 1
   bootstrapServers: "kafka:9092"
   

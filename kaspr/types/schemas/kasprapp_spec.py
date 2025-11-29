@@ -14,6 +14,7 @@ from kaspr.types.schemas.resource_template import ResourceTemplateSchema
 from kaspr.types.schemas.pod_template import PodTemplateSchema
 from kaspr.types.schemas.service_template import ServiceTemplateSchema
 from kaspr.types.schemas.container_template import ContainerTemplateSchema
+from kaspr.types.schemas.python_packages import PythonPackagesSpecSchema
 
 
 class KasprAppTemplateSchema(BaseSchema):
@@ -84,6 +85,12 @@ class KasprAppSpecSchema(BaseSchema):
         data_key="template",
         allow_none=True,
         load_default=lambda: KasprAppTemplateSchema().load({}),
+    )
+    python_packages = fields.Nested(
+        PythonPackagesSpecSchema(),
+        data_key="pythonPackages",
+        allow_none=True,
+        load_default=None,
     )
 
     @post_load
