@@ -1155,6 +1155,43 @@ spec:
                 rebalancingMembers:
                   type: string
                   description: Count of members currently rebalancing
+                pythonPackages:
+                  type: object
+                  description: Python packages installation status
+                  properties:
+                    state:
+                      type: string
+                      enum: ["Installing", "Ready", "Failed", "Unknown"]
+                      description: Current state of package installation
+                    hash:
+                      type: string
+                      description: Hash of the packages configuration for change detection
+                    installed:
+                      type: array
+                      items:
+                        type: string
+                      description: List of successfully installed packages
+                    cacheMode:
+                      type: string
+                      description: PVC access mode (ReadWriteMany or ReadWriteOnce)
+                    lastInstallTime:
+                      type: string
+                      format: date-time
+                      description: Timestamp when packages were last installed
+                    installDuration:
+                      type: string
+                      description: Duration of package installation
+                    installedBy:
+                      type: string
+                      description: Name of pod that performed the installation
+                    error:
+                      type: string
+                      description: Error message if installation failed
+                    warnings:
+                      type: array
+                      items:
+                        type: string
+                      description: Non-fatal warnings during installation
       subresources:
         status: {}      
       additionalPrinterColumns:

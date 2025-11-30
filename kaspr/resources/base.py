@@ -21,7 +21,8 @@ from kubernetes_asyncio.client import (
     V1ConfigMap,
     V1PersistentVolumeClaim,
     V1DeleteOptions,
-    V2HorizontalPodAutoscaler
+    V2HorizontalPodAutoscaler,
+    V1PodList
 )
 
 
@@ -383,6 +384,31 @@ class BaseResource:
             body=pvc,
         )
 
+    async def delete_persistent_volume_claim(
+        self,
+        core_v1_api: CoreV1Api,
+        name: str,
+        namespace: str,
+    ):
+        """Delete a PersistentVolumeClaim.
+        
+        Args:
+            core_v1_api: CoreV1Api instance
+            name: Name of the PVC to delete
+            namespace: Namespace containing the PVC
+        """
+        try:
+            await core_v1_api.delete_namespaced_persistent_volume_claim(
+                name=name,
+                namespace=namespace,
+                body=V1DeleteOptions(),
+            )
+        except ApiException as ex:
+            if ex.status == 404:
+                # PVC already deleted, ignore
+                return
+            raise
+
     async def get_custom_object(
         self,
         custom_objects_api: CustomObjectsApi,
@@ -487,7 +513,7 @@ class BaseResource:
             if ex.status == 404:
                 return
             raise
-
+    
     async def delete_pod(
         self,
         core_v1_api: CoreV1Api,
@@ -513,3 +539,26 @@ class BaseResource:
             if ex.status == 404:
                 return
             raise
+
+    async def list_pods(
+        self, core_v1_api: CoreV1Api, namespace: str, label_selector: dict = None
+    ) -> List[V1PodList]:
+        """List pods in namespace, optionally filtered by label selector.
+        
+        Args:
+            core_v1_api: CoreV1Api instance
+            namespace: Namespace to list pods in
+            label_selector: Dictionary of label key-value pairs to filter pods
+            
+        Returns:
+            V1PodList object containing matching pods
+        """
+        # Convert label selector dict to string format
+        label_selector_str = None
+        if label_selector:
+            label_selector_str = ",".join([f"{k}={v}" for k, v in label_selector.items()])
+        
+        return await core_v1_api.list_namespaced_pod(
+            namespace=namespace,
+            label_selector=label_selector_str
+        )

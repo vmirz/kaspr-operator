@@ -1,11 +1,15 @@
 import asyncio
 import kopf
 import time
+import json
+import base64
 from logging import Logger
 from collections import defaultdict
-from typing import List, Dict
+from typing import List, Dict, Optional
 from datetime import datetime, timezone, timedelta
 from kubernetes_asyncio.client import ApiException
+from kubernetes_asyncio.stream import WsApiClient
+from kubernetes_asyncio.client import CoreV1Api
 from kaspr.types.schemas.kasprapp_spec import (
     KasprAppSpecSchema,
 )
@@ -18,6 +22,7 @@ from kaspr.types.schemas import (
 from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable, KasprTask
 from kaspr.utils.helpers import upsert_condition, deep_compare_dict, now
 from kaspr.utils.errors import convert_api_exception
+from kaspr.utils.python_packages import compute_packages_hash
 
 APP_KIND = "KasprApp"
 
@@ -960,6 +965,200 @@ async def _attempt_auto_rebalance(
         logger.info(f"Automatic rebalance deferred for {name}: {', '.join(reasons)}")
 
 
+async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> Optional[Dict]:
+    """Fetch Python packages installation status from pods.
+    
+    Since all pods share the same PVC, we only need to check one available pod.
+    
+    Args:
+        app: KasprApp instance
+        logger: Logger instance
+        
+    Returns:
+        Dictionary with keys: state, hash, installed, cacheMode, lastInstallTime, 
+        installDuration, installedBy, error, warnings
+        Returns None if unable to determine status
+    """
+    if not app.python_packages:
+        return None
+    
+    cache = getattr(app.python_packages, 'cache', None)
+    enabled = cache.enabled if cache and hasattr(cache, 'enabled') else app.DEFAULT_PACKAGES_CACHE_ENABLED
+    
+    if not enabled:
+        return None
+    
+    try:
+        # List pods for this app
+        pods = await app.list_pods(app.core_v1_api, app.namespace, app.labels.kasper_label_selectors().as_dict())
+        
+        if not pods or not pods.items:
+            # No pods yet
+            return {
+                "state": "Installing",
+                "hash": compute_packages_hash(app.python_packages),
+                "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+            }
+        
+        # Find first available/ready pod
+        target_pod = None
+        for pod in pods.items:
+            # Check if pod has the install-packages init container
+            if pod.status and pod.status.init_container_statuses:
+                for init_status in pod.status.init_container_statuses:
+                    if init_status.name == "install-packages":
+                        target_pod = pod
+                        break
+            if target_pod:
+                break
+        
+        if not target_pod:
+            # Pods exist but no init container found yet
+            return {
+                "state": "Installing",
+                "hash": compute_packages_hash(app.python_packages),
+                "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+            }
+        
+        # Check init container status
+        init_container_status = None
+        if target_pod.status and target_pod.status.init_container_statuses:
+            for init_status in target_pod.status.init_container_statuses:
+                if init_status.name == "install-packages":
+                    init_container_status = init_status
+                    break
+        
+        if not init_container_status:
+            return {
+                "state": "Installing",
+                "hash": compute_packages_hash(app.python_packages),
+                "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+            }
+        
+        # Check if init container failed
+        if init_container_status.state and init_container_status.state.terminated:
+            if init_container_status.state.terminated.exit_code != 0:
+                error_msg = init_container_status.state.terminated.message or "Package installation failed"
+                return {
+                    "state": "Failed",
+                    "hash": compute_packages_hash(app.python_packages),
+                    "error": error_msg,
+                    "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                }
+        
+        # Check if init container is still running
+        if init_container_status.state and init_container_status.state.running:
+            return {
+                "state": "Installing",
+                "hash": compute_packages_hash(app.python_packages),
+                "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+            }
+        
+        # Init container completed successfully - try to read marker file
+        if init_container_status.state and init_container_status.state.terminated and init_container_status.state.terminated.exit_code == 0:
+            try:
+                # Read marker file from the pod
+                packages_hash = compute_packages_hash(app.python_packages)
+                marker_file = f"/opt/kaspr/packages/.installed-{packages_hash}"
+                
+                # Check if marker file exists and read it in a single exec call
+                # Use base64 encoding to avoid any shell/websocket string interpretation issues
+                exec_command = [
+                    '/bin/sh', '-c', 
+                    f'if [ -f "{marker_file}" ]; then base64 "{marker_file}"; else echo "__MARKER_NOT_FOUND__"; fi'
+                ]
+                
+                async with WsApiClient() as ws_api:
+                    v1_ws = CoreV1Api(api_client=ws_api)
+                    resp = await v1_ws.connect_get_namespaced_pod_exec(
+                        target_pod.metadata.name,
+                        app.namespace,
+                        command=exec_command,
+                        stderr=True,
+                        stdin=False,
+                        stdout=True,
+                        tty=False,
+                        _preload_content=True
+                    )
+                
+                # Check if marker file was found
+                if not resp or resp.strip() == "__MARKER_NOT_FOUND__":
+                    logger.debug(f"Marker file {marker_file} not found in pod {target_pod.metadata.name}")
+                    return {
+                        "state": "Ready",
+                        "hash": packages_hash,
+                        "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                        "warnings": ["Installation completed but marker file not found"],
+                    }
+                
+                try:
+                    resp_stripped = resp.strip()
+                    decoded = base64.b64decode(resp_stripped).decode('utf-8')
+                except Exception as e:
+                    logger.warning(f"Failed to decode base64 response from pod {target_pod.metadata.name}: {e}")
+                    return {
+                        "state": "Ready",
+                        "hash": packages_hash,
+                        "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                        "warnings": ["Unable to decode marker file"],
+                    }
+                
+                # Parse marker file JSON
+                if not decoded:
+                    logger.warning(f"Empty marker file in pod {target_pod.metadata.name}")
+                    return {
+                        "state": "Ready",
+                        "hash": packages_hash,
+                        "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                        "warnings": ["Marker file is empty"],
+                    }
+                
+                marker_data = json.loads(decoded)
+                
+                return {
+                    "state": "Ready",
+                    "hash": packages_hash,
+                    "installed": marker_data.get("packages", []),
+                    "lastInstallTime": marker_data.get("install_time"),
+                    "installDuration": marker_data.get("duration"),
+                    "installedBy": marker_data.get("pod_name"),
+                    "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                }
+                
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse marker file JSON from pod {target_pod.metadata.name}: {e}")
+                return {
+                    "state": "Ready",
+                    "hash": compute_packages_hash(app.python_packages),
+                    "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                    "warnings": ["Installation completed but marker file is invalid"],
+                }
+            except Exception as e:
+                logger.warning(f"Failed to read marker file from pod {target_pod.metadata.name}: {e}")
+                # Marker file read failed but init succeeded - report as Ready with limited info
+                return {
+                    "state": "Ready",
+                    "hash": compute_packages_hash(app.python_packages),
+                    "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                    "warnings": [f"Unable to read installation details: {str(e)}"],
+                }
+        
+        # Fallback
+        return {
+            "state": "Installing",
+            "hash": compute_packages_hash(app.python_packages),
+            "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching Python packages status: {e}")
+        return {
+            "state": "Unknown",
+            "hash": compute_packages_hash(app.python_packages) if app.python_packages else None,
+            "error": str(e),
+        }
+
+
 async def update_status(
     name, spec, meta, status, patch, namespace, annotations, logger: Logger, **kwargs
 ):
@@ -1013,6 +1212,16 @@ async def update_status(
         # Build all status updates atomically before patching
         _update_basic_status_fields(status_update, _status, _actual_status, app, logger)
         _update_linked_resources_status(status_update, _status, app, related_resources, name, logger)
+        
+        # Update Python packages status if configured
+        if app.python_packages:
+            packages_status = await fetch_python_packages_status(app, logger)
+            if packages_status:
+                current_packages_status = _status.get("pythonPackages", {})
+                # Only update if status has changed
+                if packages_status != current_packages_status:
+                    status_update["pythonPackages"] = packages_status
+                    logger.info(f"Python packages status updated: {packages_status.get('state')}")
         
         # Detect hung rebalancing members
         hung_member_ids = await _detect_hung_members(_status, app, name, namespace, logger)

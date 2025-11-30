@@ -130,6 +130,10 @@ def generate_install_script(
     # Build the packages list for pip install
     packages_str = " ".join(f'"{pkg}"' for pkg in spec.packages)
     
+    # Compute hash for marker file
+    packages_hash = compute_packages_hash(spec)
+    marker_file = f"{cache_path}/.installed-{packages_hash}"
+    
     # Generate the script
     script = f"""#!/bin/bash
 set -e
@@ -137,6 +141,7 @@ set -e
 echo "Python Package Installer - Starting"
 echo "Cache path: {cache_path}"
 echo "Packages: {' '.join(spec.packages)}"
+echo "Packages hash: {packages_hash}"
 echo "Timeout: {timeout}s"
 echo "Retries: {retries}"
 echo "On failure: {on_failure}"
@@ -149,6 +154,8 @@ mkdir -p "$(dirname {lock_file})"
 install_packages() {{
     local attempt=1
     local max_attempts={retries}
+    local install_start=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local install_start_ts=$(date +%s)
     
     while [ $attempt -le $max_attempts ]; do
         echo "Installation attempt $attempt of $max_attempts"
@@ -159,6 +166,33 @@ install_packages() {{
             --no-cache-dir \\
             {packages_str}; then
             echo "Successfully installed packages"
+            
+            # Calculate duration
+            local install_end_ts=$(date +%s)
+            local duration=$((install_end_ts - install_start_ts))
+            
+            # Create marker file with metadata using proper JSON escaping
+            # Build packages array with proper double quotes
+            local packages_json=""
+            local first=true
+            for pkg in {' '.join(spec.packages)}; do
+                if [ "$first" = true ]; then
+                    packages_json="\\"$pkg\\""
+                    first=false
+                else
+                    packages_json="$packages_json, \\"$pkg\\""
+                fi
+            done
+            
+            cat > "{marker_file}" <<EOF
+{{
+  "packages": [$packages_json],
+  "install_time": "$install_start",
+  "duration": "${{duration}}s",
+  "pod_name": "$HOSTNAME"
+}}
+EOF
+            echo "Created marker file: {marker_file}"
             return 0
         else
             local exit_code=$?
@@ -182,17 +216,18 @@ exec 200>{lock_file}
 if flock -x -w {timeout} 200; then
     echo "Acquired installation lock"
     
-    # Check if packages are already installed
-    if [ -f "{cache_path}/.installed" ]; then
-        echo "Packages already installed, skipping installation"
+    # Check if packages with this hash are already installed
+    if [ -f "{marker_file}" ]; then
+        echo "Packages with hash {packages_hash} already installed, skipping installation"
         flock -u 200
         exit 0
     fi
     
+    # Remove old marker files
+    rm -f {cache_path}/.installed-*
+    
     # Install packages
     if install_packages; then
-        # Mark as installed
-        touch "{cache_path}/.installed"
         echo "Package installation complete"
         flock -u 200
         exit 0

@@ -542,8 +542,10 @@ class KasprApp(BaseResource):
                 )
         elif pvc and should_create:
             # PVC exists - check if it needs patching
-            actual_hash = pvc.metadata.annotations.get("kaspr.io/resource-hash") if pvc.metadata.annotations else None
-            desired_hash = self.python_packages_pvc_hash
+            actual = self.prepare_python_packages_pvc_watch_fields(pvc)
+            desired = self.prepare_python_packages_pvc_watch_fields(self.python_packages_pvc)
+            actual_hash = self.compute_hash(actual)
+            desired_hash = self.compute_hash(desired)
             
             if actual_hash != desired_hash:
                 # Detect drift
@@ -551,12 +553,38 @@ class KasprApp(BaseResource):
                     self.cluster, self.cluster, self.python_packages_pvc_name, self.namespace, "pvc", ["spec"]
                 )
                 
-                # Note: PVC specs are mostly immutable, so we log drift but don't patch
-                # Size can be expanded but not reduced, storage class cannot be changed
-                self.logger.warning(
-                    f"Python packages PVC {self.python_packages_pvc_name} has drifted. "
-                    f"PVC spec changes require manual intervention (delete and recreate)."
-                )
+                # Check if storage size is increasing (valid expansion)
+                actual_size = actual.get("spec", {}).get("resources", {}).get("requests", {}).get("storage")
+                desired_size = desired.get("spec", {}).get("resources", {}).get("requests", {}).get("storage")
+                
+                if actual_size and desired_size and self._is_storage_expansion(actual_size, desired_size):
+                    # Storage expansion is allowed - patch the PVC
+                    sensor_state = self.sensor.on_resource_sync_start(
+                        self.cluster, self.cluster, self.python_packages_pvc_name, self.namespace, "pvc"
+                    )
+                    
+                    success = True
+                    try:
+                        await self.patch_persistent_volume_claim(
+                            self.core_v1_api,
+                            self.python_packages_pvc_name,
+                            self.namespace,
+                            persistent_volume_claim=self.prepare_python_packages_pvc_patch(self.python_packages_pvc),
+                        )
+                    except Exception:
+                        success = False
+                        raise
+                    finally:
+                        self.sensor.on_resource_sync_complete(
+                            self.cluster, self.cluster, self.python_packages_pvc_name, self.namespace, "pvc", sensor_state, "patch", success
+                        )
+                else:
+                    # Other changes are not allowed (e.g., storage reduction, storage class change)
+                    self.logger.warning(
+                        f"Python packages PVC {self.python_packages_pvc_name} has drifted with unsupported changes. "
+                        f"Storage can only be expanded, not reduced. Storage class cannot be changed. "
+                        f"Manual intervention required (delete and recreate PVC)."
+                    )
 
     async def sync_stateful_set(self):
         """Check current state of stateful set and create/patch if needed."""
@@ -1086,6 +1114,92 @@ class KasprApp(BaseResource):
     def prepare_python_packages_pvc_hash(self, pvc: V1PersistentVolumeClaim) -> str:
         """Compute hash for packages PVC resource."""
         return self.compute_hash(pvc.to_dict())
+    
+    def prepare_python_packages_pvc_watch_fields(self, pvc: V1PersistentVolumeClaim) -> Dict:
+        """Prepare fields of interest when comparing actual vs desired state for packages PVC.
+        
+        For PVCs, we only track storage size (can be expanded but not reduced).
+        Note: Storage class cannot be changed after creation.
+        """
+        storage_size = None
+        if pvc.spec and pvc.spec.resources and pvc.spec.resources.requests:
+            storage_size = pvc.spec.resources.requests.get("storage")
+        
+        return {
+            "spec": {
+                "resources": {
+                    "requests": {
+                        "storage": storage_size,
+                    }
+                }
+            },
+        }
+    
+    def prepare_python_packages_pvc_patch(self, pvc: V1PersistentVolumeClaim) -> Dict:
+        """Prepare patch for Python packages PVC resource.
+        
+        Only storage size expansion is allowed to be patched.
+        """
+        patch = []
+        
+        if pvc.spec and pvc.spec.resources and pvc.spec.resources.requests:
+            storage = pvc.spec.resources.requests.get("storage")
+            if storage:
+                patch.append(
+                    {
+                        "op": "replace",
+                        "path": "/spec/resources/requests/storage",
+                        "value": storage,
+                    }
+                )
+        
+        return patch
+    
+    def _is_storage_expansion(self, actual_size: str, desired_size: str) -> bool:
+        """Check if desired size is larger than actual size.
+        
+        Parses Kubernetes quantity strings (e.g., "1Gi", "500Mi") and compares them.
+        """
+        def parse_size(size_str: str) -> int:
+            """Parse Kubernetes quantity string to bytes."""
+            if not size_str:
+                return 0
+            
+            # Common Kubernetes storage units
+            units = {
+                'Ki': 1024,
+                'Mi': 1024 ** 2,
+                'Gi': 1024 ** 3,
+                'Ti': 1024 ** 4,
+                'Pi': 1024 ** 5,
+                'K': 1000,
+                'M': 1000 ** 2,
+                'G': 1000 ** 3,
+                'T': 1000 ** 4,
+                'P': 1000 ** 5,
+            }
+            
+            size_str = size_str.strip()
+            
+            # Try to find unit suffix
+            for unit, multiplier in units.items():
+                if size_str.endswith(unit):
+                    number = size_str[:-len(unit)]
+                    try:
+                        return int(float(number) * multiplier)
+                    except ValueError:
+                        return 0
+            
+            # No unit, assume bytes
+            try:
+                return int(size_str)
+            except ValueError:
+                return 0
+        
+        actual_bytes = parse_size(actual_size)
+        desired_bytes = parse_size(desired_size)
+        
+        return desired_bytes > actual_bytes
     
     def should_create_packages_pvc(self) -> bool:
         """Check if python packages PVC should be created."""
