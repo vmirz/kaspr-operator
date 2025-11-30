@@ -95,6 +95,7 @@ def generate_install_script(
     lock_file: str = "/opt/kaspr/packages/.install.lock",
     timeout: int = 600,
     retries: int = 3,
+    packages_hash: str = None,
 ) -> str:
     """
     Generate a bash script for installing Python packages in an init container.
@@ -108,6 +109,7 @@ def generate_install_script(
         lock_file: Path to the lock file for preventing concurrent installs
         timeout: Installation timeout in seconds (from spec or default)
         retries: Number of retry attempts (from spec or default)
+        packages_hash: Pre-computed hash (if None, will be computed from spec)
         
     Returns:
         A bash script as a string
@@ -130,8 +132,9 @@ def generate_install_script(
     # Build the packages list for pip install
     packages_str = " ".join(f'"{pkg}"' for pkg in spec.packages)
     
-    # Compute hash for marker file
-    packages_hash = compute_packages_hash(spec)
+    # Use provided hash or compute it
+    if packages_hash is None:
+        packages_hash = compute_packages_hash(spec)
     marker_file = f"{cache_path}/.installed-{packages_hash}"
     
     # Generate the script

@@ -1123,6 +1123,7 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> Optiona
                     "installDuration": marker_data.get("duration"),
                     "installedBy": marker_data.get("pod_name"),
                     "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                    "warnings": None
                 }
                 
             except json.JSONDecodeError as e:
@@ -1644,6 +1645,34 @@ async def general_config_update(
         on_error(e, spec, meta, status, patch, **kwargs)
         raise
 
+
+@kopf.on.update(kind=APP_KIND, field="spec.pythonPackages")
+async def on_python_packages_update(
+    old, new, spec, name, meta, patch, status, namespace, annotations, logger: Logger, **kwargs
+):
+    """Handle updates to spec.pythonPackages field.
+    
+    Detects changes to:
+    - Package list (added/removed/changed versions)
+    - Cache configuration
+    - Install policy
+    - Resources
+    
+    Triggers reconciliation to sync packages.
+    """
+    logger.info(f"Python packages configuration changed for KasprApp {name}")
+    
+    spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
+    app = KasprApp.from_spec(
+        name, APP_KIND, namespace, spec_model, annotations, logger=logger
+    )
+    
+    if app.reconciliation_paused:
+        logger.info("Reconciliation is paused.")
+        return
+    
+    # Request reconciliation to sync packages
+    await request_reconciliation(name, namespace=namespace, logger=logger)
 
 # @kopf.on.validate(kind=APP_KIND, field="spec.storage.deleteClaim")
 # def say_hello(warnings: list[str], **_):

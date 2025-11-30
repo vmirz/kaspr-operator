@@ -26,7 +26,7 @@ from kaspr.types.models.pod_template import PodTemplate
 from kaspr.types.models.service_template import ServiceTemplate
 from kaspr.types.models.container_template import ContainerTemplate
 from kaspr.types.models.python_packages import PythonPackagesSpec
-from kaspr.utils.python_packages import compute_packages_hash, generate_install_script
+from kaspr.utils.python_packages import generate_install_script
 from kubernetes_asyncio.client import (
     AppsV1Api,
     CoreV1Api,
@@ -191,6 +191,7 @@ class KasprApp(BaseResource):
     _agents_hash: str = None
     _tables_hash: str = None
     _tasks_hash: str = None
+    _packages_hash: str = None
 
     # TODO: Templates allow customizing k8s behavior
     template_service_account: ResourceTemplate
@@ -1235,7 +1236,10 @@ class KasprApp(BaseResource):
             lock_file=lock_file,
             timeout=timeout,
             retries=retries,
+            packages_hash=self.packages_hash,
         )
+
+        self.logger.info(f"Generated package install script for hash {self.packages_hash}")
         
         # Get resource requirements if specified
         resources_spec = self.python_packages.resources if hasattr(self.python_packages, 'resources') and self.python_packages.resources else None
@@ -1246,11 +1250,17 @@ class KasprApp(BaseResource):
                 limits=resources_spec.limits if hasattr(resources_spec, 'limits') else None,
             )
         
+        # Add PACKAGES_HASH env var to init container
+        env_vars = []
+        if self.packages_hash:
+            env_vars.append(V1EnvVar(name="PACKAGES_HASH", value=self.packages_hash))
+        
         return V1Container(
             name="install-packages",
             image=self.image,  # Use same image as main container
             command=["/bin/bash", "-c"],
             args=[script],
+            env=env_vars if env_vars else None,
             volume_mounts=[
                 V1VolumeMount(
                     name=f"{self.component_name}-packages",
@@ -1354,6 +1364,10 @@ class KasprApp(BaseResource):
         # include tasks hash
         if self.tasks:
             env_vars.append(V1EnvVar(name="TASKS_HASH", value=self.tasks_hash))
+
+        # include packages hash
+        if self.python_packages:
+            env_vars.append(V1EnvVar(name="PACKAGES_HASH", value=self.packages_hash))
 
         # template environment variables
         env_vars.extend(self.prepare_container_template_env_vars())
@@ -1724,9 +1738,8 @@ class KasprApp(BaseResource):
         """Build pod spec for kaspr app."""
         # Build init containers list
         init_containers = []
-        packages_init_container = self.prepare_packages_init_container()
-        if packages_init_container:
-            init_containers.append(packages_init_container)
+        if self.packages_init_container:
+            init_containers.append(self.packages_init_container)
         
         return V1PodSpec(
             image_pull_secrets=self.template_pod.image_pull_secrets,
@@ -1777,11 +1790,6 @@ class KasprApp(BaseResource):
         annotations.update(
             self.prepare_hash_annotation(self.prepare_statefulset_hash(stateful_set))
         )
-        
-        # Add packages hash annotation if packages are configured
-        if self.python_packages:
-            packages_hash = compute_packages_hash(self.python_packages)
-            annotations[f"{self.KASPR_OPERATOR_NAME}/packages-hash"] = packages_hash
         
         return stateful_set
 
@@ -1873,7 +1881,19 @@ class KasprApp(BaseResource):
         These fields are tracked for changes made outside the operator and are used to
         determine if a patch is needed.
         """
-        return {
+        # Extract PACKAGES_HASH env var from init container if it exists
+        packages_hash_env = None
+        if stateful_set.spec.template.spec.init_containers:
+            for init_container in stateful_set.spec.template.spec.init_containers:
+                if init_container.name == "install-packages" and init_container.env:
+                    for env_var in init_container.env:
+                        if env_var.name == "PACKAGES_HASH":
+                            packages_hash_env = env_var.value
+                            break
+                    if packages_hash_env is not None:
+                        break
+        
+        watch_fields = {
             "spec": {
                 "replicas": stateful_set.spec.replicas,
                 "template": {
@@ -1889,6 +1909,19 @@ class KasprApp(BaseResource):
                 },
             }
         }
+        
+        # Include PACKAGES_HASH from init container in watch fields if present
+        if packages_hash_env is not None:
+            watch_fields["spec"]["template"]["spec"]["initContainers"] = [
+                {
+                    "name": "install-packages",
+                    "env": [
+                        {"name": "PACKAGES_HASH", "value": packages_hash_env}
+                    ]
+                }
+            ]
+        
+        return watch_fields
 
     def prepare_statefulset_desired_replicas(self, actual: Dict) -> Dict:
         """Prepare desired replicas for stateful set.
@@ -2907,3 +2940,12 @@ class KasprApp(BaseResource):
                 else None
             )
         return self._tasks_hash
+
+    @cached_property
+    def packages_hash(self) -> Optional[str]:
+        """Hash of Python packages configuration."""
+        if self._packages_hash is None and self.python_packages:
+            # Import here to avoid circular dependency
+            from kaspr.utils.python_packages import compute_packages_hash
+            self._packages_hash = compute_packages_hash(self.python_packages)
+        return self._packages_hash
