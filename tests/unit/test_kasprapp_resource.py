@@ -114,7 +114,7 @@ class TestPreparePackagesPVC:
     
     def test_prepare_packages_pvc_with_defaults(self, kasprapp_with_packages):
         """Test PVC generation with default values."""
-        pvc = kasprapp_with_packages.prepare_packages_pvc()
+        pvc = kasprapp_with_packages.prepare_python_packages_pvc()
         
         assert pvc is not None
         assert pvc.metadata.name.endswith("-packages")
@@ -141,7 +141,11 @@ class TestPreparePackagesPVC:
             spec=base_spec,
         )
         
-        pvc = app.prepare_packages_pvc()
+        pvc = app.prepare_python_packages_pvc()
+        
+        assert pvc is not None
+        assert pvc.metadata.name.endswith("-python-packages")
+        assert pvc.spec.access_modes == ["ReadWriteMany"]
         assert pvc.spec.resources.requests["storage"] == "1Gi"
     
     def test_prepare_packages_pvc_with_storage_class(self, base_spec):
@@ -162,7 +166,9 @@ class TestPreparePackagesPVC:
             spec=base_spec,
         )
         
-        pvc = app.prepare_packages_pvc()
+        pvc = app.prepare_python_packages_pvc()
+        
+        assert pvc is not None
         assert pvc.spec.storage_class_name == "fast-ssd"
     
     def test_prepare_packages_pvc_with_custom_access_mode(self, base_spec):
@@ -183,17 +189,19 @@ class TestPreparePackagesPVC:
             spec=base_spec,
         )
         
-        pvc = app.prepare_packages_pvc()
+        pvc = app.prepare_python_packages_pvc()
+        
+        assert pvc is not None
         assert pvc.spec.access_modes == ["ReadWriteOnce"]
     
     def test_prepare_packages_pvc_cache_disabled(self, kasprapp_cache_disabled):
         """Test that no PVC is created when cache is disabled."""
-        pvc = kasprapp_cache_disabled.prepare_packages_pvc()
+        pvc = kasprapp_cache_disabled.prepare_python_packages_pvc()
         assert pvc is None
     
     def test_prepare_packages_pvc_no_packages(self, kasprapp_without_packages):
         """Test that no PVC is created when python_packages is None."""
-        pvc = kasprapp_without_packages.prepare_packages_pvc()
+        pvc = kasprapp_without_packages.prepare_python_packages_pvc()
         assert pvc is None
     
     def test_prepare_packages_pvc_no_cache_field(self, base_spec):
@@ -209,9 +217,11 @@ class TestPreparePackagesPVC:
             spec=base_spec,
         )
         
-        pvc = app.prepare_packages_pvc()
+        pvc = app.prepare_python_packages_pvc()
+        
         assert pvc is not None
-        assert pvc.spec.resources.requests["storage"] == "256Mi"
+        assert pvc.spec.access_modes == ["ReadWriteMany"]  # Default
+        assert pvc.spec.resources.requests["storage"] == "256Mi"  # Default
 
 
 class TestPreparePackagesInitContainer:
@@ -395,25 +405,25 @@ class TestStatefulSetIntegration:
     """Tests for StatefulSet integration with packages."""
     
     def test_prepare_statefulset_includes_packages_pvc(self, kasprapp_with_packages):
-        """Test that packages PVC is in volume_claim_templates when enabled."""
+        """Test that packages PVC is created as standalone when enabled."""
         # Simply check if packages PVC is prepared
-        packages_pvc = kasprapp_with_packages.prepare_packages_pvc()
+        packages_pvc = kasprapp_with_packages.prepare_python_packages_pvc()
         assert packages_pvc is not None
-        assert packages_pvc.metadata.name.endswith("-packages")
+        assert packages_pvc.metadata.name.endswith("-python-packages")
     
     def test_prepare_statefulset_no_packages_when_cache_disabled(self, kasprapp_cache_disabled):
         """Test that packages PVC not added when cache disabled."""
-        packages_pvc = kasprapp_cache_disabled.prepare_packages_pvc()
+        packages_pvc = kasprapp_cache_disabled.prepare_python_packages_pvc()
         assert packages_pvc is None
     
     def test_prepare_statefulset_no_packages_when_not_configured(self, kasprapp_without_packages):
         """Test that packages PVC not added when packages not configured."""
-        packages_pvc = kasprapp_without_packages.prepare_packages_pvc()
+        packages_pvc = kasprapp_without_packages.prepare_python_packages_pvc()
         assert packages_pvc is None
     
     def test_packages_pvc_has_hash_annotation(self, kasprapp_with_packages):
         """Test that packages PVC includes hash annotation."""
-        pvc = kasprapp_with_packages.prepare_packages_pvc()
+        pvc = kasprapp_with_packages.prepare_python_packages_pvc()
         assert pvc is not None
         assert "kaspr.io/resource-hash" in pvc.metadata.annotations
 
@@ -444,13 +454,13 @@ class TestCachedProperties:
     """Tests for cached properties."""
     
     def test_packages_pvc_cached_property(self, kasprapp_with_packages):
-        """Test packages_pvc cached property."""
+        """Test python_packages_pvc cached property."""
         # First call should create PVC
-        pvc1 = kasprapp_with_packages.packages_pvc
+        pvc1 = kasprapp_with_packages.python_packages_pvc
         assert pvc1 is not None
         
-        # Second call should return cached value
-        pvc2 = kasprapp_with_packages.packages_pvc
+        # Second call should return cached PVC
+        pvc2 = kasprapp_with_packages.python_packages_pvc
         assert pvc1 is pvc2
     
     def test_packages_init_container_cached_property(self, kasprapp_with_packages):
@@ -464,8 +474,8 @@ class TestCachedProperties:
         assert container1 is container2
     
     def test_packages_pvc_cached_property_none(self, kasprapp_without_packages):
-        """Test packages_pvc returns None when not configured."""
-        pvc = kasprapp_without_packages.packages_pvc
+        """Test python_packages_pvc returns None when not configured."""
+        pvc = kasprapp_without_packages.python_packages_pvc
         assert pvc is None
     
     def test_packages_init_container_cached_property_none(self, kasprapp_cache_disabled):
