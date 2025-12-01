@@ -1,0 +1,34 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: example-with-packages
+  namespace: default
+spec:
+  replicas: 1
+  bootstrapServers: "kafka:9092"
+  
+  # Python package management configuration
+  pythonPackages:
+    packages:
+      - requests
+      - pandas>=2.0.0
+      - numpy==1.24.0
+    
+    cache:
+      enabled: true
+      size: "512Mi"
+      accessMode: ReadWriteMany
+      deleteClaim: true
+    
+    installPolicy:
+      retries: 3
+      timeout: 600
+      onFailure: block
+    
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"

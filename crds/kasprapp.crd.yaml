@@ -153,6 +153,70 @@ spec:
                       description: "When type=persistent-claim, defines the size of the persistent volume claim (i.e 1Gi). Mandatory when type=persistent-claim."
                   required:
                   - type
+                pythonPackages:
+                  type: object
+                  description: Python package management configuration for automatic package installation.
+                  properties:
+                    packages:
+                      type: array
+                      description: List of Python packages to install (e.g., ["requests", "pandas>=2.0.0"]).
+                      items:
+                        type: string
+                    cache:
+                      type: object
+                      description: Cache configuration for storing installed packages.
+                      properties:
+                        enabled:
+                          type: boolean
+                          description: Enable caching of installed packages using a PersistentVolumeClaim.
+                        storageClass:
+                          type: string
+                          description: The storage class to use for the packages cache PVC.
+                        size:
+                          type: string
+                          description: Size of the packages cache PVC (e.g., "256Mi", "1Gi").
+                        accessMode:
+                          type: string
+                          description: Access mode for the cache PVC.
+                          enum:
+                          - ReadWriteOnce
+                          - ReadWriteMany
+                          - ReadOnlyMany
+                        deleteClaim:
+                          type: boolean
+                          description: Whether to delete the PVC when the app is undeployed.
+                    installPolicy:
+                      type: object
+                      description: Installation behavior policy for package installation.
+                      properties:
+                        retries:
+                          type: integer
+                          minimum: 0
+                          description: Number of retry attempts for package installation. Defaults to 3.
+                        timeout:
+                          type: integer
+                          minimum: 60
+                          description: Timeout in seconds for package installation. Defaults to 600.
+                        onFailure:
+                          type: string
+                          description: Behavior on installation failure.
+                          enum:
+                          - block
+                          - allow
+                    resources:
+                      type: object
+                      description: Resource requirements for the init container that installs packages.
+                      properties:
+                        requests:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                          description: Resource requests (cpu, memory).
+                        limits:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                          description: Resource limits (cpu, memory).
+                  required:
+                  - packages
                 template:
                   type: object
                   properties:
@@ -974,6 +1038,11 @@ spec:
                   type: boolean
                 conditions:
                   type: array
+                  description: |-
+                    Standard Kubernetes conditions. Includes:
+                    - Ready: Overall app readiness
+                    - Progressing: Whether reconciliation is in progress
+                    - PythonPackagesReady: Python packages installation state (when spec.pythonPackages is configured)
                   x-kubernetes-list-type: map
                   x-kubernetes-list-map-keys:
                     - type
@@ -1091,6 +1160,38 @@ spec:
                 rebalancingMembers:
                   type: string
                   description: Count of members currently rebalancing
+                pythonPackages:
+                  type: object
+                  description: |-
+                    Python packages installation metadata.
+                    State information is tracked via the PythonPackagesReady condition.
+                  properties:
+                    hash:
+                      type: string
+                      description: Hash of the packages configuration for change detection
+                    installed:
+                      type: array
+                      items:
+                        type: string
+                      description: List of successfully installed packages
+                    cacheMode:
+                      type: string
+                      description: PVC access mode (ReadWriteMany or ReadWriteOnce)
+                    lastInstallTime:
+                      type: string
+                      format: date-time
+                      description: Timestamp when packages were last installed
+                    installDuration:
+                      type: string
+                      description: Duration of package installation
+                    installedBy:
+                      type: string
+                      description: Name of pod that performed the installation
+                    warnings:
+                      type: array
+                      items:
+                        type: string
+                      description: Non-fatal warnings during installation
       subresources:
         status: {}      
       additionalPrinterColumns:

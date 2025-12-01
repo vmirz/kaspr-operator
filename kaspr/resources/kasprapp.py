@@ -25,6 +25,8 @@ from kaspr.types.models.resource_template import ResourceTemplate
 from kaspr.types.models.pod_template import PodTemplate
 from kaspr.types.models.service_template import ServiceTemplate
 from kaspr.types.models.container_template import ContainerTemplate
+from kaspr.types.models.python_packages import PythonPackagesSpec
+from kaspr.utils.python_packages import generate_install_script
 from kubernetes_asyncio.client import (
     AppsV1Api,
     CoreV1Api,
@@ -49,6 +51,7 @@ from kubernetes_asyncio.client import (
     V1PersistentVolumeClaimSpec,
     V1PersistentVolumeClaim,
     V1PersistentVolumeClaimTemplate,
+    V1PersistentVolumeClaimVolumeSource,
     V1StatefulSetPersistentVolumeClaimRetentionPolicy,
     V1ConfigMap,
     V1EnvVar,
@@ -104,6 +107,14 @@ class KasprApp(BaseResource):
     DEFAULT_DEFINITIONS_DIR = "/var/lib/data/definitions"
     DEFAULT_WEB_PORT = 6065
     INITIAL_MAX_REPLICAS = 1
+    
+    # Python packages defaults
+    DEFAULT_PACKAGES_PVC_SIZE = "256Mi"
+    DEFAULT_PACKAGES_CACHE_ENABLED = True
+    DEFAULT_PACKAGES_ACCESS_MODE = "ReadWriteMany"
+    DEFAULT_PACKAGES_DELETE_CLAIM = True
+    DEFAULT_PACKAGES_INSTALL_RETRIES = 3
+    DEFAULT_PACKAGES_INSTALL_TIMEOUT = 600
 
     replicas: int
     image: str
@@ -126,6 +137,7 @@ class KasprApp(BaseResource):
     liveness_probe: Probe
     readiness_probe: Probe
     storage: KasprAppStorage
+    python_packages: Optional[PythonPackagesSpec]
 
     # derived from spec
     _env_dict: Dict[str, str] = None
@@ -148,6 +160,10 @@ class KasprApp(BaseResource):
     _persistent_volume_claim: V1PersistentVolumeClaim = None
     _persistent_volume_claim_hash: str = None
     _persistent_volume_claim_retention_policy: V1StatefulSetPersistentVolumeClaimRetentionPolicy = None
+    _packages_pvc: V1PersistentVolumeClaim = None
+    _packages_pvc_hash: str = None
+    _packages_pvc_name: str = None
+    _packages_init_container: V1Container = None
     _settings_config_map: V1ConfigMap = None
     _settings_config_map_hash: str = None
     _env_vars: List[V1EnvVar] = None
@@ -175,6 +191,7 @@ class KasprApp(BaseResource):
     _agents_hash: str = None
     _tables_hash: str = None
     _tasks_hash: str = None
+    _packages_hash: str = None
 
     # TODO: Templates allow customizing k8s behavior
     template_service_account: ResourceTemplate
@@ -251,6 +268,7 @@ class KasprApp(BaseResource):
         app.liveness_probe = spec.liveness_probe
         app.readiness_probe = spec.readiness_probe
         app.storage = spec.storage
+        app.python_packages = spec.python_packages if hasattr(spec, 'python_packages') else None
         app.template_service_account = spec.template.service_account
         app.template_pod = spec.template.pod
         app.template_service = spec.template.service
@@ -274,6 +292,7 @@ class KasprApp(BaseResource):
         await self.sync_headless_service()
         await self.sync_service_account()
         await self.sync_settings_config_map()
+        await self.sync_python_packages_pvc()
         await self.sync_hpa()
         await self.sync_stateful_set()
 
@@ -472,6 +491,100 @@ class KasprApp(BaseResource):
                 finally:
                     self.sensor.on_resource_sync_complete(
                         self.cluster, self.cluster, self.settings_config_map.metadata.name, self.namespace, "config_map", sensor_state, "patch", success
+                    )
+
+    async def sync_python_packages_pvc(self):
+        """Check current state of python packages PVC and create/patch/delete as needed."""
+        pvc: V1PersistentVolumeClaim = await self.fetch_persistent_volume_claim(
+            self.core_v1_api, self.python_packages_pvc_name, self.namespace
+        )
+        
+        should_create = self.should_create_packages_pvc()
+        
+        if pvc and not should_create:
+            # PVC exists but feature is disabled - delete it
+            self.sensor.on_resource_drift_detected(
+                self.cluster, self.cluster, self.python_packages_pvc_name, self.namespace, "pvc", ["deleted"]
+            )
+            
+            sensor_state = self.sensor.on_resource_sync_start(
+                self.cluster, self.cluster, self.python_packages_pvc_name, self.namespace, "pvc"
+            )
+            
+            success = True
+            try:
+                await self.delete_persistent_volume_claim(
+                    self.core_v1_api, self.python_packages_pvc_name, self.namespace
+                )
+            except Exception:
+                success = False
+                raise
+            finally:
+                self.sensor.on_resource_sync_complete(
+                    self.cluster, self.cluster, self.python_packages_pvc_name, self.namespace, "pvc", sensor_state, "delete", success
+                )
+        elif not pvc and should_create:
+            # PVC doesn't exist but should be created
+            sensor_state = self.sensor.on_resource_sync_start(
+                self.cluster, self.cluster, self.python_packages_pvc.metadata.name, self.namespace, "pvc"
+            )
+            
+            success = True
+            try:
+                await self.create_persistent_volume_claim(
+                    self.core_v1_api, self.namespace, self.python_packages_pvc
+                )
+            except Exception:
+                success = False
+                raise
+            finally:
+                self.sensor.on_resource_sync_complete(
+                    self.cluster, self.cluster, self.python_packages_pvc.metadata.name, self.namespace, "pvc", sensor_state, "create", success
+                )
+        elif pvc and should_create:
+            # PVC exists - check if it needs patching
+            actual = self.prepare_python_packages_pvc_watch_fields(pvc)
+            desired = self.prepare_python_packages_pvc_watch_fields(self.python_packages_pvc)
+            actual_hash = self.compute_hash(actual)
+            desired_hash = self.compute_hash(desired)
+            
+            if actual_hash != desired_hash:
+                # Detect drift
+                self.sensor.on_resource_drift_detected(
+                    self.cluster, self.cluster, self.python_packages_pvc_name, self.namespace, "pvc", ["spec"]
+                )
+                
+                # Check if storage size is increasing (valid expansion)
+                actual_size = actual.get("spec", {}).get("resources", {}).get("requests", {}).get("storage")
+                desired_size = desired.get("spec", {}).get("resources", {}).get("requests", {}).get("storage")
+                
+                if actual_size and desired_size and self._is_storage_expansion(actual_size, desired_size):
+                    # Storage expansion is allowed - patch the PVC
+                    sensor_state = self.sensor.on_resource_sync_start(
+                        self.cluster, self.cluster, self.python_packages_pvc_name, self.namespace, "pvc"
+                    )
+                    
+                    success = True
+                    try:
+                        await self.patch_persistent_volume_claim(
+                            self.core_v1_api,
+                            self.python_packages_pvc_name,
+                            self.namespace,
+                            persistent_volume_claim=self.prepare_python_packages_pvc_patch(self.python_packages_pvc),
+                        )
+                    except Exception:
+                        success = False
+                        raise
+                    finally:
+                        self.sensor.on_resource_sync_complete(
+                            self.cluster, self.cluster, self.python_packages_pvc_name, self.namespace, "pvc", sensor_state, "patch", success
+                        )
+                else:
+                    # Other changes are not allowed (e.g., storage reduction, storage class change)
+                    self.logger.warning(
+                        f"Python packages PVC {self.python_packages_pvc_name} has drifted with unsupported changes. "
+                        f"Storage can only be expanded, not reduced. Storage class cannot be changed. "
+                        f"Manual intervention required (delete and recreate PVC)."
                     )
 
     async def sync_stateful_set(self):
@@ -961,6 +1074,202 @@ class KasprApp(BaseResource):
             when_scaled="Retain",
         )
 
+    def prepare_python_packages_pvc(self) -> Optional[V1PersistentVolumeClaim]:
+        """Build a standalone PVC resource for Python packages cache (shared by all pods)."""
+        if not self.should_create_packages_pvc():
+            return None
+        
+        cache = getattr(self.python_packages, 'cache', None)
+        # Get cache configuration with defaults
+        size = cache.size if cache and hasattr(cache, 'size') and cache.size else self.DEFAULT_PACKAGES_PVC_SIZE
+        storage_class = cache.storage_class if cache and hasattr(cache, 'storage_class') else None
+        access_mode = cache.access_mode if cache and hasattr(cache, 'access_mode') and cache.access_mode else self.DEFAULT_PACKAGES_ACCESS_MODE
+        
+        # Create labels with component identifier
+        labels = self.labels.as_dict()
+        labels["kaspr.io/component"] = "python-packages"
+        
+        annotations = {}
+        pvc = V1PersistentVolumeClaim(
+            api_version="v1",
+            kind="PersistentVolumeClaim",
+            metadata=V1ObjectMeta(
+                name=self.python_packages_pvc_name,
+                labels=labels,
+                annotations=annotations,
+                namespace=self.namespace,
+            ),
+            spec=V1PersistentVolumeClaimSpec(
+                access_modes=[access_mode],
+                resources=V1ResourceRequirements(
+                    requests={"storage": size}
+                ),
+                storage_class_name=storage_class,
+            ),
+        )
+        annotations.update(
+            self.prepare_hash_annotation(self.prepare_python_packages_pvc_hash(pvc))
+        )
+        return pvc
+
+    def prepare_python_packages_pvc_hash(self, pvc: V1PersistentVolumeClaim) -> str:
+        """Compute hash for packages PVC resource."""
+        return self.compute_hash(pvc.to_dict())
+    
+    def prepare_python_packages_pvc_watch_fields(self, pvc: V1PersistentVolumeClaim) -> Dict:
+        """Prepare fields of interest when comparing actual vs desired state for packages PVC.
+        
+        For PVCs, we only track storage size (can be expanded but not reduced).
+        Note: Storage class cannot be changed after creation.
+        """
+        storage_size = None
+        if pvc.spec and pvc.spec.resources and pvc.spec.resources.requests:
+            storage_size = pvc.spec.resources.requests.get("storage")
+        
+        return {
+            "spec": {
+                "resources": {
+                    "requests": {
+                        "storage": storage_size,
+                    }
+                }
+            },
+        }
+    
+    def prepare_python_packages_pvc_patch(self, pvc: V1PersistentVolumeClaim) -> Dict:
+        """Prepare patch for Python packages PVC resource.
+        
+        Only storage size expansion is allowed to be patched.
+        """
+        patch = []
+        
+        if pvc.spec and pvc.spec.resources and pvc.spec.resources.requests:
+            storage = pvc.spec.resources.requests.get("storage")
+            if storage:
+                patch.append(
+                    {
+                        "op": "replace",
+                        "path": "/spec/resources/requests/storage",
+                        "value": storage,
+                    }
+                )
+        
+        return patch
+    
+    def _is_storage_expansion(self, actual_size: str, desired_size: str) -> bool:
+        """Check if desired size is larger than actual size.
+        
+        Parses Kubernetes quantity strings (e.g., "1Gi", "500Mi") and compares them.
+        """
+        def parse_size(size_str: str) -> int:
+            """Parse Kubernetes quantity string to bytes."""
+            if not size_str:
+                return 0
+            
+            # Common Kubernetes storage units
+            units = {
+                'Ki': 1024,
+                'Mi': 1024 ** 2,
+                'Gi': 1024 ** 3,
+                'Ti': 1024 ** 4,
+                'Pi': 1024 ** 5,
+                'K': 1000,
+                'M': 1000 ** 2,
+                'G': 1000 ** 3,
+                'T': 1000 ** 4,
+                'P': 1000 ** 5,
+            }
+            
+            size_str = size_str.strip()
+            
+            # Try to find unit suffix
+            for unit, multiplier in units.items():
+                if size_str.endswith(unit):
+                    number = size_str[:-len(unit)]
+                    try:
+                        return int(float(number) * multiplier)
+                    except ValueError:
+                        return 0
+            
+            # No unit, assume bytes
+            try:
+                return int(size_str)
+            except ValueError:
+                return 0
+        
+        actual_bytes = parse_size(actual_size)
+        desired_bytes = parse_size(desired_size)
+        
+        return desired_bytes > actual_bytes
+    
+    def should_create_packages_pvc(self) -> bool:
+        """Check if python packages PVC should be created."""
+        if not self.python_packages:
+            return False
+        
+        cache = self.python_packages.cache if hasattr(self.python_packages, 'cache') and self.python_packages.cache else None
+        enabled = cache.enabled if cache and hasattr(cache, 'enabled') else self.DEFAULT_PACKAGES_CACHE_ENABLED
+        
+        return enabled
+
+    def prepare_packages_init_container(self) -> Optional[V1Container]:
+        """Build init container for installing Python packages."""
+        if not self.python_packages:
+            return None
+        
+        cache = self.python_packages.cache if hasattr(self.python_packages, 'cache') and self.python_packages.cache else None
+        enabled = cache.enabled if cache and hasattr(cache, 'enabled') else self.DEFAULT_PACKAGES_CACHE_ENABLED
+        
+        if not enabled:
+            return None
+        
+        # Generate the install script
+        cache_path = "/opt/kaspr/packages"
+        lock_file = "/opt/kaspr/packages/.install.lock"
+        install_policy = self.python_packages.install_policy if hasattr(self.python_packages, 'install_policy') else None
+        timeout = install_policy.timeout if install_policy and hasattr(install_policy, 'timeout') and install_policy.timeout else self.DEFAULT_PACKAGES_INSTALL_TIMEOUT
+        retries = install_policy.retries if install_policy and hasattr(install_policy, 'retries') and install_policy.retries is not None else self.DEFAULT_PACKAGES_INSTALL_RETRIES
+        
+        script = generate_install_script(
+            self.python_packages,
+            cache_path=cache_path,
+            lock_file=lock_file,
+            timeout=timeout,
+            retries=retries,
+            packages_hash=self.packages_hash,
+        )
+
+        self.logger.info(f"Generated package install script for hash {self.packages_hash}")
+        
+        # Get resource requirements if specified
+        resources_spec = self.python_packages.resources if hasattr(self.python_packages, 'resources') and self.python_packages.resources else None
+        resource_requirements = None
+        if resources_spec:
+            resource_requirements = V1ResourceRequirements(
+                requests=resources_spec.requests if hasattr(resources_spec, 'requests') else None,
+                limits=resources_spec.limits if hasattr(resources_spec, 'limits') else None,
+            )
+        
+        # Add PACKAGES_HASH env var to init container
+        env_vars = []
+        if self.packages_hash:
+            env_vars.append(V1EnvVar(name="PACKAGES_HASH", value=self.packages_hash))
+        
+        return V1Container(
+            name="install-packages",
+            image=self.image,  # Use same image as main container
+            command=["/bin/bash", "-c"],
+            args=[script],
+            env=env_vars if env_vars else None,
+            volume_mounts=[
+                V1VolumeMount(
+                    name=f"{self.component_name}-packages",
+                    mount_path=cache_path,
+                )
+            ],
+            resources=resource_requirements,
+        )
+
     def prepare_env_vars(self) -> List[V1EnvVar]:
         env_vars = []
         config_map = self.settings_config_map
@@ -999,10 +1308,26 @@ class KasprApp(BaseResource):
                 V1EnvVar(
                     name=self.config.env_for("consumer_group_instance_id"),
                     value_from=V1EnvVarSource(
-                        field_ref=V1ObjectFieldSelector(field_path="metadata.name")
+                        field_ref=V1ObjectFieldSelector(
+                            api_version="v1",
+                            field_path="metadata.name",
+                        )
                     ),
                 )
             )
+
+        # Add PYTHONPATH for installed packages
+        if self.python_packages:
+            cache = self.python_packages.cache if hasattr(self.python_packages, 'cache') and self.python_packages.cache else None
+            enabled = cache.enabled if cache and hasattr(cache, 'enabled') else self.DEFAULT_PACKAGES_CACHE_ENABLED
+            
+            if enabled:
+                env_vars.append(
+                    V1EnvVar(
+                        name="PYTHONPATH",
+                        value="/opt/kaspr/packages:${PYTHONPATH}"
+                    )
+                )
 
         # include web host as FQDN of the pod
         # e.g. <pod_name>.<headless_service_name>.<namespace>.svc
@@ -1039,6 +1364,10 @@ class KasprApp(BaseResource):
         # include tasks hash
         if self.tasks:
             env_vars.append(V1EnvVar(name="TASKS_HASH", value=self.tasks_hash))
+
+        # include packages hash
+        if self.python_packages:
+            env_vars.append(V1EnvVar(name="PACKAGES_HASH", value=self.packages_hash))
 
         # template environment variables
         env_vars.extend(self.prepare_container_template_env_vars())
@@ -1195,8 +1524,26 @@ class KasprApp(BaseResource):
                 *self.prepare_table_volume_mounts(),
                 *self.prepare_task_volume_mounts(),
                 *self.prepare_container_template_volume_mounts(),
+                *self.prepare_packages_volume_mounts(),
             ]
         )
+        return volume_mounts
+
+    def prepare_packages_volume_mounts(self) -> List[V1VolumeMount]:
+        """Prepare volume mount for Python packages cache."""
+        volume_mounts = []
+        if self.python_packages:
+            cache = self.python_packages.cache if hasattr(self.python_packages, 'cache') and self.python_packages.cache else None
+            enabled = cache.enabled if cache and hasattr(cache, 'enabled') else self.DEFAULT_PACKAGES_CACHE_ENABLED
+            
+            if enabled:
+                volume_mounts.append(
+                    V1VolumeMount(
+                        name=f"{self.component_name}-packages",
+                        mount_path="/opt/kaspr/packages",
+                        read_only=True,  # Main container only reads installed packages
+                    )
+                )
         return volume_mounts
 
     def prepare_container_template_volume_mounts(self) -> List[V1VolumeMount]:
@@ -1250,6 +1597,18 @@ class KasprApp(BaseResource):
         volumes.extend(self.prepare_table_volumes())
         volumes.extend(self.prepare_task_volumes())
         volumes.extend(self.prepare_pod_template_volumes())
+        
+        # Add python packages PVC volume if enabled
+        if self.should_create_packages_pvc():
+            volumes.append(
+                V1Volume(
+                    name=f"{self.component_name}-packages",
+                    persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(
+                        claim_name=self.python_packages_pvc_name
+                    )
+                )
+            )
+        
         return volumes
 
     def prepare_pod_template_volumes(self) -> List[V1Volume]:
@@ -1377,6 +1736,11 @@ class KasprApp(BaseResource):
 
     def prepare_pod_spec(self) -> V1PodSpec:
         """Build pod spec for kaspr app."""
+        # Build init containers list
+        init_containers = []
+        if self.packages_init_container:
+            init_containers.append(self.packages_init_container)
+        
         return V1PodSpec(
             image_pull_secrets=self.template_pod.image_pull_secrets,
             security_context=self.template_pod.security_context,
@@ -1389,6 +1753,7 @@ class KasprApp(BaseResource):
             scheduler_name=self.template_pod.scheduler_name,
             host_aliases=self.template_pod.host_aliases,
             enable_service_links=self.template_pod.enable_service_links,
+            init_containers=init_containers if init_containers else None,
             containers=[self.kaspr_container],
             volumes=self.volumes,
         )
@@ -1396,6 +1761,11 @@ class KasprApp(BaseResource):
     def prepare_statefulset(self) -> V1StatefulSetSpec:
         """Build stateful set resource."""
         labels, annotations = {}, {}
+        
+        # Only include main storage PVC in volume claim templates
+        # Python packages PVC is now a standalone shared PVC
+        volume_claim_templates = [self.persistent_volume_claim]
+        
         stateful_set = V1StatefulSet(
             api_version="apps/v1",
             kind="StatefulSet",
@@ -1413,13 +1783,14 @@ class KasprApp(BaseResource):
                     match_labels=self.labels.kasper_label_selectors().as_dict()
                 ),
                 template=self.pod_template,
-                volume_claim_templates=[self.persistent_volume_claim],
+                volume_claim_templates=volume_claim_templates,
                 persistent_volume_claim_retention_policy=self.persistent_volume_claim_retention_policy,
             ),
         )
         annotations.update(
             self.prepare_hash_annotation(self.prepare_statefulset_hash(stateful_set))
         )
+        
         return stateful_set
 
     def prepare_statefulset_hash(self, stateful_set: V1StatefulSet) -> str:
@@ -1510,7 +1881,19 @@ class KasprApp(BaseResource):
         These fields are tracked for changes made outside the operator and are used to
         determine if a patch is needed.
         """
-        return {
+        # Extract PACKAGES_HASH env var from init container if it exists
+        packages_hash_env = None
+        if stateful_set.spec.template.spec.init_containers:
+            for init_container in stateful_set.spec.template.spec.init_containers:
+                if init_container.name == "install-packages" and init_container.env:
+                    for env_var in init_container.env:
+                        if env_var.name == "PACKAGES_HASH":
+                            packages_hash_env = env_var.value
+                            break
+                    if packages_hash_env is not None:
+                        break
+        
+        watch_fields = {
             "spec": {
                 "replicas": stateful_set.spec.replicas,
                 "template": {
@@ -1526,6 +1909,19 @@ class KasprApp(BaseResource):
                 },
             }
         }
+        
+        # Include PACKAGES_HASH from init container in watch fields if present
+        if packages_hash_env is not None:
+            watch_fields["spec"]["template"]["spec"]["initContainers"] = [
+                {
+                    "name": "install-packages",
+                    "env": [
+                        {"name": "PACKAGES_HASH", "value": packages_hash_env}
+                    ]
+                }
+            ]
+        
+        return watch_fields
 
     def prepare_statefulset_desired_replicas(self, actual: Dict) -> Dict:
         """Prepare desired replicas for stateful set.
@@ -1713,6 +2109,7 @@ class KasprApp(BaseResource):
         self.unite()
         await self.sync_service_account()
         await self.sync_settings_config_map()
+        await self.sync_python_packages_pvc()
         await self.sync_service()
         await self.sync_headless_service()
         await self.sync_stateful_set()
@@ -2001,6 +2398,15 @@ class KasprApp(BaseResource):
             self.stateful_set,
             self.hpa,
         ]
+        
+        # Conditionally adopt python packages PVC based on delete_claim setting
+        if self.should_create_packages_pvc() and self.python_packages_pvc:
+            cache = getattr(self.python_packages, 'cache', None)
+            delete_claim = cache.delete_claim if cache and hasattr(cache, 'delete_claim') and cache.delete_claim is not None else self.DEFAULT_PACKAGES_DELETE_CLAIM
+            
+            if delete_claim:
+                children.append(self.python_packages_pvc)
+        
         kopf.adopt(children)
 
     async def search(self, namespace: str, apps: List[str] = None):
@@ -2390,6 +2796,30 @@ class KasprApp(BaseResource):
         return self._persistent_volume_claim_retention_policy
 
     @cached_property
+    def python_packages_pvc_name(self) -> str:
+        if self._packages_pvc_name is None:
+            self._packages_pvc_name = f"{self.component_name}-python-packages"
+        return self._packages_pvc_name
+
+    @cached_property
+    def python_packages_pvc(self) -> Optional[V1PersistentVolumeClaim]:
+        if self._packages_pvc is None:
+            self._packages_pvc = self.prepare_python_packages_pvc()
+        return self._packages_pvc
+
+    @cached_property
+    def python_packages_pvc_hash(self) -> Optional[str]:
+        if self._packages_pvc_hash is None and self.python_packages_pvc:
+            self._packages_pvc_hash = self.prepare_python_packages_pvc_hash(self.python_packages_pvc)
+        return self._packages_pvc_hash
+
+    @cached_property
+    def packages_init_container(self) -> Optional[V1Container]:
+        if self._packages_init_container is None:
+            self._packages_init_container = self.prepare_packages_init_container()
+        return self._packages_init_container
+
+    @cached_property
     def volume_mounts(self) -> List[V1VolumeMount]:
         if self._volume_mounts is None:
             self._volume_mounts = self.prepare_volume_mounts()
@@ -2510,3 +2940,12 @@ class KasprApp(BaseResource):
                 else None
             )
         return self._tasks_hash
+
+    @cached_property
+    def packages_hash(self) -> Optional[str]:
+        """Hash of Python packages configuration."""
+        if self._packages_hash is None and self.python_packages:
+            # Import here to avoid circular dependency
+            from kaspr.utils.python_packages import compute_packages_hash
+            self._packages_hash = compute_packages_hash(self.python_packages)
+        return self._packages_hash

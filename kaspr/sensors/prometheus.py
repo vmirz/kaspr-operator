@@ -169,6 +169,29 @@ class PrometheusMonitor(OperatorSensor):
             labelnames=['app_name', 'namespace', 'update_field'],
         )
         
+        # =============================================================================
+        # Python Package Installation Metrics
+        # =============================================================================
+        
+        self.package_install_duration_seconds = Histogram(
+            'kasprop_package_install_duration_seconds',
+            'Time taken to install Python packages',
+            labelnames=['app_name', 'namespace'],
+            buckets=[1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0],
+        )
+        
+        self.package_install_total = Counter(
+            'kasprop_package_install_total',
+            'Total number of package installations',
+            labelnames=['app_name', 'namespace', 'result'],  # result: success/failure
+        )
+        
+        self.package_install_errors_total = Counter(
+            'kasprop_package_install_errors_total',
+            'Total number of package installation errors',
+            labelnames=['app_name', 'namespace', 'error_type'],
+        )
+        
         logger.info("PrometheusMonitor initialized with all metrics")
 
     # =============================================================================
@@ -469,16 +492,66 @@ class PrometheusMonitor(OperatorSensor):
     # Status Update Hooks
     # =============================================================================
 
+    def on_package_install_start(
+        self,
+        app_name: str,
+        namespace: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Record package installation start time."""
+        return {'start_time': time.time()}
+    
+    def on_package_install_complete(
+        self,
+        app_name: str,
+        namespace: str,
+        state: Optional[Dict[str, Any]],
+        success: bool,
+        error_type: Optional[str] = None,
+    ) -> None:
+        """Record package installation completion with metrics.
+        
+        Args:
+            app_name: KasprApp name
+            namespace: Kubernetes namespace
+            state: State dict from on_package_install_start
+            success: Whether installation succeeded
+            error_type: Type of error if installation failed (e.g., 'timeout', 'network', 'invalid_package')
+        """
+        if state:
+            duration = time.time() - state.get('start_time', time.time())
+            
+            # Record duration
+            self.package_install_duration_seconds.labels(
+                app_name=app_name,
+                namespace=namespace,
+            ).observe(duration)
+        
+        # Record result
+        result = "success" if success else "failure"
+        self.package_install_total.labels(
+            app_name=app_name,
+            namespace=namespace,
+            result=result,
+        ).inc()
+        
+        # Record error if failed
+        if not success and error_type:
+            self.package_install_errors_total.labels(
+                app_name=app_name,
+                namespace=namespace,
+                error_type=error_type,
+            ).inc()
+
     def on_status_update(
         self,
-        name: str,
+        app_name: str,
         namespace: str,
         update_fields: list[str],
     ) -> None:
-        """Record status updates."""
+        """Record status update."""
         for field in update_fields:
             self.status_updates.labels(
-                app_name=name,
+                app_name=app_name,
                 namespace=namespace,
                 update_field=field,
             ).inc()
