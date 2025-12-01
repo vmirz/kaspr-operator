@@ -588,6 +588,77 @@ kubectl exec my-app-0 -- ls -la /opt/kaspr/packages/.installed-*
    - Check PVC exists: `kubectl get pvc`
    - Verify `deleteClaim: false` if persistence needed
 
+### Status Shows "Unable to read installation details"
+
+**Symptom**: Status shows warning about missing pod/exec permission
+
+**Example:**
+```yaml
+status:
+  pythonPackages:
+    hash: 8fdf94a2247dc4a6
+    warnings:
+      - "Unable to read installation details (missing pod/exec permission)"
+```
+
+**Cause:** The operator's service account lacks `pods/exec` permission in the namespace.
+
+**Impact:** 
+- ✅ Package installation **still works correctly**
+- ✅ Condition status **correctly shows** `PackagesInstalled` 
+- ❌ Detailed metadata **not available** (installed packages list, duration, etc.)
+
+**Solution:**
+
+Grant the operator `pods/exec` permission. For cluster-scoped operator:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kaspr-operator
+rules:
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  # ... other rules
+```
+
+For namespace-scoped operator:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kaspr-operator
+  namespace: my-namespace
+rules:
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  # ... other rules
+```
+
+Apply the updated RBAC and restart the operator:
+
+```bash
+kubectl apply -f rbac.yaml
+kubectl rollout restart -n kaspr-operator deployment/kaspr-operator
+```
+
+**Note**: If granting `pods/exec` is not possible in your environment (security policy), the feature will continue to work with this graceful degradation. The operator only reads the marker file (non-intrusive, read-only data).
+
+### Pods Won't Start
+   - Or accept RWO and slower scaling
+
+2. **Hash mismatch**: Package spec changed
+   - Normal behavior - packages updated
+   - Check `status.pythonPackages.hash` vs PACKAGES_HASH env var
+
+3. **PVC deleted**: Cache cleared
+   - Check PVC exists: `kubectl get pvc`
+   - Verify `deleteClaim: false` if persistence needed
+
 ### Pods Won't Start
 
 **Symptom**: Pods stuck in Init:0/1
@@ -842,6 +913,25 @@ pythonPackages:
 ### Q: Can I mix Python 2 and Python 3 packages?
 
 **A:** No, operator uses Python version from Kaspr image. Use Python 3 packages only.
+
+### Q: Why does status show "Unable to read installation details (missing pod/exec permission)"?
+
+**A:** The operator needs `pods/exec` permission to read installation metadata from pods. This is optional - the condition status will still correctly report `PackagesInstalled` based on the init container exit code, but detailed information (installed packages list, install duration, etc.) won't be available.
+
+To grant the permission, update the operator's ClusterRole:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kaspr-operator
+rules:
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+```
+
+**Note**: The operator only uses `pods/exec` to read the marker file (non-intrusive, read-only operation). If you cannot grant this permission, the feature will work with limited status metadata.
 
 ### Q: What happens if installation fails?
 
