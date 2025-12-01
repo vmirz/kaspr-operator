@@ -1219,6 +1219,54 @@ async def update_status(
             packages_status = await fetch_python_packages_status(app, logger)
             if packages_status:
                 current_packages_status = _status.get("pythonPackages", {})
+                
+                # Detect state transitions for metrics
+                current_state = current_packages_status.get("state")
+                new_state = packages_status.get("state")
+                
+                # Instrument package installation completion
+                if current_state != new_state and new_state in ("Ready", "Failed"):
+                    sensor = get_sensor()
+                    if sensor:
+                        # We don't have the start state, but we can record completion
+                        # The duration comes from the marker file's installDuration field
+                        success = new_state == "Ready"
+                        error_type = None
+                        
+                        if not success:
+                            # Extract error type from error message
+                            error_msg = packages_status.get("error", "")
+                            if "timeout" in error_msg.lower():
+                                error_type = "timeout"
+                            elif "network" in error_msg.lower() or "connection" in error_msg.lower():
+                                error_type = "network"
+                            elif "invalid" in error_msg.lower() or "not found" in error_msg.lower():
+                                error_type = "invalid_package"
+                            else:
+                                error_type = "unknown"
+                        
+                        # Create synthetic state with duration from marker file
+                        install_duration = packages_status.get("installDuration")
+                        if install_duration and success:
+                            # installDuration is a string like "45.2s", parse it
+                            try:
+                                duration_seconds = float(install_duration.rstrip('s'))
+                                synthetic_state = {
+                                    'start_time': time.time() - duration_seconds
+                                }
+                            except (ValueError, AttributeError):
+                                synthetic_state = None
+                        else:
+                            synthetic_state = None
+                        
+                        sensor.on_package_install_complete(
+                            name,
+                            namespace,
+                            synthetic_state,
+                            success,
+                            error_type
+                        )
+                
                 # Only update if status has changed
                 if packages_status != current_packages_status:
                     status_update["pythonPackages"] = packages_status

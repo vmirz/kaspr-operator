@@ -333,16 +333,62 @@ class SensorDelegate(OperatorSensor):
     # Status Update Hooks
     # =============================================================================
 
+    def on_package_install_start(
+        self,
+        app_name: str,
+        namespace: str,
+    ) -> Optional[Dict[OperatorSensor, Any]]:
+        """Delegate package_install_start to all sensors."""
+        if not self._sensors:
+            return None
+        
+        states = {}
+        for sensor in self._sensors:
+            try:
+                state = sensor.on_package_install_start(app_name, namespace)
+                if state is not None:
+                    states[sensor] = state
+            except Exception as e:
+                logger.error(
+                    f"Error in {sensor.__class__.__name__}.on_package_install_start: {e}",
+                    exc_info=True,
+                )
+        
+        return states if states else None
+    
+    def on_package_install_complete(
+        self,
+        app_name: str,
+        namespace: str,
+        state: Optional[Dict[OperatorSensor, Any]],
+        success: bool,
+        error_type: Optional[str] = None,
+    ) -> None:
+        """Delegate package_install_complete to all sensors with their specific state."""
+        for sensor in self._sensors:
+            try:
+                sensor_state = state.get(sensor) if state else None
+                sensor.on_package_install_complete(app_name, namespace, sensor_state, success, error_type)
+            except Exception as e:
+                logger.error(
+                    f"Error in {sensor.__class__.__name__}.on_package_install_complete: {e}",
+                    exc_info=True,
+                )
+
+    # =============================================================================
+    # Status Update Hooks
+    # =============================================================================
+
     def on_status_update(
         self,
-        name: str,
+        app_name: str,
         namespace: str,
         update_fields: list[str],
     ) -> None:
         """Delegate status_update to all sensors."""
         for sensor in self._sensors:
             try:
-                sensor.on_status_update(name, namespace, update_fields)
+                sensor.on_status_update(app_name, namespace, update_fields)
             except Exception as e:
                 logger.error(
                     f"Error in {sensor.__class__.__name__}.on_status_update: {e}",

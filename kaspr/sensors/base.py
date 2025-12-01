@@ -290,6 +290,45 @@ class OperatorSensor:
         pass
 
     # =============================================================================
+    # Package Installation Hooks
+    # =============================================================================
+    
+    def on_package_install_start(
+        self,
+        app_name: str,
+        namespace: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Called when Python package installation begins.
+        
+        Args:
+            app_name: KasprApp name
+            namespace: Kubernetes namespace
+            
+        Returns:
+            Optional state dict passed to on_package_install_complete
+        """
+        pass
+    
+    def on_package_install_complete(
+        self,
+        app_name: str,
+        namespace: str,
+        state: Optional[Dict[str, Any]],
+        success: bool,
+        error_type: Optional[str] = None,
+    ) -> None:
+        """Called when Python package installation completes.
+        
+        Args:
+            app_name: KasprApp name
+            namespace: Kubernetes namespace
+            state: State dict returned from on_package_install_start
+            success: Whether installation succeeded
+            error_type: Type of error if installation failed
+        """
+        pass
+
+    # =============================================================================
     # Status Update Hooks
     # =============================================================================
 
