@@ -162,15 +162,11 @@ class PythonPackagesSpecSchema(BaseSchema):
 
 
 class PythonPackagesStatusSchema(BaseSchema):
-    """Schema for Python packages status."""
+    """Schema for Python packages status.
+    """
     
     __model__ = PythonPackagesStatus
     
-    state = fields.String(
-        data_key="state",
-        allow_none=True,
-        load_default=None,
-    )
     hash = fields.String(
         data_key="hash",
         allow_none=True,
@@ -199,11 +195,6 @@ class PythonPackagesStatusSchema(BaseSchema):
     )
     installed_by = fields.String(
         data_key="installedBy",
-        allow_none=True,
-        load_default=None,
-    )
-    error = fields.String(
-        data_key="error",
         allow_none=True,
         load_default=None,
     )

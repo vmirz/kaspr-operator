@@ -237,46 +237,87 @@ resources:
 
 ## Status Reporting
 
-The operator reports package installation status in the CRD status field.
+The operator reports package installation status using Kubernetes conditions and metadata fields.
 
-### Status Fields
+### Condition-Based Status
+
+Package installation state is tracked via the `PythonPackagesReady` condition:
+
+```yaml
+status:
+  conditions:
+    - type: PythonPackagesReady
+      status: "True"                      # True|False|Unknown
+      reason: PackagesInstalled           # CamelCase reason code
+      message: "Successfully installed 3 packages in 14s"
+      lastTransitionTime: "2025-11-30T10:15:30.123456+00:00"
+      observedGeneration: 5
+    - type: Ready
+      status: "True"
+      reason: ApplicationReady
+      message: "Kaspr app is ready"
+      lastTransitionTime: "2025-11-30T10:16:00.456789+00:00"
+      observedGeneration: 5
+```
+
+### Installation Metadata
+
+Package installation details are stored in `status.pythonPackages`:
 
 ```yaml
 status:
   pythonPackages:
-    state: Ready                          # Installing|Ready|Failed|Unknown
     hash: "abc123def456"                  # Package spec hash
     installed:                            # List of installed packages
       - requests==2.31.0
       - pandas==2.1.0
     cacheMode: ReadWriteMany              # Actual PVC access mode
-    lastInstallTime: "2025-11-30T10:15:30Z"  # ISO 8601 timestamp
+    lastInstallTime: "2025-11-30T10:15:30.123456+00:00"  # ISO 8601 timestamp
     installDuration: "45.2s"              # Installation time
     installedBy: "my-app-0"              # Pod that performed install
-    error: null                           # Error message if failed
     warnings: null                        # Warning messages if any
 ```
 
-### State Values
+### Condition States
 
-| State | Description |
-|-------|-------------|
-| `Installing` | Init container currently installing packages |
-| `Ready` | Packages installed successfully and available |
-| `Failed` | Installation failed (see `error` field) |
-| `Unknown` | Unable to determine status |
+| Condition Status | Reason | Description |
+|-----------------|--------|-------------|
+| `False` | `Installing` | Init container currently installing packages |
+| `False` | `PackagesUpdating` | Updating to new package list |
+| `True` | `PackagesInstalled` | Packages installed successfully |
+| `False` | `InstallationFailed` | Installation failed (init container in CrashLoopBackOff or terminated with error) |
+| `Unknown` | `StatusUnknown` | Unable to determine status |
+
+**Note on Installation Failures**: When a package installation fails (e.g., invalid package name, network issues), the init container will retry based on the `retries` setting. During the retry phase, the condition will show `status: False` with `reason: InstallationFailed`. The condition message will contain error details from the init container, though for detailed pip errors you may need to check the init container logs:
+
+```bash
+# Get pod name
+POD=$(kubectl get pod -n kaspr -l kaspr.io/app=my-app -o jsonpath='{.items[0].metadata.name}')
+
+# View init container logs
+kubectl logs -n kaspr $POD -c install-packages
+```
+
+If `onFailure: block` is set, the pod will remain in Init state until the issue is resolved. If `onFailure: warn`, the pod will start with the application container despite the installation failure (not recommended for production).
 
 ### Querying Status
 
 ```bash
-# Get state
-kubectl get kasprapp my-app -o jsonpath='{.status.pythonPackages.state}'
+# Check if packages are ready (standard Kubernetes pattern)
+kubectl wait kasprapp/my-app --for=condition=PythonPackagesReady=True --timeout=300s
 
-# Get full status (formatted)
-kubectl get kasprapp my-app -o jsonpath='{.status.pythonPackages}' | jq
+# Get condition status
+kubectl get kasprapp my-app -o jsonpath='{.status.conditions[?(@.type=="PythonPackagesReady")].status}'
+
+# Get condition reason and message
+kubectl get kasprapp my-app -o jsonpath='{.status.conditions[?(@.type=="PythonPackagesReady")]}{"\n"}' | jq
 
 # Get installed packages
 kubectl get kasprapp my-app -o jsonpath='{.status.pythonPackages.installed[*]}'
+
+# Get full metadata
+kubectl get kasprapp my-app -o jsonpath='{.status.pythonPackages}' | jq
+```
 
 # Check for errors
 kubectl get kasprapp my-app -o jsonpath='{.status.pythonPackages.error}'
@@ -294,6 +335,8 @@ Changing the package list triggers a rolling update of the StatefulSet.
 4. **Rolling update**: StatefulSet updated with new PACKAGES_HASH env var
 5. **Reinstall**: New pods install updated packages
 6. **Status update**: Status shows new installation details
+
+**During Rolling Updates**: The operator intelligently tracks the status of pods with the **latest** package hash (matching the current spec), not pods still running with old packages. This ensures the `PythonPackagesReady` condition accurately reflects the current installation attempt, even when the StatefulSet is updating pods one by one.
 
 ### Example Update
 

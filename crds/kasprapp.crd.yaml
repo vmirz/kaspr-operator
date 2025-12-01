@@ -1038,6 +1038,11 @@ spec:
                   type: boolean
                 conditions:
                   type: array
+                  description: |-
+                    Standard Kubernetes conditions. Includes:
+                    - Ready: Overall app readiness
+                    - Progressing: Whether reconciliation is in progress
+                    - PythonPackagesReady: Python packages installation state (when spec.pythonPackages is configured)
                   x-kubernetes-list-type: map
                   x-kubernetes-list-map-keys:
                     - type
@@ -1157,12 +1162,10 @@ spec:
                   description: Count of members currently rebalancing
                 pythonPackages:
                   type: object
-                  description: Python packages installation status
+                  description: |-
+                    Python packages installation metadata.
+                    State information is tracked via the PythonPackagesReady condition.
                   properties:
-                    state:
-                      type: string
-                      enum: ["Installing", "Ready", "Failed", "Unknown"]
-                      description: Current state of package installation
                     hash:
                       type: string
                       description: Hash of the packages configuration for change detection
@@ -1184,9 +1187,6 @@ spec:
                     installedBy:
                       type: string
                       description: Name of pod that performed the installation
-                    error:
-                      type: string
-                      description: Error message if installation failed
                     warnings:
                       type: array
                       items:

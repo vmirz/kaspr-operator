@@ -157,7 +157,7 @@ mkdir -p "$(dirname {lock_file})"
 install_packages() {{
     local attempt=1
     local max_attempts={retries}
-    local install_start=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local install_start=$(date -u +"%Y-%m-%dT%H:%M:%S.%6N+00:00")
     local install_start_ts=$(date +%s)
     
     while [ $attempt -le $max_attempts ]; do

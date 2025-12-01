@@ -39,14 +39,13 @@ class PythonPackagesSpec(BaseModel):
 
 
 class PythonPackagesStatus(BaseModel):
-    """Python packages status."""
+    """Python packages status.
+    """
     
-    state: Optional[str]
     hash: Optional[str]
     installed: Optional[List[str]]
     cache_mode: Optional[str]
     last_install_time: Optional[str]
     install_duration: Optional[str]
     installed_by: Optional[str]
-    error: Optional[str]
     warnings: Optional[List[str]]

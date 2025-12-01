@@ -276,37 +276,33 @@ class TestPythonPackagesStatus:
         """Test status schema with valid data."""
         schema = PythonPackagesStatusSchema()
         data = {
-            "state": "Ready",
             "hash": "abc123def456",
             "installed": ["requests==2.31.0", "pandas==2.1.0"],
             "cacheMode": "shared-pvc",
-            "lastInstallTime": "2025-11-28T10:00:00Z",
+            "lastInstallTime": "2025-11-28T10:00:00.123456+00:00",
             "installDuration": "45s",
             "installedBy": "my-app-0"
         }
         result = schema.load(data)
         assert isinstance(result, PythonPackagesStatus)
-        assert result.state == "Ready"
         assert result.hash == "abc123def456"
         assert len(result.installed) == 2
         assert result.cache_mode == "shared-pvc"
-        assert result.last_install_time == "2025-11-28T10:00:00Z"
+        assert result.last_install_time == "2025-11-28T10:00:00.123456+00:00"
         assert result.install_duration == "45s"
         assert result.installed_by == "my-app-0"
     
-    def test_status_schema_with_error(self):
-        """Test status schema with error state."""
+    def test_status_schema_with_warnings(self):
+        """Test status schema with warnings."""
         schema = PythonPackagesStatusSchema()
         data = {
-            "state": "Failed",
-            "error": "Failed to install pandas: network timeout",
-            "warnings": ["Package 'requests' not pinned to specific version"]
+            "hash": "def456abc123",
+            "warnings": ["Package 'requests' not pinned to specific version", "Old marker file found"]
         }
         result = schema.load(data)
         assert isinstance(result, PythonPackagesStatus)
-        assert result.state == "Failed"
-        assert result.error == "Failed to install pandas: network timeout"
-        assert len(result.warnings) == 1
+        assert result.hash == "def456abc123"
+        assert len(result.warnings) == 2
     
     def test_status_schema_optional_fields(self):
         """Test status schema with minimal data."""
