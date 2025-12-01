@@ -1,5 +1,6 @@
 import kaspr
 import mmh3
+import hashlib
 from typing import Any, List, Dict, Union
 from kaspr.utils.objects import cached_property
 from kaspr.utils.helpers import canonicalize_dict
@@ -94,7 +95,14 @@ class BaseResource:
         else:
             raise ValueError(f"Hash of {type(data)} is not supporetd.")        
         # Compute the hash by encoding the string to bytes.
-        return str(mmh3.hash128(_data))
+        mumur_str = str(mmh3.hash128(_data))
+
+        # Compute SHA-256 hash
+        hash_obj = hashlib.sha256(mumur_str.encode('utf-8'))
+        full_hash = hash_obj.hexdigest()
+        
+        # Return first 16 characters for readability in labels/annotations
+        return full_hash[:16]        
     
     def prepare_hash_annotation(self, hash: Union[str, int]) -> Dict[str, str]:
         """Prepare hash annotation for k8s resources."""

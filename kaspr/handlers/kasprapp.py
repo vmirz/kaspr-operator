@@ -1061,11 +1061,11 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> Optiona
                 packages_hash = compute_packages_hash(app.python_packages)
                 marker_file = f"/opt/kaspr/packages/.installed-{packages_hash}"
                 
-                # Check if marker file exists and read it in a single exec call
+                # Check if marker file exists and also list all marker files to detect hash mismatches
                 # Use base64 encoding to avoid any shell/websocket string interpretation issues
                 exec_command = [
                     '/bin/sh', '-c', 
-                    f'if [ -f "{marker_file}" ]; then base64 "{marker_file}"; else echo "__MARKER_NOT_FOUND__"; fi'
+                    f'if [ -f "{marker_file}" ]; then base64 "{marker_file}"; else echo "__MARKER_NOT_FOUND__"; fi; echo "__MARKER_LIST__"; ls -1 /opt/kaspr/packages/.installed-* 2>/dev/null || true'
                 ]
                 
                 async with WsApiClient() as ws_api:
@@ -1081,19 +1081,43 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> Optiona
                         _preload_content=True
                     )
                 
-                # Check if marker file was found
-                if not resp or resp.strip() == "__MARKER_NOT_FOUND__":
-                    logger.debug(f"Marker file {marker_file} not found in pod {target_pod.metadata.name}")
-                    return {
-                        "state": "Ready",
-                        "hash": packages_hash,
-                        "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
-                        "warnings": ["Installation completed but marker file not found"],
-                    }
+                # Split response into marker file content and list of marker files
+                marker_content = None
+                existing_markers = []
+                if resp:
+                    parts = resp.split("__MARKER_LIST__")
+                    marker_content = parts[0].strip()
+                    if len(parts) > 1:
+                        marker_list = parts[1].strip()
+                        if marker_list:
+                            existing_markers = [line.strip() for line in marker_list.split('\n') if line.strip()]
                 
+                # Check if the expected marker file was found
+                if not marker_content or marker_content == "__MARKER_NOT_FOUND__":
+                    logger.debug(f"Marker file {marker_file} not found in pod {target_pod.metadata.name}")
+                    
+                    # Check if there's an old marker file (different hash)
+                    if existing_markers:
+                        logger.info(f"Found old marker files in pod {target_pod.metadata.name}, packages are being updated")
+                        # Old packages installed, new ones pending - report as Installing
+                        return {
+                            "state": "Installing",
+                            "hash": packages_hash,
+                            "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                        }
+                    else:
+                        # No marker files at all - this is unusual but init succeeded
+                        logger.warning(f"Init container succeeded but no marker files found in pod {target_pod.metadata.name}")
+                        return {
+                            "state": "Ready",
+                            "hash": packages_hash,
+                            "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                            "warnings": ["Installation completed but marker file not found"],
+                        }
+                
+                # Found the marker file with the expected hash - decode it
                 try:
-                    resp_stripped = resp.strip()
-                    decoded = base64.b64decode(resp_stripped).decode('utf-8')
+                    decoded = base64.b64decode(marker_content).decode('utf-8')
                 except Exception as e:
                     logger.warning(f"Failed to decode base64 response from pod {target_pod.metadata.name}: {e}")
                     return {
@@ -1271,7 +1295,11 @@ async def update_status(
                 if packages_status != current_packages_status:
                     status_update["pythonPackages"] = packages_status
                     logger.info(f"Python packages status updated: {packages_status.get('state')}")
-        
+        else:
+            # Python packages spec was removed - clear status if it exists
+            if "pythonPackages" in _status:
+                status_update["pythonPackages"] = None
+
         # Detect hung rebalancing members
         hung_member_ids = await _detect_hung_members(_status, app, name, namespace, logger)
         
