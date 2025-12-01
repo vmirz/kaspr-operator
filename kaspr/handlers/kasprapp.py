@@ -1291,17 +1291,36 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
                 }
                 return metadata, state_info
             except Exception as e:
-                logger.warning(f"Failed to read marker file from pod {target_pod.metadata.name}: {e}")
                 # Marker file read failed but init succeeded - report as Ready with limited info
+                error_str = str(e)
+                
+                # Provide user-friendly error messages for common issues
+                if "403" in error_str or "Forbidden" in error_str:
+                    warning_msg = "Unable to read installation details (missing pod/exec permission)"
+                    logger.warning(
+                        f"Failed to read marker file from pod {target_pod.metadata.name}: "
+                        f"Permission denied (403). Service account needs pods/exec permission. "
+                        f"Full error: {e}"
+                    )
+                elif "401" in error_str or "Unauthorized" in error_str:
+                    warning_msg = "Unable to read installation details (authentication failed)"
+                    logger.warning(f"Failed to read marker file from pod {target_pod.metadata.name}: Unauthorized. Full error: {e}")
+                elif "404" in error_str or "Not Found" in error_str:
+                    warning_msg = "Unable to read installation details (pod not found)"
+                    logger.warning(f"Failed to read marker file from pod {target_pod.metadata.name}: Pod not found. Full error: {e}")
+                else:
+                    warning_msg = f"Unable to read installation details: {error_str[:100]}"
+                    logger.warning(f"Failed to read marker file from pod {target_pod.metadata.name}: {e}")
+                
                 metadata = {
                     "hash": packages_hash,
                     "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
-                    "warnings": [f"Unable to read installation details: {str(e)}"],
+                    "warnings": [warning_msg],
                 }
                 state_info = {
                     "state": "Ready",
                     "reason": "PackagesInstalled",
-                    "message": f"Packages installed (unable to read details: {str(e)})",
+                    "message": "Packages installed (details unavailable)",
                 }
                 return metadata, state_info
         
