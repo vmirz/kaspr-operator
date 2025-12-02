@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.14.2
+--
+### Changed
+* **Python Packages - Ephemeral Storage by Default**: Changed default to `cache.enabled: false` for easier adoption
+  * Uses ephemeral emptyDir storage by default (works on any Kubernetes cluster)
+  * Status reports cache mode as "persistent" or "ephemeral" for clarity
+  * Users can enable persistent cache with `cache.enabled: true` if ReadWriteMany storage is available
+
+## 0.14.1
+--
+### Added
+* **Python Packages - emptyDir Support**: Added ephemeral storage mode when shared cache is unavailable
+  * New emptyDir mode (cache disabled) eliminates ReadWriteMany storage requirement
+  * Packages reinstalled per pod start in ephemeral mode
+  * Automatic fallback when cache disabled or RWX storage unavailable
+
+### Fixed
+* **Python Packages - ReadWriteOnce Removed**: Removed unsupported ReadWriteOnce access mode
+  * Only ReadWriteMany supported for shared package cache
+  * Added storage class validation with warnings for non-RWX provisioners
+  * Default access mode set to ReadWriteMany with enum validation
+
+## 0.14.0
+--
+### Added
+* **Python Packages Management**: Declarative Python package installation in KasprApp CRD
+  * Install packages via `pythonPackages.packages` list (e.g., `pandas>=2.0.0`)
+  * Optional persistent cache using PVC with ReadWriteMany access mode
+  * Configurable installation policies (retries, timeout, failure handling)
+  * Package hash-based change detection triggers pod rollouts
+  * Status reporting with installation details and errors
+
 ## 0.13.3
 --
 ### Changed
