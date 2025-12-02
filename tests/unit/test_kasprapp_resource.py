@@ -40,6 +40,7 @@ def base_spec():
     spec.template.pod = Mock()
     spec.template.pod.metadata = Mock()
     spec.template.pod.metadata.annotations = None
+    spec.template.pod.volumes = None  # Avoid Mock iteration errors in prepare_volumes
     spec.template.service = None
     spec.template.kaspr_container = None
     spec.python_packages = None
@@ -205,9 +206,9 @@ class TestPreparePackagesPVC:
         assert pvc is None
     
     def test_prepare_packages_pvc_no_cache_field(self, base_spec):
-        """Test PVC creation when cache field is not specified (uses defaults)."""
+        """Test that no PVC is created when cache field is not specified (defaults to disabled)."""
         packages_spec = PythonPackagesSpec(packages=["pandas"])
-        # Don't set cache field, should use defaults
+        # Don't set cache field, should use default (enabled=False)
         base_spec.python_packages = packages_spec
         
         app = KasprApp.from_spec(
@@ -219,9 +220,8 @@ class TestPreparePackagesPVC:
         
         pvc = app.prepare_python_packages_pvc()
         
-        assert pvc is not None
-        assert pvc.spec.access_modes == ["ReadWriteMany"]  # Default
-        assert pvc.spec.resources.requests["storage"] == "256Mi"  # Default
+        # Default is cache disabled, so no PVC should be created
+        assert pvc is None
 
 
 class TestPreparePackagesInitContainer:
@@ -299,9 +299,19 @@ class TestPreparePackagesInitContainer:
         assert "timeout 1800s" in script
     
     def test_prepare_packages_init_container_cache_disabled(self, kasprapp_cache_disabled):
-        """Test that no init container is created when cache is disabled."""
+        """Test that init container is created with emptyDir script when cache is disabled."""
         container = kasprapp_cache_disabled.prepare_packages_init_container()
-        assert container is None
+        assert container is not None
+        assert container.name == "install-packages"
+        # Check that script uses emptyDir mode (no flock, no marker files)
+        script = container.args[0]
+        assert "emptyDir Mode" in script
+        assert "flock" not in script
+        assert ".installed-" not in script
+        # Should not have PACKAGES_HASH env var in emptyDir mode
+        if container.env:
+            hash_vars = [v for v in container.env if v.name == "PACKAGES_HASH"]
+            assert len(hash_vars) == 0
     
     def test_prepare_packages_init_container_no_packages(self, kasprapp_without_packages):
         """Test that no init container is created when python_packages is None."""
@@ -329,14 +339,54 @@ class TestPreparePackagesVolumeMounts:
         assert mounts[0].read_only is True
     
     def test_prepare_packages_volume_mounts_cache_disabled(self, kasprapp_cache_disabled):
-        """Test that no volume mounts when cache disabled."""
+        """Test that volume mounts are created for emptyDir mode when cache disabled."""
         mounts = kasprapp_cache_disabled.prepare_packages_volume_mounts()
-        assert len(mounts) == 0
+        assert len(mounts) == 1
+        assert mounts[0].name.endswith("-packages")
+        assert mounts[0].mount_path == "/opt/kaspr/packages"
+        assert mounts[0].read_only is True
     
     def test_prepare_packages_volume_mounts_no_packages(self, kasprapp_without_packages):
         """Test that no volume mounts when packages not configured."""
         mounts = kasprapp_without_packages.prepare_packages_volume_mounts()
         assert len(mounts) == 0
+
+
+class TestPrepareVolumes:
+    """Tests for prepare_volumes method."""
+    
+    def test_prepare_volumes_with_pvc(self, kasprapp_with_packages):
+        """Test that PVC volume is added when cache enabled."""
+        volumes = kasprapp_with_packages.prepare_volumes()
+        
+        # Find the packages volume
+        packages_volumes = [v for v in volumes if v.name.endswith("-packages")]
+        assert len(packages_volumes) == 1
+        
+        # Should have PVC source
+        assert packages_volumes[0].persistent_volume_claim is not None
+        assert packages_volumes[0].persistent_volume_claim.claim_name is not None
+        assert packages_volumes[0].empty_dir is None
+    
+    def test_prepare_volumes_with_emptydir(self, kasprapp_cache_disabled):
+        """Test that emptyDir volume is added when cache disabled."""
+        volumes = kasprapp_cache_disabled.prepare_volumes()
+        
+        # Find the packages volume
+        packages_volumes = [v for v in volumes if v.name.endswith("-packages")]
+        assert len(packages_volumes) == 1
+        
+        # Should have emptyDir source
+        assert packages_volumes[0].empty_dir is not None
+        assert packages_volumes[0].persistent_volume_claim is None
+    
+    def test_prepare_volumes_no_packages(self, kasprapp_without_packages):
+        """Test that no packages volume when packages not configured."""
+        volumes = kasprapp_without_packages.prepare_volumes()
+        
+        # Should not have packages volume
+        packages_volumes = [v for v in volumes if v.name.endswith("-packages")]
+        assert len(packages_volumes) == 0
 
 
 class TestPrepareEnvVars:
@@ -362,8 +412,8 @@ class TestPrepareEnvVars:
         assert len(pythonpath_vars) == 1
         assert pythonpath_vars[0].value == "/opt/kaspr/packages:${PYTHONPATH}"
     
-    def test_prepare_env_vars_no_pythonpath_cache_disabled(self, kasprapp_cache_disabled):
-        """Test that PYTHONPATH is not added when cache disabled."""
+    def test_prepare_env_vars_pythonpath_cache_disabled(self, kasprapp_cache_disabled):
+        """Test that PYTHONPATH is added for emptyDir mode (cache disabled)."""
         # Mock the config to avoid complex dependencies
         kasprapp_cache_disabled.config = Mock()
         kasprapp_cache_disabled.config.env_for = lambda x: f"KASPR_{x.upper()}"
@@ -379,7 +429,8 @@ class TestPrepareEnvVars:
         env_vars = kasprapp_cache_disabled.prepare_env_vars()
         
         pythonpath_vars = [v for v in env_vars if v.name == "PYTHONPATH"]
-        assert len(pythonpath_vars) == 0
+        assert len(pythonpath_vars) == 1
+        assert pythonpath_vars[0].value == "/opt/kaspr/packages:${PYTHONPATH}"
     
     def test_prepare_env_vars_no_pythonpath_no_packages(self, kasprapp_without_packages):
         """Test that PYTHONPATH is not added when packages not configured."""
@@ -478,10 +529,14 @@ class TestCachedProperties:
         pvc = kasprapp_without_packages.python_packages_pvc
         assert pvc is None
     
-    def test_packages_init_container_cached_property_none(self, kasprapp_cache_disabled):
-        """Test packages_init_container returns None when cache disabled."""
+    def test_packages_init_container_cached_property_emptydir(self, kasprapp_cache_disabled):
+        """Test packages_init_container returns container for emptyDir mode when cache disabled."""
         container = kasprapp_cache_disabled.packages_init_container
-        assert container is None
+        assert container is not None
+        assert container.name == "install-packages"
+        # Verify it's using emptyDir script
+        script = container.args[0]
+        assert "emptyDir Mode" in script
 
 
 class TestFromSpec:

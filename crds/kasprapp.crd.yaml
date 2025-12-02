@@ -168,7 +168,8 @@ spec:
                       properties:
                         enabled:
                           type: boolean
-                          description: Enable caching of installed packages using a PersistentVolumeClaim.
+                          default: false
+                          description: Enable caching of installed packages using a PersistentVolumeClaim. When false (default), uses ephemeral emptyDir storage per pod.
                         storageClass:
                           type: string
                           description: The storage class to use for the packages cache PVC.
