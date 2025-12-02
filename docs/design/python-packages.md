@@ -255,10 +255,10 @@ spec:
     
     # Optional: Cache configuration
     cache:
-      enabled: true  # Default: true (auto-detect RWX support)
+      enabled: true  # Default: true
       storageClass: fast-nfs  # Default: default storage class
       size: 5Gi  # Default: 5Gi
-      accessMode: ReadWriteMany  # Default: ReadWriteMany
+      accessMode: ReadWriteMany  # Default: ReadWriteMany (only supported mode)
       deleteClaim: true  # Default: true (delete PVC with KasprApp)
     
     # Optional: Installation policy
@@ -298,7 +298,7 @@ status:
       - psycopg2-binary==2.9.9
     
     # Cache mode
-    cacheMode: shared-pvc  # shared-pvc | emptyDir | disabled
+    cacheMode: ReadWriteMany  # ReadWriteMany | emptyDir
     
     # Installation metadata
     lastInstallTime: "2025-11-26T10:30:00Z"
@@ -311,7 +311,6 @@ status:
     # Warnings
     warnings:
       - "Package 'requests' not pinned to specific version (security risk)"
-      - "RWX storage not available - using emptyDir (slower restarts)"
 ```
 
 ### CRD Schema Updates
@@ -369,7 +368,8 @@ spec:
             accessMode:
               type: string
               default: ReadWriteMany
-              enum: [ReadWriteMany, ReadWriteOnce]
+              enum: [ReadWriteMany]
+              description: Only ReadWriteMany is currently supported
             deleteClaim:
               type: boolean
               default: true
@@ -976,8 +976,10 @@ exit 0
 ### B. Storage Class Requirements
 
 **Required Features:**
-- Access Mode: ReadWriteMany (RWX)
+- Access Mode: ReadWriteMany (RWX) - **MANDATORY**
 - Provisioner: Dynamic or static
+
+**Note:** ReadWriteMany is the only supported access mode. The shared package cache requires multiple pods across potentially different nodes to read from the same volume simultaneously. If RWX storage is not available in your cluster, see the user guide for alternative approaches (emptyDir mode).
 
 **Recommended Storage Classes by Platform:**
 

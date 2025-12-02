@@ -98,7 +98,7 @@ spec:
       enabled: true
       size: "1Gi"
       storageClass: "fast-ssd"
-      accessMode: ReadWriteMany
+      accessMode: ReadWriteMany  # Default (only supported mode)
       deleteClaim: true
     
     # Installation policy
@@ -178,8 +178,8 @@ Controls the shared package cache PVC.
 |-------|------|---------|-------------|
 | `enabled` | boolean | `true` | Enable shared cache |
 | `size` | string | `"256Mi"` | PVC storage size |
-| `storageClass` | string | cluster default | Storage class name |
-| `accessMode` | string | `"ReadWriteMany"` | PVC access mode (RWX/RWO) |
+| `storageClass` | string | cluster default | Storage class name (must support RWX) |
+| `accessMode` | string | `"ReadWriteMany"` | PVC access mode (only RWX supported) |
 | `deleteClaim` | boolean | `true` | Delete PVC when app deleted |
 
 **Recommendations:**
@@ -566,8 +566,8 @@ kubectl describe pod my-app-0
 # Check PVC exists
 kubectl get pvc -l kaspr.io/app=my-app
 
-# Check access mode
-kubectl get pvc my-app-packages -o jsonpath='{.spec.accessModes[0]}'
+# Check PVC status
+kubectl get pvc my-app-packages -o wide
 
 # Check marker files
 kubectl exec my-app-0 -- ls -la /opt/kaspr/packages/.installed-*
@@ -575,10 +575,10 @@ kubectl exec my-app-0 -- ls -la /opt/kaspr/packages/.installed-*
 
 **Common causes:**
 
-1. **RWX not supported**: PVC is ReadWriteOnce
-   - Check storage class supports RWX
-   - Use CSI driver that supports RWX (NFS, CephFS, etc.)
-   - Or accept RWO and slower scaling
+1. **RWX not supported**: Storage class doesn't support ReadWriteMany
+   - Check storage class supports RWX: `kubectl describe storageclass <name>`
+   - Deploy a storage class that supports RWX (NFS, AWS EFS, Azure Files, GCP Filestore)
+   - Or disable shared cache and use emptyDir mode (per-pod installation)
 
 2. **Hash mismatch**: Package spec changed
    - Normal behavior - packages updated
@@ -881,12 +881,16 @@ template:
 
 ### Q: What if ReadWriteMany is not available?
 
-**A:** Use ReadWriteOnce. Each pod will install independently (slower but works):
+**A:** If your cluster does not support ReadWriteMany storage, you have two options:
 
-```yaml
-cache:
-  accessMode: ReadWriteOnce
-```
+1. **Disable shared cache** (emptyDir mode): Each pod installs packages independently. Slower startup but no shared storage required.
+   ```yaml
+   pythonPackages:
+     cache:
+       enabled: false  # Uses emptyDir, per-pod installation
+   ```
+
+2. **Use a storage class that supports RWX**: Deploy an NFS provisioner, AWS EFS CSI driver, Azure Files, or GCP Filestore depending on your platform.
 
 ### Q: Can I disable the cache?
 

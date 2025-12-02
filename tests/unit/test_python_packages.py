@@ -55,14 +55,14 @@ class TestPythonPackagesCache:
         assert result.delete_claim is False
     
     def test_cache_schema_invalid_access_mode(self):
-        """Test cache schema rejects invalid access mode."""
+        """Test cache schema rejects non-ReadWriteMany access mode."""
         schema = PythonPackagesCacheSchema()
         data = {
-            "accessMode": "InvalidMode"
+            "accessMode": "ReadWriteOnce"
         }
         with pytest.raises(ValidationError) as exc_info:
             schema.load(data)
-        assert "Invalid access mode" in str(exc_info.value)
+        assert "Only 'ReadWriteMany' is currently supported" in str(exc_info.value)
     
     def test_cache_schema_optional_fields(self):
         """Test cache schema with optional fields."""

@@ -51,8 +51,8 @@ spec:
     cache:
       enabled: true                    # Enable shared package cache
       size: "1Gi"                      # Storage size for package cache
-      storageClass: "fast-ssd"         # Optional: Use specific storage class
-      accessMode: ReadWriteMany        # RWX for multi-pod cache sharing
+      storageClass: "fast-ssd"         # Optional: Use storage class with RWX support
+      accessMode: ReadWriteMany        # Default: ReadWriteMany (only supported mode)
       deleteClaim: true                # Delete PVC when app is deleted
     
     # Installation policy

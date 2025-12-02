@@ -17,7 +17,7 @@ spec:
     cache:
       enabled: true
       size: "512Mi"
-      accessMode: ReadWriteMany
+      accessMode: ReadWriteMany  # Only supported mode
       deleteClaim: true
     
     installPolicy:

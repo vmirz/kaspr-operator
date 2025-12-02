@@ -177,11 +177,10 @@ spec:
                           description: Size of the packages cache PVC (e.g., "256Mi", "1Gi").
                         accessMode:
                           type: string
-                          description: Access mode for the cache PVC.
+                          default: ReadWriteMany
                           enum:
-                          - ReadWriteOnce
                           - ReadWriteMany
-                          - ReadOnlyMany
+                          description: Access mode for the cache PVC. Only ReadWriteMany is currently supported for shared package cache.
                         deleteClaim:
                           type: boolean
                           description: Whether to delete the PVC when the app is undeployed.
