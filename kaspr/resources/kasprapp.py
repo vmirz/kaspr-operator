@@ -1106,7 +1106,7 @@ class KasprApp(BaseResource):
                 
                 if not default_sc:
                     self.logger.warning(
-                        f"[{self.name}] No default storage class found. "
+                        "No default storage class found. "
                         "Python packages cache requires ReadWriteMany support. "
                         "Consider specifying a storage class explicitly or disabling cache."
                     )
@@ -1152,7 +1152,7 @@ class KasprApp(BaseResource):
         except Exception as e:
             # Unable to determine - log warning but don't fail
             self.logger.warning(
-                f"[{self.name}] Unable to verify ReadWriteMany support for storage class "
+                f"Unable to verify ReadWriteMany support for storage class "
                 f"'{storage_class_name or 'default'}': {e}. "
                 "Proceeding with PVC creation. If it fails, check that your storage class supports RWX."
             )
