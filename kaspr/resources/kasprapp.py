@@ -26,7 +26,6 @@ from kaspr.types.models.pod_template import PodTemplate
 from kaspr.types.models.service_template import ServiceTemplate
 from kaspr.types.models.container_template import ContainerTemplate
 from kaspr.types.models.python_packages import PythonPackagesSpec
-from kaspr.utils.python_packages import generate_install_script
 from kubernetes_asyncio.client import (
     AppsV1Api,
     CoreV1Api,
@@ -46,6 +45,7 @@ from kubernetes_asyncio.client import (
     V1ContainerPort,
     V1VolumeMount,
     V1Volume,
+    V1EmptyDirVolumeSource,
     V1ConfigMapVolumeSource,
     V1KeyToPath,
     V1PersistentVolumeClaimSpec,
@@ -110,7 +110,7 @@ class KasprApp(BaseResource):
     
     # Python packages defaults
     DEFAULT_PACKAGES_PVC_SIZE = "256Mi"
-    DEFAULT_PACKAGES_CACHE_ENABLED = True
+    DEFAULT_PACKAGES_CACHE_ENABLED = False
     DEFAULT_PACKAGES_ACCESS_MODE = "ReadWriteMany"
     DEFAULT_PACKAGES_DELETE_CLAIM = True
     DEFAULT_PACKAGES_INSTALL_RETRIES = 3
@@ -525,6 +525,12 @@ class KasprApp(BaseResource):
                 )
         elif not pvc and should_create:
             # PVC doesn't exist but should be created
+            
+            # Check if storage class supports RWX (best effort warning)
+            cache = getattr(self.python_packages, 'cache', None)
+            storage_class = cache.storage_class if cache and hasattr(cache, 'storage_class') else None
+            await self.check_storage_class_rwx_support(storage_class)
+            
             sensor_state = self.sensor.on_resource_sync_start(
                 self.cluster, self.cluster, self.python_packages_pvc.metadata.name, self.namespace, "pvc"
             )
@@ -1074,6 +1080,84 @@ class KasprApp(BaseResource):
             when_scaled="Retain",
         )
 
+    async def check_storage_class_rwx_support(self, storage_class_name: Optional[str] = None) -> bool:
+        """
+        Check if the specified storage class (or default) supports ReadWriteMany access mode.
+        
+        Returns True if RWX is supported, False otherwise or if unable to determine.
+        Logs warnings when RWX support cannot be verified.
+        """
+        try:
+            from kubernetes_asyncio.client import StorageV1Api
+            
+            storage_api = StorageV1Api(api_client=self.shared_api_client)
+            
+            # If no storage class specified, try to get the default
+            if not storage_class_name:
+                storage_classes = await storage_api.list_storage_class()
+                
+                # Find default storage class
+                default_sc = None
+                for sc in storage_classes.items:
+                    annotations = sc.metadata.annotations or {}
+                    if annotations.get("storageclass.kubernetes.io/is-default-class") == "true":
+                        default_sc = sc
+                        break
+                
+                if not default_sc:
+                    self.logger.warning(
+                        f"[{self.name}] No default storage class found. "
+                        "Python packages cache requires ReadWriteMany support. "
+                        "Consider specifying a storage class explicitly or disabling cache."
+                    )
+                    return False
+                
+                storage_class_name = default_sc.metadata.name
+            
+            # Get the specific storage class
+            sc = await storage_api.read_storage_class(name=storage_class_name)
+            
+            # Check if the storage class parameters or provisioner indicate RWX support
+            # Note: This is a best-effort check. Some provisioners support RWX but don't advertise it.
+            
+            # Known RWX-supporting provisioners
+            rwx_provisioners = [
+                "efs.csi.aws.com",  # AWS EFS
+                "file.csi.azure.com",  # Azure Files
+                "filestore.csi.storage.gke.io",  # GCP Filestore
+                "nfs.csi.k8s.io",  # NFS CSI
+                "csi-nfsplugin",  # NFS CSI plugin
+                "nfs",  # Legacy NFS
+                "glusterfs",  # GlusterFS
+                "cephfs",  # CephFS
+            ]
+            
+            provisioner = sc.provisioner.lower() if sc.provisioner else ""
+            
+            is_likely_rwx = any(prov in provisioner for prov in rwx_provisioners)
+            
+            if not is_likely_rwx:
+                self.logger.warning(
+                    f"Storage class '{storage_class_name}' uses provisioner '{sc.provisioner}' "
+                    "which may not support ReadWriteMany (RWX) access mode. "
+                    "Python packages cache requires RWX for shared access across pods. "
+                    "If PVC creation fails, either: "
+                    "(1) use a storage class with RWX support (e.g., NFS, EFS, Azure Files), or "
+                    "(2) disable cache (pythonPackages.cache.enabled: false) to use emptyDir mode."
+                )
+                return False
+            
+            return True
+            
+        except Exception as e:
+            # Unable to determine - log warning but don't fail
+            self.logger.warning(
+                f"[{self.name}] Unable to verify ReadWriteMany support for storage class "
+                f"'{storage_class_name or 'default'}': {e}. "
+                "Proceeding with PVC creation. If it fails, check that your storage class supports RWX."
+            )
+            return False
+
     def prepare_python_packages_pvc(self) -> Optional[V1PersistentVolumeClaim]:
         """Build a standalone PVC resource for Python packages cache (shared by all pods)."""
         if not self.should_create_packages_pvc():
@@ -1213,33 +1297,48 @@ class KasprApp(BaseResource):
         return enabled
 
     def prepare_packages_init_container(self) -> Optional[V1Container]:
-        """Build init container for installing Python packages."""
+        """Build init container for installing Python packages.
+        
+        Supports two modes:
+        1. Shared cache (cache.enabled=true): Uses PVC with flock coordination
+        2. emptyDir (cache.enabled=false): Per-pod ephemeral storage, always reinstall
+        """
         if not self.python_packages:
             return None
         
+        from kaspr.utils.python_packages import generate_install_script, generate_emptydir_install_script
+        
         cache = self.python_packages.cache if hasattr(self.python_packages, 'cache') and self.python_packages.cache else None
-        enabled = cache.enabled if cache and hasattr(cache, 'enabled') else self.DEFAULT_PACKAGES_CACHE_ENABLED
+        cache_enabled = cache.enabled if cache and hasattr(cache, 'enabled') else self.DEFAULT_PACKAGES_CACHE_ENABLED
         
-        if not enabled:
-            return None
-        
-        # Generate the install script
+        # Common settings
         cache_path = "/opt/kaspr/packages"
-        lock_file = "/opt/kaspr/packages/.install.lock"
         install_policy = self.python_packages.install_policy if hasattr(self.python_packages, 'install_policy') else None
         timeout = install_policy.timeout if install_policy and hasattr(install_policy, 'timeout') and install_policy.timeout else self.DEFAULT_PACKAGES_INSTALL_TIMEOUT
         retries = install_policy.retries if install_policy and hasattr(install_policy, 'retries') and install_policy.retries is not None else self.DEFAULT_PACKAGES_INSTALL_RETRIES
         
-        script = generate_install_script(
-            self.python_packages,
-            cache_path=cache_path,
-            lock_file=lock_file,
-            timeout=timeout,
-            retries=retries,
-            packages_hash=self.packages_hash,
-        )
-
-        self.logger.info(f"Generated package install script for hash {self.packages_hash}")
+        # Generate script based on cache mode
+        if cache_enabled:
+            # Shared cache mode: Use PVC with flock coordination and marker files
+            lock_file = "/opt/kaspr/packages/.install.lock"
+            script = generate_install_script(
+                self.python_packages,
+                cache_path=cache_path,
+                lock_file=lock_file,
+                timeout=timeout,
+                retries=retries,
+                packages_hash=self.packages_hash,
+            )
+            self.logger.debug(f"Generated shared cache install script for hash {self.packages_hash}")
+        else:
+            # emptyDir mode: Simple per-pod installation (no locking, no markers)
+            script = generate_emptydir_install_script(
+                self.python_packages,
+                cache_path=cache_path,
+                timeout=timeout,
+                retries=retries,
+            )
+            self.logger.debug("Generated emptyDir install script (cache disabled)")
         
         # Get resource requirements if specified
         resources_spec = self.python_packages.resources if hasattr(self.python_packages, 'resources') and self.python_packages.resources else None
@@ -1250,9 +1349,9 @@ class KasprApp(BaseResource):
                 limits=resources_spec.limits if hasattr(resources_spec, 'limits') else None,
             )
         
-        # Add PACKAGES_HASH env var to init container
+        # Add PACKAGES_HASH env var to init container (only for cache mode)
         env_vars = []
-        if self.packages_hash:
+        if cache_enabled and self.packages_hash:
             env_vars.append(V1EnvVar(name="PACKAGES_HASH", value=self.packages_hash))
         
         return V1Container(
@@ -1316,18 +1415,14 @@ class KasprApp(BaseResource):
                 )
             )
 
-        # Add PYTHONPATH for installed packages
+        # Add PYTHONPATH for installed packages (both cache modes)
         if self.python_packages:
-            cache = self.python_packages.cache if hasattr(self.python_packages, 'cache') and self.python_packages.cache else None
-            enabled = cache.enabled if cache and hasattr(cache, 'enabled') else self.DEFAULT_PACKAGES_CACHE_ENABLED
-            
-            if enabled:
-                env_vars.append(
-                    V1EnvVar(
-                        name="PYTHONPATH",
-                        value="/opt/kaspr/packages:${PYTHONPATH}"
-                    )
+            env_vars.append(
+                V1EnvVar(
+                    name="PYTHONPATH",
+                    value="/opt/kaspr/packages:${PYTHONPATH}"
                 )
+            )
 
         # include web host as FQDN of the pod
         # e.g. <pod_name>.<headless_service_name>.<namespace>.svc
@@ -1530,20 +1625,20 @@ class KasprApp(BaseResource):
         return volume_mounts
 
     def prepare_packages_volume_mounts(self) -> List[V1VolumeMount]:
-        """Prepare volume mount for Python packages cache."""
+        """Prepare volume mount for Python packages.
+        
+        Works for both cache modes (PVC and emptyDir).
+        Volume source is determined in prepare_volumes().
+        """
         volume_mounts = []
         if self.python_packages:
-            cache = self.python_packages.cache if hasattr(self.python_packages, 'cache') and self.python_packages.cache else None
-            enabled = cache.enabled if cache and hasattr(cache, 'enabled') else self.DEFAULT_PACKAGES_CACHE_ENABLED
-            
-            if enabled:
-                volume_mounts.append(
-                    V1VolumeMount(
-                        name=f"{self.component_name}-packages",
-                        mount_path="/opt/kaspr/packages",
-                        read_only=True,  # Main container only reads installed packages
-                    )
+            volume_mounts.append(
+                V1VolumeMount(
+                    name=f"{self.component_name}-packages",
+                    mount_path="/opt/kaspr/packages",
+                    read_only=True,  # Main container only reads, init container writes
                 )
+            )
         return volume_mounts
 
     def prepare_container_template_volume_mounts(self) -> List[V1VolumeMount]:
@@ -1598,16 +1693,26 @@ class KasprApp(BaseResource):
         volumes.extend(self.prepare_task_volumes())
         volumes.extend(self.prepare_pod_template_volumes())
         
-        # Add python packages PVC volume if enabled
-        if self.should_create_packages_pvc():
-            volumes.append(
-                V1Volume(
-                    name=f"{self.component_name}-packages",
-                    persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(
-                        claim_name=self.python_packages_pvc_name
+        # Add python packages volume (PVC or emptyDir based on cache config)
+        if self.python_packages:
+            if self.should_create_packages_pvc():
+                # Shared cache mode: Use PVC for shared access across all pods
+                volumes.append(
+                    V1Volume(
+                        name=f"{self.component_name}-packages",
+                        persistent_volume_claim=V1PersistentVolumeClaimVolumeSource(
+                            claim_name=self.python_packages_pvc_name
+                        ),
                     )
                 )
-            )
+            else:
+                # emptyDir mode: Per-pod ephemeral storage (cache disabled)
+                volumes.append(
+                    V1Volume(
+                        name=f"{self.component_name}-packages",
+                        empty_dir=V1EmptyDirVolumeSource(),
+                    )
+                )
         
         return volumes
 

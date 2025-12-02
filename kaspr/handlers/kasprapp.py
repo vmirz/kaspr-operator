@@ -970,7 +970,9 @@ async def _attempt_auto_rebalance(
 async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[Optional[Dict], Optional[Dict]]:
     """Fetch Python packages installation status from pods.
     
-    Since all pods share the same PVC, we only need to check one available pod.
+    Supports two modes:
+    1. Shared cache (PVC): All pods share storage, check marker files
+    2. emptyDir: Per-pod ephemeral storage, check init container status only
     
     Args:
         app: KasprApp instance
@@ -987,13 +989,16 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
         return None, None
     
     cache = getattr(app.python_packages, 'cache', None)
-    enabled = cache.enabled if cache and hasattr(cache, 'enabled') else app.DEFAULT_PACKAGES_CACHE_ENABLED
+    cache_enabled = cache.enabled if cache and hasattr(cache, 'enabled') else app.DEFAULT_PACKAGES_CACHE_ENABLED
     
-    if not enabled:
-        return None, None
+    # Determine cache mode - use user-friendly names for status reporting
+    cache_mode = "persistent" if cache_enabled else "ephemeral"
     
-    # Compute packages hash once and reuse throughout
-    packages_hash = compute_packages_hash(app.python_packages)
+    # For emptyDir mode, we can only check init container status (no shared marker file)
+    is_emptydir = not cache_enabled
+    
+    # Compute packages hash once and reuse throughout (only for cache mode)
+    packages_hash = compute_packages_hash(app.python_packages) if cache_enabled else None
     
     try:
         # List pods for this app
@@ -1002,48 +1007,51 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
         if not pods or not pods.items:
             # No pods yet
             metadata = {
-                "hash": packages_hash,
-                "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                "cacheMode": cache_mode,
             }
+            if packages_hash:
+                metadata["hash"] = packages_hash
+            
             state_info = {
                 "state": "Installing",
                 "reason": "Installing",
-                "message": f"Installing packages (hash: {packages_hash[:8]}...)",
+                "message": f"Installing packages ({cache_mode} mode)",
             }
             return metadata, state_info
         
-        # Find pod with init container matching the current packages hash
-        # This ensures we check the status of the LATEST package installation attempt,
-        # not a stale pod with old packages during rolling updates
+        # Find pod with init container
+        # For cache mode: prefer pod with matching hash
+        # For emptyDir: any pod with init container is fine
         target_pod = None
         
-        for pod in pods.items:
-            # Check if pod has the install-packages init container
-            if pod.status and pod.status.init_container_statuses:
-                for init_status in pod.status.init_container_statuses:
-                    if init_status.name == "install-packages":
-                        # Check if this pod's init container has the current packages hash
-                        # by examining the PACKAGES_HASH env var
-                        pod_hash = None
-                        if pod.spec and pod.spec.init_containers:
-                            for init_container in pod.spec.init_containers:
-                                if init_container.name == "install-packages":
-                                    if init_container.env:
-                                        for env_var in init_container.env:
-                                            if env_var.name == "PACKAGES_HASH":
-                                                pod_hash = env_var.value
-                                                break
-                                    break
-                        
-                        # If this pod has the current hash, use it
-                        if pod_hash == packages_hash:
-                            target_pod = pod
-                            break
-            if target_pod:
-                break
+        if cache_enabled and packages_hash:
+            # Cache mode: Find pod with init container matching the current packages hash
+            # This ensures we check the status of the LATEST package installation attempt,
+            # not a stale pod with old packages during rolling updates
+            for pod in pods.items:
+                if pod.status and pod.status.init_container_statuses:
+                    for init_status in pod.status.init_container_statuses:
+                        if init_status.name == "install-packages":
+                            # Check if this pod's init container has the current packages hash
+                            pod_hash = None
+                            if pod.spec and pod.spec.init_containers:
+                                for init_container in pod.spec.init_containers:
+                                    if init_container.name == "install-packages":
+                                        if init_container.env:
+                                            for env_var in init_container.env:
+                                                if env_var.name == "PACKAGES_HASH":
+                                                    pod_hash = env_var.value
+                                                    break
+                                        break
+                            
+                            # If this pod has the current hash, use it
+                            if pod_hash == packages_hash:
+                                target_pod = pod
+                                break
+                if target_pod:
+                    break
         
-        # If no pod with current hash found, fall back to any pod with install-packages init container
-        # (This can happen briefly during rollout before any pod with new hash exists)
+        # If no pod with current hash found (or emptyDir mode), use any pod with install-packages init container
         if not target_pod:
             for pod in pods.items:
                 if pod.status and pod.status.init_container_statuses:
@@ -1057,13 +1065,15 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
         if not target_pod:
             # Pods exist but no init container found yet
             metadata = {
-                "hash": packages_hash,
-                "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                "cacheMode": cache_mode,
             }
+            if packages_hash:
+                metadata["hash"] = packages_hash
+            
             state_info = {
                 "state": "Installing",
                 "reason": "Installing",
-                "message": f"Installing packages (hash: {packages_hash[:8]}...)",
+                "message": f"Installing packages ({cache_mode} mode)",
             }
             return metadata, state_info
         
@@ -1077,13 +1087,15 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
         
         if not init_container_status:
             metadata = {
-                "hash": packages_hash,
-                "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                "cacheMode": cache_mode,
             }
+            if packages_hash:
+                metadata["hash"] = packages_hash
+            
             state_info = {
                 "state": "Installing",
                 "reason": "Installing",
-                "message": f"Installing packages (hash: {packages_hash[:8]}...)",
+                "message": f"Installing packages ({cache_mode} mode)",
             }
             return metadata, state_info
         
@@ -1103,9 +1115,11 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
                 error_msg = f"Installation failed: {error_details}" if error_details else "Package installation failed (retrying)"
                 
                 metadata = {
-                    "hash": packages_hash,
-                    "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                    "cacheMode": cache_mode,
                 }
+                if packages_hash:
+                    metadata["hash"] = packages_hash
+                
                 state_info = {
                     "state": "Failed",
                     "reason": "InstallationFailed", 
@@ -1116,13 +1130,15 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
             else:
                 # Other waiting states (e.g., PodInitializing) - treat as Installing
                 metadata = {
-                    "hash": packages_hash,
-                    "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                    "cacheMode": cache_mode,
                 }
+                if packages_hash:
+                    metadata["hash"] = packages_hash
+                
                 state_info = {
                     "state": "Installing",
                     "reason": "Installing",
-                    "message": f"Installing packages (hash: {packages_hash[:8]}..., status: {waiting_reason})",
+                    "message": f"Installing packages ({cache_mode} mode, status: {waiting_reason})",
                 }
                 return metadata, state_info
         
@@ -1131,9 +1147,11 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
             if init_container_status.state.terminated.exit_code != 0:
                 error_msg = init_container_status.state.terminated.message or "Package installation failed"
                 metadata = {
-                    "hash": packages_hash,
-                    "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                    "cacheMode": cache_mode,
                 }
+                if packages_hash:
+                    metadata["hash"] = packages_hash
+                
                 state_info = {
                     "state": "Failed",
                     "reason": "InstallationFailed",
@@ -1145,18 +1163,37 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
         # Check if init container is still running
         if init_container_status.state and init_container_status.state.running:
             metadata = {
-                "hash": packages_hash,
-                "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                "cacheMode": cache_mode,
             }
+            if packages_hash:
+                metadata["hash"] = packages_hash
+            
             state_info = {
                 "state": "Installing",
                 "reason": "Installing",
-                "message": f"Installing packages (hash: {packages_hash[:8]}...)",
+                "message": f"Installing packages ({cache_mode} mode)",
             }
             return metadata, state_info
         
-        # Init container completed successfully - try to read marker file
+        # Init container completed successfully
         if init_container_status.state and init_container_status.state.terminated and init_container_status.state.terminated.exit_code == 0:
+            # For emptyDir mode, we can't read marker files (they're pod-local)
+            # Just report success based on init container completion
+            if is_emptydir:
+                num_packages = len(app.python_packages.packages)
+                metadata = {
+                    "cacheMode": cache_mode,
+                    "installed": app.python_packages.packages,
+                    "warnings": ["Ephemeral storage: packages reinstalled on every pod start"],
+                }
+                state_info = {
+                    "state": "Ready",
+                    "reason": "PackagesInstalled",
+                    "message": f"Successfully installed {num_packages} package{'s' if num_packages != 1 else ''} (emptyDir mode)",
+                }
+                return metadata, state_info
+            
+            # For cache mode, try to read marker file
             try:
                 # Read marker file from the pod
                 marker_file = f"/opt/kaspr/packages/.installed-{packages_hash}"
@@ -1202,7 +1239,7 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
                         # Old packages installed, new ones pending - report as Installing
                         metadata = {
                             "hash": packages_hash,
-                            "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                            "cacheMode": cache_mode,
                         }
                         state_info = {
                             "state": "Installing",
@@ -1215,7 +1252,7 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
                         logger.warning(f"Init container succeeded but no marker files found in pod {target_pod.metadata.name}")
                         metadata = {
                             "hash": packages_hash,
-                            "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                            "cacheMode": cache_mode,
                             "warnings": ["Installation completed but marker file not found"],
                         }
                         state_info = {
@@ -1232,7 +1269,7 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
                     logger.warning(f"Failed to decode base64 response from pod {target_pod.metadata.name}: {e}")
                     metadata = {
                         "hash": packages_hash,
-                        "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                        "cacheMode": cache_mode,
                         "warnings": ["Unable to decode marker file"],
                     }
                     state_info = {
@@ -1247,7 +1284,7 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
                     logger.warning(f"Empty marker file in pod {target_pod.metadata.name}")
                     metadata = {
                         "hash": packages_hash,
-                        "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                        "cacheMode": cache_mode,
                         "warnings": ["Marker file is empty"],
                     }
                     state_info = {
@@ -1267,7 +1304,7 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
                     "lastInstallTime": marker_data.get("install_time"),
                     "installDuration": marker_data.get("duration"),
                     "installedBy": marker_data.get("pod_name"),
-                    "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                    "cacheMode": cache_mode,
                     "warnings": None
                 }
                 state_info = {
@@ -1281,7 +1318,7 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
                 logger.warning(f"Failed to parse marker file JSON from pod {target_pod.metadata.name}: {e}")
                 metadata = {
                     "hash": packages_hash,
-                    "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                    "cacheMode": cache_mode,
                     "warnings": ["Installation completed but marker file is invalid"],
                 }
                 state_info = {
@@ -1313,10 +1350,12 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
                     logger.warning(f"Failed to read marker file from pod {target_pod.metadata.name}: {e}")
                 
                 metadata = {
-                    "hash": packages_hash,
-                    "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+                    "cacheMode": cache_mode,
                     "warnings": [warning_msg],
                 }
+                if packages_hash:
+                    metadata["hash"] = packages_hash
+                
                 state_info = {
                     "state": "Ready",
                     "reason": "PackagesInstalled",
@@ -1326,21 +1365,23 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
         
         # Fallback
         metadata = {
-            "hash": packages_hash,
-            "cacheMode": "ReadWriteMany" if app.DEFAULT_PACKAGES_ACCESS_MODE == "ReadWriteMany" else "ReadWriteOnce",
+            "cacheMode": cache_mode,
         }
+        if packages_hash:
+            metadata["hash"] = packages_hash
+        
         state_info = {
             "state": "Installing",
             "reason": "Installing",
-            "message": f"Installing packages (hash: {packages_hash[:8]}...)",
+            "message": f"Installing packages ({cache_mode} mode)",
         }
         return metadata, state_info
         
     except Exception as e:
         logger.error(f"Error fetching Python packages status: {e}")
-        metadata = {
-            "hash": packages_hash,
-        }
+        metadata = {}
+        if packages_hash:
+            metadata["hash"] = packages_hash
         state_info = {
             "state": "Unknown",
             "reason": "StatusUnknown",
@@ -1494,7 +1535,6 @@ async def update_status(
                 # Update metadata if changed
                 if packages_metadata != current_packages_status:
                     status_update["pythonPackages"] = packages_metadata
-                    logger.info(f"Python packages metadata updated: hash={packages_metadata.get('hash', 'N/A')[:8]}...")
                 
                 # Create/update PythonPackagesReady condition
                 pkg_condition = create_python_packages_condition(packages_state_info, gen)

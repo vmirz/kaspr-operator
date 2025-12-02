@@ -255,3 +255,121 @@ fi
 """
     
     return script.strip()
+
+
+def generate_emptydir_install_script(
+    spec: PythonPackagesSpec,
+    cache_path: str = "/opt/kaspr/packages",
+    timeout: int = 600,
+    retries: int = 3,
+) -> str:
+    """
+    Generate a bash script for installing Python packages in emptyDir mode.
+    
+    This is used when cache is disabled (cache.enabled=false). Each pod gets its own
+    ephemeral storage and packages are always reinstalled on pod start.
+    
+    Unlike the shared cache mode:
+    - No file locking (no concurrent access)
+    - No marker files (always reinstall)
+    - No hash checking
+    - Simpler script structure
+    
+    Args:
+        spec: The PythonPackagesSpec containing packages to install
+        cache_path: Path where packages will be installed (emptyDir mount)
+        timeout: Installation timeout in seconds
+        retries: Number of retry attempts
+        
+    Returns:
+        A bash script as a string
+    """
+    # Use values from install_policy if present
+    if hasattr(spec, 'install_policy') and spec.install_policy:
+        if hasattr(spec.install_policy, 'timeout') and spec.install_policy.timeout is not None:
+            timeout = spec.install_policy.timeout
+        if hasattr(spec.install_policy, 'retries') and spec.install_policy.retries is not None:
+            retries = spec.install_policy.retries
+        on_failure = getattr(spec.install_policy, 'on_failure', None) or "block"
+    else:
+        on_failure = "block"
+    
+    # Validate all package names
+    invalid_packages = [pkg for pkg in spec.packages if not validate_package_name(pkg)]
+    if invalid_packages:
+        raise ValueError(f"Invalid package names: {', '.join(invalid_packages)}")
+    
+    # Build the packages list for pip install
+    packages_str = " ".join(f'"{pkg}"' for pkg in spec.packages)
+    
+    # Generate the script
+    script = f"""#!/bin/bash
+set -e
+
+echo "Python Package Installer - emptyDir Mode"
+echo "Install path: {cache_path}"
+echo "Packages: {' '.join(spec.packages)}"
+echo "Timeout: {timeout}s"
+echo "Retries: {retries}"
+echo "On failure: {on_failure}"
+echo "Note: Packages will be reinstalled on every pod start (emptyDir is ephemeral)"
+
+# Ensure install directory exists
+mkdir -p {cache_path}
+
+# Function to install packages with retry logic
+install_packages() {{
+    local attempt=1
+    local max_attempts={retries}
+    local install_start=$(date -u +"%Y-%m-%dT%H:%M:%S.%6N+00:00")
+    local install_start_ts=$(date +%s)
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo "Installation attempt $attempt of $max_attempts"
+        
+        # Run pip install with timeout
+        if timeout {timeout}s pip install --no-warn-script-location \\
+            --target {cache_path} \\
+            --no-cache-dir \\
+            {packages_str}; then
+            echo "Successfully installed packages"
+            
+            # Calculate duration
+            local install_end_ts=$(date +%s)
+            local duration=$((install_end_ts - install_start_ts))
+            
+            echo "Installation completed in ${{duration}}s"
+            return 0
+        else
+            local exit_code=$?
+            echo "Installation failed with exit code $exit_code"
+            
+            if [ $attempt -lt $max_attempts ]; then
+                echo "Retrying in 5 seconds..."
+                sleep 5
+            fi
+            attempt=$((attempt + 1))
+        fi
+    done
+    
+    echo "Failed to install packages after $max_attempts attempts"
+    return 1
+}}
+
+# Install packages (no locking needed for emptyDir)
+if install_packages; then
+    echo "Package installation complete (emptyDir mode)"
+    exit 0
+else
+    if [ "{on_failure}" = "block" ]; then
+        echo "Installation failed - blocking pod startup"
+        exit 1
+    else
+        echo "Installation failed - allowing pod to start in degraded mode"
+        exit 0
+    fi
+fi
+"""
+    
+    return script.strip()
+

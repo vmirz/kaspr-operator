@@ -48,11 +48,13 @@ spec:
     #   - "private-pypi.example.com"
     
     # Package cache configuration
+    # By default, cache is disabled and uses ephemeral storage (emptyDir)
+    # Enable cache for persistent shared storage across pods (requires RWX storage class)
     cache:
-      enabled: true                    # Enable shared package cache
+      enabled: true                    # Enable persistent shared cache (requires ReadWriteMany storage)
       size: "1Gi"                      # Storage size for package cache
-      storageClass: "fast-ssd"         # Optional: Use specific storage class
-      accessMode: ReadWriteMany        # RWX for multi-pod cache sharing
+      storageClass: "fast-ssd"         # Optional: Use storage class with RWX support (EFS, Azure Files, NFS, etc.)
+      accessMode: ReadWriteMany        # Default: ReadWriteMany (only supported mode)
       deleteClaim: true                # Delete PVC when app is deleted
     
     # Installation policy

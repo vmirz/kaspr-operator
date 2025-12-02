@@ -8,6 +8,8 @@ spec:
   bootstrapServers: "kafka:9092"
   
   # Minimal Python packages configuration
+  # By default, uses ephemeral storage (emptyDir) - packages are reinstalled on each pod start
+  # This works on any Kubernetes cluster without requiring special storage
   pythonPackages:
     packages:
       - requests

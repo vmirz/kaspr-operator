@@ -1,0 +1,27 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: example-emptydir-packages
+  namespace: default
+spec:
+  replicas: 1
+  bootstrapServers: "kafka:9092"
+  
+  # Python packages with emptyDir mode (cache disabled)
+  # Each pod gets its own ephemeral storage and packages are reinstalled on every pod start
+  # Use this when your cluster doesn't have ReadWriteMany storage available
+  pythonPackages:
+    packages:
+      - requests==2.31.0
+      - pandas>=2.0.0
+      - numpy
+    
+    # Disable cache to use emptyDir mode
+    cache:
+      enabled: false
+    
+    # Optional: Configure installation behavior
+    installPolicy:
+      retries: 3
+      timeout: 600
+      onFailure: block  # block pod startup if installation fails

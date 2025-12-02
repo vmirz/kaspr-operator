@@ -44,13 +44,11 @@ class PythonPackagesCacheSchema(BaseSchema):
     
     @validates("access_mode")
     def validate_access_mode(self, value):
-        """Validate access mode is a valid Kubernetes access mode."""
-        if value is not None:
-            valid_modes = ["ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"]
-            if value not in valid_modes:
-                raise ValidationError(
-                    f"Invalid access mode: {value}. Must be one of {valid_modes}"
-                )
+        """Validate access mode is ReadWriteMany (only supported mode)."""
+        if value is not None and value != "ReadWriteMany":
+            raise ValidationError(
+                f"Invalid access mode: {value}. Only 'ReadWriteMany' is currently supported for shared package cache."
+            )
 
 
 class PythonPackagesInstallPolicySchema(BaseSchema):
