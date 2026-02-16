@@ -29,10 +29,28 @@ class PythonPackagesResources(BaseModel):
     limits: Optional[dict]
 
 
+class SecretReference(BaseModel):
+    """Reference to a Kubernetes Secret."""
+
+    name: str
+    username_key: Optional[str]
+    password_key: Optional[str]
+
+
+class PythonPackagesCredentials(BaseModel):
+    """PyPI authentication credentials."""
+
+    secret_ref: SecretReference
+
+
 class PythonPackagesSpec(BaseModel):
     """Python packages specification."""
     
     packages: List[str]
+    index_url: Optional[str]
+    extra_index_urls: Optional[List[str]]
+    trusted_hosts: Optional[List[str]]
+    credentials: Optional[PythonPackagesCredentials]
     cache: Optional[PythonPackagesCache]
     install_policy: Optional[PythonPackagesInstallPolicy]
     resources: Optional[PythonPackagesResources]

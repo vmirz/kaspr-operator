@@ -170,6 +170,39 @@ trustedHosts:
   - "internal-repo.example.com"
 ```
 
+#### `credentials` (optional)
+
+Authentication credentials for private PyPI registries, referencing a Kubernetes Secret.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `secretRef.name` | string | *(required)* | Name of the Secret containing credentials |
+| `secretRef.usernameKey` | string | `"username"` | Key in Secret for the username |
+| `secretRef.passwordKey` | string | `"password"` | Key in Secret for the password |
+
+**Example:**
+
+```yaml
+credentials:
+  secretRef:
+    name: pypi-credentials
+    usernameKey: username   # default
+    passwordKey: password   # default
+```
+
+Create the Secret first:
+
+```bash
+kubectl create secret generic pypi-credentials \
+  --from-literal=username=your-username \
+  --from-literal=password=your-password
+```
+
+**Security Notes:**
+- Credentials are injected as environment variables from the Secret, never logged or exposed in status
+- Use Kubernetes RBAC to restrict access to the Secret
+- Rotate credentials by updating the Secret (pods pick up changes on next restart)
+
 #### `cache`
 
 Controls the shared package cache PVC.
@@ -454,6 +487,21 @@ kasprop_package_install_total{app_name="my-app", namespace="default", result="fa
 
 # Error count by type
 kasprop_package_install_errors_total{app_name="my-app", namespace="default", error_type="timeout"}
+
+# Authentication enabled (1=yes, 0=no)
+kasprop_package_auth_enabled{app_name="my-app", namespace="default"}
+
+# Custom index enabled (1=yes, 0=no)
+kasprop_package_custom_index_enabled{app_name="my-app", namespace="default"}
+
+# Cache usage
+kasprop_package_cache_usage_bytes{app_name="my-app", namespace="default", type="used"}
+kasprop_package_cache_usage_bytes{app_name="my-app", namespace="default", type="total"}
+kasprop_package_cache_usage_percent{app_name="my-app", namespace="default"}
+
+# Retry and timeout counters
+kasprop_package_install_retries_total{app_name="my-app", namespace="default"}
+kasprop_package_install_timeouts_total{app_name="my-app", namespace="default"}
 ```
 
 ### Viewing Metrics
@@ -522,6 +570,12 @@ kubectl describe pod my-app-0
 4. **Out of memory**: Init container OOMKilled
    - Increase `resources.limits.memory`
    - Large packages (ML/DL) need 2Gi+
+
+5. **Authentication failure**: Credentials rejected
+   - Verify Secret exists: `kubectl get secret pypi-credentials`
+   - Check Secret keys match `usernameKey`/`passwordKey`
+   - Test credentials manually: `curl -u user:pass https://pypi.company.com/simple/`
+   - Check init container logs for "Authentication failed" error messages
 
 ### Slow Installation
 
@@ -802,35 +856,31 @@ Test in dev before production:
 
 ### 8. Handle Private Packages Securely
 
-Use Kubernetes secrets for credentials:
+Use the `credentials` field to authenticate with private registries:
 
 ```yaml
-# Store credentials in secret
-apiVersion: v1
-kind: Secret
-metadata:
-  name: pypi-credentials
-type: Opaque
-stringData:
-  pip.conf: |
-    [global]
-    index-url = https://user:pass@private-pypi.com/simple
+pythonPackages:
+  packages:
+    - my-private-package==1.0.0
+  indexUrl: "https://pypi.company.com/simple"
+  credentials:
+    secretRef:
+      name: pypi-credentials
 ```
 
-Mount in pod template:
+Create the corresponding Secret:
 
-```yaml
-spec:
-  template:
-    kasprContainer:
-      volumeMounts:
-        - name: pip-config
-          mountPath: /root/.pip
-    volumes:
-      - name: pip-config
-        secret:
-          secretName: pypi-credentials
+```bash
+kubectl create secret generic pypi-credentials \
+  --from-literal=username=your-username \
+  --from-literal=password=your-password
 ```
+
+**Security tips:**
+- Use Kubernetes RBAC to restrict Secret access
+- Rotate credentials regularly
+- Credentials are never logged or exposed in CRD status
+- Consider using a service account token instead of long-lived passwords
 
 ## Migration Guide
 
@@ -905,14 +955,19 @@ Packages will be installed to emptyDir (lost on pod restart).
 
 ### Q: How do I use private PyPI repositories?
 
-**A:** Configure `indexUrl` and `trustedHosts`:
+**A:** Configure `indexUrl`, `trustedHosts`, and optionally `credentials`:
 
 ```yaml
 pythonPackages:
   indexUrl: "https://private-pypi.com/simple"
   trustedHosts:
     - "private-pypi.com"
+  credentials:
+    secretRef:
+      name: pypi-credentials
 ```
+
+See the [Private Registry example](../../examples/python-packages/private-registry.yaml) for a complete manifest.
 
 ### Q: Can I mix Python 2 and Python 3 packages?
 

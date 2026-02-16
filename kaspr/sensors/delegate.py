@@ -363,15 +363,54 @@ class SensorDelegate(OperatorSensor):
         state: Optional[Dict[OperatorSensor, Any]],
         success: bool,
         error_type: Optional[str] = None,
+        retries: int = 0,
     ) -> None:
         """Delegate package_install_complete to all sensors with their specific state."""
         for sensor in self._sensors:
             try:
                 sensor_state = state.get(sensor) if state else None
-                sensor.on_package_install_complete(app_name, namespace, sensor_state, success, error_type)
+                sensor.on_package_install_complete(app_name, namespace, sensor_state, success, error_type, retries)
             except Exception as e:
                 logger.error(
                     f"Error in {sensor.__class__.__name__}.on_package_install_complete: {e}",
+                    exc_info=True,
+                )
+
+    def on_package_config_updated(
+        self,
+        app_name: str,
+        namespace: str,
+        auth_enabled: bool,
+        custom_index_enabled: bool,
+    ) -> None:
+        """Delegate package_config_updated to all sensors."""
+        for sensor in self._sensors:
+            try:
+                sensor.on_package_config_updated(app_name, namespace, auth_enabled, custom_index_enabled)
+            except Exception as e:
+                logger.error(
+                    f"Error in {sensor.__class__.__name__}.on_package_config_updated: {e}",
+                    exc_info=True,
+                )
+
+    def on_package_cache_usage_updated(
+        self,
+        app_name: str,
+        namespace: str,
+        total_bytes: int,
+        used_bytes: int,
+        available_bytes: int,
+        usage_percent: float,
+    ) -> None:
+        """Delegate package_cache_usage_updated to all sensors."""
+        for sensor in self._sensors:
+            try:
+                sensor.on_package_cache_usage_updated(
+                    app_name, namespace, total_bytes, used_bytes, available_bytes, usage_percent
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error in {sensor.__class__.__name__}.on_package_cache_usage_updated: {e}",
                     exc_info=True,
                 )
 

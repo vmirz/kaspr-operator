@@ -162,6 +162,43 @@ spec:
                       description: List of Python packages to install (e.g., ["requests", "pandas>=2.0.0"]).
                       items:
                         type: string
+                    indexUrl:
+                      type: string
+                      description: Base URL of Python Package Index (e.g., https://pypi.org/simple).
+                      pattern: '^https?://.+'
+                    extraIndexUrls:
+                      type: array
+                      description: Additional package index URLs to search.
+                      items:
+                        type: string
+                        pattern: '^https?://.+'
+                    trustedHosts:
+                      type: array
+                      description: Hosts to trust for SSL verification (skip certificate checks).
+                      items:
+                        type: string
+                    credentials:
+                      type: object
+                      description: Credentials for private PyPI registry authentication.
+                      properties:
+                        secretRef:
+                          type: object
+                          description: Reference to a Secret containing registry credentials.
+                          required: [name]
+                          properties:
+                            name:
+                              type: string
+                              description: Name of the Secret containing credentials.
+                            usernameKey:
+                              type: string
+                              default: username
+                              description: Key in the Secret for the username. Defaults to "username".
+                            passwordKey:
+                              type: string
+                              default: password
+                              description: Key in the Secret for the password. Defaults to "password".
+                      required:
+                      - secretRef
                     cache:
                       type: object
                       description: Cache configuration for storing installed packages.

@@ -316,6 +316,7 @@ class OperatorSensor:
         state: Optional[Dict[str, Any]],
         success: bool,
         error_type: Optional[str] = None,
+        retries: int = 0,
     ) -> None:
         """Called when Python package installation completes.
         
@@ -325,6 +326,45 @@ class OperatorSensor:
             state: State dict returned from on_package_install_start
             success: Whether installation succeeded
             error_type: Type of error if installation failed
+            retries: Number of retry attempts that occurred
+        """
+        pass
+
+    def on_package_config_updated(
+        self,
+        app_name: str,
+        namespace: str,
+        auth_enabled: bool,
+        custom_index_enabled: bool,
+    ) -> None:
+        """Called when package configuration is applied to record feature usage.
+        
+        Args:
+            app_name: KasprApp name
+            namespace: Kubernetes namespace
+            auth_enabled: Whether PyPI authentication is configured
+            custom_index_enabled: Whether a custom PyPI index is configured
+        """
+        pass
+
+    def on_package_cache_usage_updated(
+        self,
+        app_name: str,
+        namespace: str,
+        total_bytes: int,
+        used_bytes: int,
+        available_bytes: int,
+        usage_percent: float,
+    ) -> None:
+        """Called when package cache usage is measured.
+        
+        Args:
+            app_name: KasprApp name
+            namespace: Kubernetes namespace
+            total_bytes: Total cache capacity in bytes
+            used_bytes: Used cache space in bytes
+            available_bytes: Available cache space in bytes
+            usage_percent: Cache usage as a percentage (0-100)
         """
         pass
 

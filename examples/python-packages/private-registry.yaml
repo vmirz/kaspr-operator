@@ -1,0 +1,43 @@
+# Example: KasprApp with private PyPI registry authentication
+#
+# Prerequisites:
+#   1. Create credentials Secret:
+#      kubectl apply -f secrets/pypi-credentials.yaml
+#
+#   2. Ensure your private registry is reachable from the cluster
+#
+# This example installs packages from a private PyPI registry using
+# basic username/password authentication via a Kubernetes Secret.
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: app-with-private-registry
+  namespace: default
+spec:
+  replicas: 3
+  bootstrapServers: "kafka:9092"
+
+  pythonPackages:
+    # Packages from private registry
+    packages:
+      - my-company-lib==1.2.3
+      - internal-utils>=2.0.0
+
+    # Private registry URL
+    indexUrl: "https://pypi.company.com/simple"
+
+    # Authentication credentials from Secret
+    credentials:
+      secretRef:
+        name: pypi-credentials
+        usernameKey: username   # Key in Secret for username (default)
+        passwordKey: password   # Key in Secret for password (default)
+
+    cache:
+      enabled: true
+      size: "512Mi"
+
+    installPolicy:
+      retries: 3
+      timeout: 600
+      onFailure: block

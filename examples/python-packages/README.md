@@ -51,6 +51,81 @@ Comprehensive example showing all available configuration options.
 kubectl apply -f with-cache-config.yaml
 ```
 
+### 4. Private Registry (`private-registry.yaml`)
+
+Install packages from a private PyPI registry with authentication.
+
+**Features:**
+- Custom index URL pointing to private registry
+- Secret-based credentials (username/password)
+- Credentials injected securely via environment variables
+
+**Prerequisites:**
+```bash
+kubectl apply -f secrets/pypi-credentials.yaml
+```
+
+**Use case:** Enterprise environments with private package registries.
+
+```bash
+kubectl apply -f private-registry.yaml
+```
+
+### 5. Custom Indexes (`custom-indexes.yaml`)
+
+Use multiple package indexes to combine public and private packages.
+
+**Features:**
+- Primary index URL with fallback to additional indexes
+- Trusted hosts for self-signed certificates
+- Packages resolved across multiple registries
+
+**Use case:** Organizations that host internal packages alongside public ones.
+
+```bash
+kubectl apply -f custom-indexes.yaml
+```
+
+### 6. Install Policy (`install-policy.yaml`)
+
+Aggressive install policy for large packages (ML/DL libraries).
+
+**Features:**
+- Higher retry count and longer timeout
+- Generous init container resource limits
+- Large cache PVC for big packages
+
+**Use case:** ML/Data workloads with tensorflow, pytorch, or similar large packages.
+
+```bash
+kubectl apply -f install-policy.yaml
+```
+
+### 7. Enterprise Complete (`enterprise-complete.yaml`)
+
+Production-ready configuration combining all Phase 2 features.
+
+**Features:**
+- Private registry with authentication
+- Multiple indexes (private + public fallback)
+- Trusted hosts for self-signed certs
+- Production-grade install policy
+- Generous resource limits and cache
+
+**Prerequisites:**
+```bash
+kubectl create secret generic production-pypi-creds \
+  --namespace=production \
+  --from-literal=username=svc-account \
+  --from-literal=password=token-value
+```
+
+**Use case:** Full-featured production deployment.
+
+```bash
+kubectl apply -f enterprise-complete.yaml
+```
+
 ## Quick Start
 
 1. **Create a KasprApp with Python packages:**
@@ -280,14 +355,28 @@ pythonPackages:
 
 ### Authentication for Private Indexes
 
-Use pip config or .netrc file in container image:
+Reference a Kubernetes Secret containing PyPI credentials:
 
-```dockerfile
-# In your Kaspr app Dockerfile
-COPY .pip/pip.conf /root/.pip/pip.conf
+```yaml
+pythonPackages:
+  packages:
+    - my-private-package
+  indexUrl: "https://pypi.company.com/simple"
+  credentials:
+    secretRef:
+      name: pypi-credentials
+      usernameKey: username  # default
+      passwordKey: password  # default
 ```
 
-Or use secrets mounted as volumes.
+Create the Secret:
+```bash
+kubectl create secret generic pypi-credentials \
+  --from-literal=username=your-username \
+  --from-literal=password=your-password
+```
+
+See [private-registry.yaml](private-registry.yaml) and [enterprise-complete.yaml](enterprise-complete.yaml) for full examples.
 
 ## Best Practices
 
