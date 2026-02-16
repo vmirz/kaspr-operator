@@ -119,6 +119,12 @@ class KasprApp(BaseResource):
     DEFAULT_PYPI_USERNAME_KEY = "username"
     DEFAULT_PYPI_PASSWORD_KEY = "password"
 
+    # GCS cache defaults
+    DEFAULT_GCS_PREFIX = "kaspr-packages/"
+    DEFAULT_GCS_SECRET_KEY = "sa.json"
+    DEFAULT_GCS_MAX_ARCHIVE_SIZE = "1Gi"
+    DEFAULT_GCS_SA_MOUNT_PATH = "/var/run/secrets/gcs"
+
     replicas: int
     image: str
     service_name: str
@@ -498,6 +504,12 @@ class KasprApp(BaseResource):
 
     async def sync_python_packages_pvc(self):
         """Check current state of python packages PVC and create/patch/delete as needed."""
+        # GCS cache does not use PVC — nothing to sync
+        cache = getattr(self.python_packages, 'cache', None) if self.python_packages else None
+        cache_type = getattr(cache, 'type', None) if cache else None
+        if cache_type == "gcs":
+            return
+        
         pvc: V1PersistentVolumeClaim = await self.fetch_persistent_volume_claim(
             self.core_v1_api, self.python_packages_pvc_name, self.namespace
         )
@@ -1290,28 +1302,48 @@ class KasprApp(BaseResource):
         return desired_bytes > actual_bytes
     
     def should_create_packages_pvc(self) -> bool:
-        """Check if python packages PVC should be created."""
+        """Check if python packages PVC should be created.
+        
+        Returns False when:
+        - No python packages configured
+        - Cache is disabled (emptyDir mode)
+        - Cache type is 'gcs' (uses GCS object storage, not PVC)
+        """
         if not self.python_packages:
             return False
         
         cache = self.python_packages.cache if hasattr(self.python_packages, 'cache') and self.python_packages.cache else None
-        enabled = cache.enabled if cache and hasattr(cache, 'enabled') else self.DEFAULT_PACKAGES_CACHE_ENABLED
+        if not cache:
+            return self.DEFAULT_PACKAGES_CACHE_ENABLED
         
+        # GCS cache does not use PVC
+        cache_type = getattr(cache, 'type', None)
+        if cache_type == 'gcs':
+            return False
+        
+        enabled = cache.enabled if hasattr(cache, 'enabled') else self.DEFAULT_PACKAGES_CACHE_ENABLED
         return enabled
 
     def prepare_packages_init_container(self) -> Optional[V1Container]:
         """Build init container for installing Python packages.
         
-        Supports two modes:
+        Supports three modes:
         1. Shared cache (cache.enabled=true): Uses PVC with flock coordination
         2. emptyDir (cache.enabled=false): Per-pod ephemeral storage, always reinstall
+        3. GCS cache (cache.type=gcs): Downloads/uploads archives from GCS bucket
         """
         if not self.python_packages:
             return None
         
-        from kaspr.utils.python_packages import generate_install_script, generate_emptydir_install_script
+        from kaspr.utils.python_packages import (
+            generate_install_script,
+            generate_emptydir_install_script,
+            generate_gcs_install_script,
+        )
+        from kaspr.utils.gcs import parse_size_to_bytes
         
         cache = self.python_packages.cache if hasattr(self.python_packages, 'cache') and self.python_packages.cache else None
+        cache_type = getattr(cache, 'type', None) if cache else None
         cache_enabled = cache.enabled if cache and hasattr(cache, 'enabled') else self.DEFAULT_PACKAGES_CACHE_ENABLED
         
         # Common settings
@@ -1321,7 +1353,25 @@ class KasprApp(BaseResource):
         retries = install_policy.retries if install_policy and hasattr(install_policy, 'retries') and install_policy.retries is not None else self.DEFAULT_PACKAGES_INSTALL_RETRIES
         
         # Generate script based on cache mode
-        if cache_enabled:
+        if cache_type == "gcs":
+            # GCS cache mode: Download from / upload to GCS bucket
+            gcs_config = cache.gcs
+            max_archive_size_str = getattr(gcs_config, 'max_archive_size', None) or self.DEFAULT_GCS_MAX_ARCHIVE_SIZE
+            max_archive_size_bytes = parse_size_to_bytes(max_archive_size_str)
+            sa_key = getattr(gcs_config.secret_ref, 'key', None) or self.DEFAULT_GCS_SECRET_KEY
+            sa_key_path = f"{self.DEFAULT_GCS_SA_MOUNT_PATH}/{sa_key}"
+            
+            script = generate_gcs_install_script(
+                self.python_packages,
+                cache_path=cache_path,
+                timeout=timeout,
+                retries=retries,
+                packages_hash=self.packages_hash,
+                max_archive_size_bytes=max_archive_size_bytes,
+                sa_key_path=sa_key_path,
+            )
+            self.logger.debug(f"Generated GCS cache install script for hash {self.packages_hash}")
+        elif cache_enabled:
             # Shared cache mode: Use PVC with flock coordination and marker files
             lock_file = "/opt/kaspr/packages/.install.lock"
             script = generate_install_script(
@@ -1353,7 +1403,28 @@ class KasprApp(BaseResource):
             )
         
         # Build env vars for init container
-        env_vars = self.prepare_python_packages_env_vars(cache_enabled)
+        env_vars = self.prepare_python_packages_env_vars(
+            cache_enabled=cache_enabled,
+            cache_type=cache_type,
+        )
+        
+        # Build volume mounts
+        volume_mounts = [
+            V1VolumeMount(
+                name=f"{self.component_name}-packages",
+                mount_path=cache_path,
+            )
+        ]
+        
+        # Add SA key volume mount for GCS mode
+        if cache_type == "gcs":
+            volume_mounts.append(
+                V1VolumeMount(
+                    name="gcs-sa-key",
+                    mount_path=self.DEFAULT_GCS_SA_MOUNT_PATH,
+                    read_only=True,
+                )
+            )
         
         return V1Container(
             name="install-packages",
@@ -1361,30 +1432,38 @@ class KasprApp(BaseResource):
             command=["/bin/bash", "-c"],
             args=[script],
             env=env_vars if env_vars else None,
-            volume_mounts=[
-                V1VolumeMount(
-                    name=f"{self.component_name}-packages",
-                    mount_path=cache_path,
-                )
-            ],
+            volume_mounts=volume_mounts,
             resources=resource_requirements,
         )
 
-    def prepare_python_packages_env_vars(self, cache_enabled: bool = False) -> List[V1EnvVar]:
+    def prepare_python_packages_env_vars(self, cache_enabled: bool = False, cache_type: str = None) -> List[V1EnvVar]:
         """Prepare environment variables for the Python packages init container.
         
         Includes:
-        - PACKAGES_HASH (only for cache mode)
+        - PACKAGES_HASH (only for PVC cache or GCS cache mode)
         - INDEX_URL (custom PyPI index)
         - EXTRA_INDEX_URLS (additional indexes, comma-separated)
         - TRUSTED_HOSTS (trusted hosts, comma-separated)
         - PYPI_USERNAME / PYPI_PASSWORD (from Secret ref)
+        - GCS_BUCKET / GCS_OBJECT_KEY (only for GCS cache mode)
         """
         env_vars = []
         
-        # Packages hash (only for cache mode)
-        if cache_enabled and self.packages_hash:
+        # Packages hash (for PVC cache mode or GCS mode)
+        if (cache_enabled or cache_type == "gcs") and self.packages_hash:
             env_vars.append(V1EnvVar(name="PACKAGES_HASH", value=self.packages_hash))
+        
+        # GCS-specific env vars
+        if cache_type == "gcs":
+            from kaspr.utils.gcs import build_gcs_object_key
+            
+            cache = self.python_packages.cache
+            gcs_config = cache.gcs
+            prefix = getattr(gcs_config, 'prefix', None) or self.DEFAULT_GCS_PREFIX
+            object_key = build_gcs_object_key(prefix, self.component_name, self.packages_hash)
+            
+            env_vars.append(V1EnvVar(name="GCS_BUCKET", value=gcs_config.bucket))
+            env_vars.append(V1EnvVar(name="GCS_OBJECT_KEY", value=object_key))
         
         # Custom index URL
         if hasattr(self.python_packages, 'index_url') and self.python_packages.index_url:
@@ -1791,11 +1870,28 @@ class KasprApp(BaseResource):
                     )
                 )
             else:
-                # emptyDir mode: Per-pod ephemeral storage (cache disabled)
+                # emptyDir mode (cache disabled or GCS): Per-pod ephemeral storage
                 volumes.append(
                     V1Volume(
                         name=f"{self.component_name}-packages",
                         empty_dir=V1EmptyDirVolumeSource(),
+                    )
+                )
+            
+            # GCS mode: Mount SA key Secret as a volume
+            cache = self.python_packages.cache if hasattr(self.python_packages, 'cache') and self.python_packages.cache else None
+            cache_type = getattr(cache, 'type', None) if cache else None
+            if cache_type == "gcs":
+                gcs_config = cache.gcs
+                secret_name = gcs_config.secret_ref.name
+                secret_key = getattr(gcs_config.secret_ref, 'key', None) or self.DEFAULT_GCS_SECRET_KEY
+                volumes.append(
+                    V1Volume(
+                        name="gcs-sa-key",
+                        secret=V1SecretVolumeSource(
+                            secret_name=secret_name,
+                            items=[V1KeyToPath(key=secret_key, path=secret_key)],
+                        ),
                     )
                 )
         

@@ -203,6 +203,13 @@ spec:
                       type: object
                       description: Cache configuration for storing installed packages.
                       properties:
+                        type:
+                          type: string
+                          enum:
+                          - pvc
+                          - gcs
+                          default: pvc
+                          description: Cache backend type. "pvc" uses a PersistentVolumeClaim (requires RWX storage class). "gcs" uses Google Cloud Storage.
                         enabled:
                           type: boolean
                           default: false
@@ -222,6 +229,37 @@ spec:
                         deleteClaim:
                           type: boolean
                           description: Whether to delete the PVC when the app is undeployed.
+                        gcs:
+                          type: object
+                          description: GCS cache configuration. Required when type is "gcs".
+                          properties:
+                            bucket:
+                              type: string
+                              description: GCS bucket name for storing cached package archives.
+                            prefix:
+                              type: string
+                              default: "kaspr-packages/"
+                              description: Key prefix for cached archives in the bucket.
+                            maxArchiveSize:
+                              type: string
+                              default: "1Gi"
+                              description: Maximum archive size to upload to GCS. Archives exceeding this are skipped.
+                            secretRef:
+                              type: object
+                              description: Reference to a Secret containing a GCS service account key JSON file.
+                              properties:
+                                name:
+                                  type: string
+                                  description: Name of the Secret containing the service account key.
+                                key:
+                                  type: string
+                                  default: sa.json
+                                  description: Key within the Secret containing the JSON file.
+                              required:
+                              - name
+                          required:
+                          - bucket
+                          - secretRef
                     installPolicy:
                       type: object
                       description: Installation behavior policy for package installation.

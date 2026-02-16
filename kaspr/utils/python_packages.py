@@ -5,6 +5,10 @@ import json
 import re
 
 from kaspr.types.models.python_packages import PythonPackagesSpec
+from kaspr.utils.gcs import (
+    generate_gcs_download_python_script,
+    generate_gcs_upload_python_script,
+)
 
 
 # Package name validation pattern
@@ -382,6 +386,180 @@ else
 fi
 """
     
+    return script.strip()
+
+
+def generate_gcs_install_script(
+    spec: PythonPackagesSpec,
+    cache_path: str = "/opt/kaspr/packages",
+    timeout: int = 600,
+    retries: int = 3,
+    packages_hash: str = None,
+    max_archive_size_bytes: int = 1073741824,  # 1Gi
+    sa_key_path: str = "/var/run/secrets/gcs/sa.json",
+) -> str:
+    """
+    Generate a bash script for installing Python packages with GCS cache.
+
+    The script flow:
+    1. Try downloading a cached archive from GCS (inline Python via urllib).
+    2. On cache hit: extract archive and exit.
+    3. On cache miss: pip install with retry/error logic.
+    4. After successful install: tar + size check + GCS upload (non-fatal).
+
+    GCS operations use inline ``python3 -c`` scripts because the Kaspr base
+    image does not ship ``curl``.  Authentication is handled inside the init
+    container itself using a mounted service-account key JSON + ``openssl``.
+
+    Args:
+        spec: The PythonPackagesSpec containing packages to install
+        cache_path: Path where packages will be installed (emptyDir mount)
+        timeout: Installation timeout in seconds
+        retries: Number of retry attempts
+        packages_hash: Pre-computed hash (if None, computed from spec)
+        max_archive_size_bytes: Maximum archive size (bytes) to upload
+        sa_key_path: Path to mounted SA key JSON file
+
+    Returns:
+        A bash script as a string
+    """
+    # Use values from install_policy if present
+    if hasattr(spec, 'install_policy') and spec.install_policy:
+        if hasattr(spec.install_policy, 'timeout') and spec.install_policy.timeout is not None:
+            timeout = spec.install_policy.timeout
+        if hasattr(spec.install_policy, 'retries') and spec.install_policy.retries is not None:
+            retries = spec.install_policy.retries
+        on_failure = getattr(spec.install_policy, 'on_failure', None) or "block"
+    else:
+        on_failure = "block"
+
+    # Validate all package names
+    invalid_packages = [pkg for pkg in spec.packages if not validate_package_name(pkg)]
+    if invalid_packages:
+        raise ValueError(f"Invalid package names: {', '.join(invalid_packages)}")
+
+    # Build the packages list for pip install
+    packages_str = " ".join(spec.packages)
+
+    # Use provided hash or compute it
+    if packages_hash is None:
+        packages_hash = compute_packages_hash(spec)
+
+    # Build pip command helper and error detection block
+    pip_cmd_helper = _build_pip_install_cmd(cache_path, packages_str)
+    error_detection = _build_error_detection_block()
+
+    # Generate inline Python scripts for GCS operations
+    download_script = generate_gcs_download_python_script(sa_key_path)
+    upload_script = generate_gcs_upload_python_script(sa_key_path, "/tmp/packages.tar.gz")
+
+    script = f"""#!/bin/bash
+set -e
+
+echo "Python Package Installer - GCS Cache Mode"
+echo "Cache path: {cache_path}"
+echo "Packages: {' '.join(spec.packages)}"
+echo "Packages hash: {packages_hash}"
+echo "Timeout: {timeout}s"
+echo "Retries: {retries}"
+echo "On failure: {on_failure}"
+echo "Max archive size: {max_archive_size_bytes} bytes"
+
+# Ensure install directory exists
+mkdir -p {cache_path}
+
+{pip_cmd_helper}
+
+# Function to install packages with retry logic
+install_packages() {{
+    local attempt=1
+    local max_attempts={retries}
+    local install_start_ts=$(date +%s)
+    local pip_cmd=$(build_pip_command)
+
+    while [ $attempt -le $max_attempts ]; do
+        echo "Installation attempt $attempt of $max_attempts"
+
+        if timeout {timeout}s bash -c "$pip_cmd" 2>/tmp/pip-error.log; then
+            echo "Successfully installed packages"
+            local install_end_ts=$(date +%s)
+            local duration=$((install_end_ts - install_start_ts))
+            echo "Installation completed in ${{duration}}s"
+            return 0
+        else
+            local exit_code=$?
+            echo "Installation failed with exit code $exit_code"
+            cat /tmp/pip-error.log 2>/dev/null || true
+            {error_detection}
+
+            if [ $attempt -lt $max_attempts ]; then
+                echo "Retrying in 5 seconds..."
+                sleep 5
+            fi
+            attempt=$((attempt + 1))
+        fi
+    done
+
+    echo "Failed to install packages after $max_attempts attempts"
+    return 1
+}}
+
+# ------------------------------------------------------------------
+# Step 1: Try GCS cache download
+# ------------------------------------------------------------------
+echo "Attempting to download cached packages from GCS..."
+GCS_DOWNLOAD_EXIT=0
+python3 -c '
+{download_script}
+' || GCS_DOWNLOAD_EXIT=$?
+
+if [ "$GCS_DOWNLOAD_EXIT" -eq 0 ]; then
+    echo "Extracting cached archive..."
+    tar xzf /tmp/packages.tar.gz -C {cache_path}
+    rm -f /tmp/packages.tar.gz
+    echo "Package installation complete (GCS cache hit)"
+    exit 0
+fi
+
+# ------------------------------------------------------------------
+# Step 2: Cache miss — install packages via pip
+# ------------------------------------------------------------------
+echo "GCS cache miss — falling back to pip install"
+if install_packages; then
+    echo "Package installation via pip succeeded"
+else
+    if [ "{on_failure}" = "block" ]; then
+        echo "Installation failed - blocking pod startup"
+        exit 1
+    else
+        echo "Installation failed - allowing pod to start in degraded mode"
+        exit 0
+    fi
+fi
+
+# ------------------------------------------------------------------
+# Step 3: Archive and upload to GCS (non-fatal)
+# ------------------------------------------------------------------
+echo "Creating archive for GCS upload..."
+tar czf /tmp/packages.tar.gz -C {cache_path} .
+
+# Get archive size (macOS stat vs GNU stat)
+ARCHIVE_SIZE=$(stat -f%z /tmp/packages.tar.gz 2>/dev/null || stat -c%s /tmp/packages.tar.gz 2>/dev/null || echo 0)
+
+if [ "$ARCHIVE_SIZE" -le {max_archive_size_bytes} ]; then
+    echo "Archive size: ${{ARCHIVE_SIZE}} bytes (limit: {max_archive_size_bytes}), uploading..."
+    python3 -c '
+{upload_script}
+' || true
+else
+    echo "Archive size ${{ARCHIVE_SIZE}} bytes exceeds limit ({max_archive_size_bytes} bytes), skipping upload"
+fi
+
+rm -f /tmp/packages.tar.gz
+echo "Package installation complete (GCS cache miss, installed from pip)"
+exit 0
+"""
+
     return script.strip()
 
 
