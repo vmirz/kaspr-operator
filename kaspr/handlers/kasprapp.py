@@ -1634,6 +1634,15 @@ async def on_create(
     if app.reconciliation_paused:
         logger.info("Reconciliation is paused.")
         return
+    
+    # Warn if both image and pythonPackages are specified
+    if spec.get('image') and spec.get('pythonPackages'):
+        logger.warning(
+            f"KasprApp {name} specifies both 'image' and 'pythonPackages'. "
+            f"Packages will be installed in addition to custom image. "
+            f"Consider using 'pythonPackages' alone for easier maintenance."
+        )
+    
     try:
         await app.create()
     except Exception as e:

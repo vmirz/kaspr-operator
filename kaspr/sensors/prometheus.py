@@ -192,6 +192,46 @@ class PrometheusMonitor(OperatorSensor):
             labelnames=['app_name', 'namespace', 'error_type'],
         )
         
+        # Phase 2: Authentication metrics
+        self.package_auth_enabled = Gauge(
+            'kasprop_package_auth_enabled',
+            'Whether PyPI authentication is configured (1=enabled, 0=disabled)',
+            labelnames=['app_name', 'namespace'],
+        )
+        
+        # Phase 2: Custom index metrics
+        self.package_custom_index_enabled = Gauge(
+            'kasprop_package_custom_index_enabled',
+            'Whether custom PyPI index is configured (1=enabled, 0=disabled)',
+            labelnames=['app_name', 'namespace'],
+        )
+        
+        # Phase 2: Cache usage metrics
+        self.package_cache_usage_bytes = Gauge(
+            'kasprop_package_cache_usage_bytes',
+            'Python package cache disk usage in bytes',
+            labelnames=['app_name', 'namespace', 'type'],  # type: total|used|available
+        )
+        
+        self.package_cache_usage_percent = Gauge(
+            'kasprop_package_cache_usage_percent',
+            'Python package cache disk usage percentage',
+            labelnames=['app_name', 'namespace'],
+        )
+        
+        # Phase 2: Install policy metrics
+        self.package_install_retries_total = Counter(
+            'kasprop_package_install_retries_total',
+            'Total number of package installation retries',
+            labelnames=['app_name', 'namespace'],
+        )
+        
+        self.package_install_timeouts_total = Counter(
+            'kasprop_package_install_timeouts_total',
+            'Total number of package installation timeouts',
+            labelnames=['app_name', 'namespace'],
+        )
+        
         logger.info("PrometheusMonitor initialized with all metrics")
 
     # =============================================================================
@@ -507,6 +547,7 @@ class PrometheusMonitor(OperatorSensor):
         state: Optional[Dict[str, Any]],
         success: bool,
         error_type: Optional[str] = None,
+        retries: int = 0,
     ) -> None:
         """Record package installation completion with metrics.
         
@@ -516,6 +557,7 @@ class PrometheusMonitor(OperatorSensor):
             state: State dict from on_package_install_start
             success: Whether installation succeeded
             error_type: Type of error if installation failed (e.g., 'timeout', 'network', 'invalid_package')
+            retries: Number of retry attempts that occurred during installation
         """
         if state:
             duration = time.time() - state.get('start_time', time.time())
@@ -541,6 +583,87 @@ class PrometheusMonitor(OperatorSensor):
                 namespace=namespace,
                 error_type=error_type,
             ).inc()
+        
+        # Record retries
+        if retries > 0:
+            self.package_install_retries_total.labels(
+                app_name=app_name,
+                namespace=namespace,
+            ).inc(retries)
+        
+        # Record timeout
+        if error_type == 'timeout':
+            self.package_install_timeouts_total.labels(
+                app_name=app_name,
+                namespace=namespace,
+            ).inc()
+
+    def on_package_config_updated(
+        self,
+        app_name: str,
+        namespace: str,
+        auth_enabled: bool,
+        custom_index_enabled: bool,
+    ) -> None:
+        """Record package configuration state.
+        
+        Args:
+            app_name: KasprApp name
+            namespace: Kubernetes namespace
+            auth_enabled: Whether PyPI authentication is configured
+            custom_index_enabled: Whether a custom PyPI index is configured
+        """
+        self.package_auth_enabled.labels(
+            app_name=app_name,
+            namespace=namespace,
+        ).set(1 if auth_enabled else 0)
+        
+        self.package_custom_index_enabled.labels(
+            app_name=app_name,
+            namespace=namespace,
+        ).set(1 if custom_index_enabled else 0)
+
+    def on_package_cache_usage_updated(
+        self,
+        app_name: str,
+        namespace: str,
+        total_bytes: int,
+        used_bytes: int,
+        available_bytes: int,
+        usage_percent: float,
+    ) -> None:
+        """Record package cache disk usage.
+        
+        Args:
+            app_name: KasprApp name
+            namespace: Kubernetes namespace
+            total_bytes: Total cache capacity in bytes
+            used_bytes: Used cache space in bytes
+            available_bytes: Available cache space in bytes
+            usage_percent: Cache usage as a percentage (0-100)
+        """
+        self.package_cache_usage_bytes.labels(
+            app_name=app_name,
+            namespace=namespace,
+            type='total',
+        ).set(total_bytes)
+        
+        self.package_cache_usage_bytes.labels(
+            app_name=app_name,
+            namespace=namespace,
+            type='used',
+        ).set(used_bytes)
+        
+        self.package_cache_usage_bytes.labels(
+            app_name=app_name,
+            namespace=namespace,
+            type='available',
+        ).set(available_bytes)
+        
+        self.package_cache_usage_percent.labels(
+            app_name=app_name,
+            namespace=namespace,
+        ).set(usage_percent)
 
     def on_status_update(
         self,

@@ -1,0 +1,36 @@
+# Example: KasprApp with multiple custom PyPI indexes
+#
+# This example demonstrates using multiple package indexes to mix
+# public and private packages. Packages are searched in order:
+#   1. Primary index (indexUrl)
+#   2. Extra indexes (extraIndexUrls)
+#
+# trustedHosts disables SSL verification for hosts with self-signed certificates.
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: app-with-custom-indexes
+  namespace: default
+spec:
+  replicas: 2
+  bootstrapServers: "kafka:9092"
+
+  pythonPackages:
+    packages:
+      - requests==2.31.0       # Available from public PyPI
+      - company-lib==1.0.0     # Only on private index
+
+    # Primary index (public PyPI)
+    indexUrl: "https://pypi.org/simple"
+
+    # Additional indexes to search
+    extraIndexUrls:
+      - "https://pypi.company.com/simple"
+
+    # Trust hosts with self-signed certificates
+    trustedHosts:
+      - "pypi.company.com"
+
+    cache:
+      enabled: true
+      size: "512Mi"

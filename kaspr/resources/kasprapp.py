@@ -115,6 +115,9 @@ class KasprApp(BaseResource):
     DEFAULT_PACKAGES_DELETE_CLAIM = True
     DEFAULT_PACKAGES_INSTALL_RETRIES = 3
     DEFAULT_PACKAGES_INSTALL_TIMEOUT = 600
+    DEFAULT_PACKAGES_INSTALL_ON_FAILURE = "block"
+    DEFAULT_PYPI_USERNAME_KEY = "username"
+    DEFAULT_PYPI_PASSWORD_KEY = "password"
 
     replicas: int
     image: str
@@ -1349,10 +1352,8 @@ class KasprApp(BaseResource):
                 limits=resources_spec.limits if hasattr(resources_spec, 'limits') else None,
             )
         
-        # Add PACKAGES_HASH env var to init container (only for cache mode)
-        env_vars = []
-        if cache_enabled and self.packages_hash:
-            env_vars.append(V1EnvVar(name="PACKAGES_HASH", value=self.packages_hash))
+        # Build env vars for init container
+        env_vars = self.prepare_python_packages_env_vars(cache_enabled)
         
         return V1Container(
             name="install-packages",
@@ -1368,6 +1369,90 @@ class KasprApp(BaseResource):
             ],
             resources=resource_requirements,
         )
+
+    def prepare_python_packages_env_vars(self, cache_enabled: bool = False) -> List[V1EnvVar]:
+        """Prepare environment variables for the Python packages init container.
+        
+        Includes:
+        - PACKAGES_HASH (only for cache mode)
+        - INDEX_URL (custom PyPI index)
+        - EXTRA_INDEX_URLS (additional indexes, comma-separated)
+        - TRUSTED_HOSTS (trusted hosts, comma-separated)
+        - PYPI_USERNAME / PYPI_PASSWORD (from Secret ref)
+        """
+        env_vars = []
+        
+        # Packages hash (only for cache mode)
+        if cache_enabled and self.packages_hash:
+            env_vars.append(V1EnvVar(name="PACKAGES_HASH", value=self.packages_hash))
+        
+        # Custom index URL
+        if hasattr(self.python_packages, 'index_url') and self.python_packages.index_url:
+            env_vars.append(V1EnvVar(name="INDEX_URL", value=self.python_packages.index_url))
+        
+        # Extra index URLs (comma-separated for shell parsing)
+        if hasattr(self.python_packages, 'extra_index_urls') and self.python_packages.extra_index_urls:
+            env_vars.append(V1EnvVar(
+                name="EXTRA_INDEX_URLS",
+                value=",".join(self.python_packages.extra_index_urls),
+            ))
+        
+        # Trusted hosts (comma-separated for shell parsing)
+        if hasattr(self.python_packages, 'trusted_hosts') and self.python_packages.trusted_hosts:
+            env_vars.append(V1EnvVar(
+                name="TRUSTED_HOSTS",
+                value=",".join(self.python_packages.trusted_hosts),
+            ))
+        
+        # Credential env vars from Secret
+        env_vars.extend(self.prepare_python_packages_credentials_env_vars())
+        
+        return env_vars
+
+    def prepare_python_packages_credentials_env_vars(self) -> List[V1EnvVar]:
+        """Prepare environment variables for PyPI authentication from Secret references."""
+        env_vars = []
+        
+        if not self.python_packages or not hasattr(self.python_packages, 'credentials') or not self.python_packages.credentials:
+            return env_vars
+        
+        creds = self.python_packages.credentials
+        if not hasattr(creds, 'secret_ref') or not creds.secret_ref:
+            return env_vars
+        
+        secret_name = creds.secret_ref.name
+        username_key = (
+            creds.secret_ref.username_key
+            if hasattr(creds.secret_ref, 'username_key') and creds.secret_ref.username_key
+            else self.DEFAULT_PYPI_USERNAME_KEY
+        )
+        password_key = (
+            creds.secret_ref.password_key
+            if hasattr(creds.secret_ref, 'password_key') and creds.secret_ref.password_key
+            else self.DEFAULT_PYPI_PASSWORD_KEY
+        )
+        
+        env_vars.append(V1EnvVar(
+            name="PYPI_USERNAME",
+            value_from=V1EnvVarSource(
+                secret_key_ref=V1SecretKeySelector(
+                    name=secret_name,
+                    key=username_key,
+                )
+            ),
+        ))
+        
+        env_vars.append(V1EnvVar(
+            name="PYPI_PASSWORD",
+            value_from=V1EnvVarSource(
+                secret_key_ref=V1SecretKeySelector(
+                    name=secret_name,
+                    key=password_key,
+                )
+            ),
+        ))
+        
+        return env_vars
 
     def prepare_env_vars(self) -> List[V1EnvVar]:
         env_vars = []

@@ -1,0 +1,39 @@
+# Example: KasprApp with aggressive install policy for large packages
+#
+# Large ML/Data packages (tensorflow, pytorch) may need:
+#   - More retry attempts for intermittent network issues
+#   - Longer timeout for slow downloads
+#   - More init container resources for compilation
+#   - Larger cache PVC for storing large packages
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: app-with-install-policy
+  namespace: default
+spec:
+  replicas: 2
+  bootstrapServers: "kafka:9092"
+
+  pythonPackages:
+    packages:
+      - tensorflow==2.13.0     # Large ML package
+
+    # Aggressive retry policy for large packages
+    installPolicy:
+      retries: 5               # Try up to 5 times
+      timeout: 1200            # 20 minutes (large packages need more time)
+      onFailure: block         # Don't start pods if install fails
+
+    # More resources for large installs
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "4Gi"
+        cpu: "2000m"
+
+    # Larger cache for big packages
+    cache:
+      enabled: true
+      size: "10Gi"

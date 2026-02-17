@@ -1,0 +1,73 @@
+# Example: Production-ready enterprise KasprApp with all Python package features
+#
+# This example combines all Phase 2 features:
+#   - Private registry with authentication
+#   - Multiple package indexes (private + public fallback)
+#   - Trusted hosts for self-signed certificates
+#   - Production-grade install policy
+#   - Generous resource limits
+#   - Large high-speed cache
+#
+# Prerequisites:
+#   1. Create credentials Secret:
+#      kubectl create secret generic production-pypi-creds \
+#        --namespace=production \
+#        --from-literal=username=svc-account \
+#        --from-literal=password=token-value
+#
+#   2. Ensure storage class 'fast-nfs' exists and supports ReadWriteMany
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: enterprise-app
+  namespace: production
+spec:
+  replicas: 5
+  bootstrapServers: "kafka-prod:9092"
+
+  pythonPackages:
+    # Mix of public and private packages
+    packages:
+      - requests==2.31.0
+      - pandas==2.1.0
+      - company-analytics-lib==3.2.1
+      - internal-ml-toolkit>=1.5.0,<2.0.0
+
+    # Primary: private company registry
+    indexUrl: "https://artifacts.company.com/pypi/simple"
+
+    # Fallback: public PyPI
+    extraIndexUrls:
+      - "https://pypi.org/simple"
+
+    # Trust internal registry certificate
+    trustedHosts:
+      - "artifacts.company.com"
+
+    # Authentication via Secret
+    credentials:
+      secretRef:
+        name: production-pypi-creds
+
+    # Production-grade install policy
+    installPolicy:
+      retries: 3
+      timeout: 900             # 15 minutes
+      onFailure: block
+
+    # Generous init container resources
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "4Gi"
+        cpu: "2000m"
+
+    # Fast NFS storage for shared cache
+    cache:
+      enabled: true
+      storageClass: "fast-nfs"
+      size: "20Gi"
+      accessMode: ReadWriteMany
+      deleteClaim: false       # Retain for troubleshooting
