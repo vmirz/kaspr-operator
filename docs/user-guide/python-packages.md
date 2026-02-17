@@ -268,6 +268,103 @@ resources:
 - **Heavy packages** (ML): 2Gi+ memory
 - Increase if seeing OOMKilled in init container
 
+## GCS Cache
+
+As an alternative to PVC-based caching, you can use a Google Cloud Storage (GCS) bucket as a shared package cache. This eliminates the need for `ReadWriteMany` storage classes and works across clusters.
+
+### When to Use GCS Cache
+
+- Your Kubernetes cluster does not support `ReadWriteMany` PVCs
+- You want to share package caches across multiple clusters
+- You prefer object storage over filesystem-based caching
+- You are already running on GCP / have a GCS bucket available
+
+### Prerequisites
+
+1. **GCS bucket**: Create a bucket for storing package archives
+2. **Service account key**: A GCP service account with `roles/storage.objectAdmin` on the bucket
+3. **Kubernetes Secret**: Store the SA key JSON as a Secret in your namespace
+
+```bash
+# Create a GCS bucket
+gsutil mb gs://my-kaspr-packages
+
+# Create a Kubernetes Secret from the SA key
+kubectl create secret generic gcs-sa-key \
+  --from-file=sa.json=/path/to/service-account-key.json \
+  -n default
+```
+
+### Configuration
+
+```yaml
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: my-app
+spec:
+  replicas: 3
+  bootstrapServers: "kafka:9092"
+  pythonPackages:
+    packages:
+      - requests==2.31.0
+      - numpy>=1.24.0
+    cache:
+      type: gcs
+      gcs:
+        bucket: my-kaspr-packages
+        prefix: "kaspr-packages/"     # optional, default: "kaspr-packages/"
+        maxArchiveSize: "1Gi"          # optional, default: "1Gi"
+        secretRef:
+          name: gcs-sa-key
+          key: sa.json                 # optional, default: "sa.json"
+```
+
+### GCS Cache Field Reference
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `cache.type` | string | No | — | Cache backend: `"pvc"` or `"gcs"` |
+| `cache.gcs.bucket` | string | Yes (when type=gcs) | — | GCS bucket name |
+| `cache.gcs.prefix` | string | No | `kaspr-packages/` | Key prefix for archives |
+| `cache.gcs.maxArchiveSize` | string | No | `1Gi` | Max archive size to upload |
+| `cache.gcs.secretRef.name` | string | Yes (when type=gcs) | — | Secret containing SA key JSON |
+| `cache.gcs.secretRef.key` | string | No | `sa.json` | Key within the Secret |
+
+### How It Works
+
+1. **Init container starts**: Authenticates with GCS using the mounted SA key
+2. **Cache check**: Attempts to download `<prefix>/<app-name>/<hash>.tar.gz` from the bucket
+3. **Cache hit**: Extracts the archive into the packages directory — pod starts fast
+4. **Cache miss**: Falls back to `pip install` with retry logic
+5. **Upload**: After successful pip install, archives the packages and uploads to GCS (if within size limit)
+6. **Main container**: Packages available via `PYTHONPATH` as usual
+
+### Limitations
+
+- **Thundering herd**: On first deploy with N replicas and an empty cache, all N pods install independently. The first to finish uploads the archive. Subsequent pods get cache hits.
+- **Max archive size**: Archives exceeding `maxArchiveSize` are not uploaded. The pod still starts (packages installed locally), but the cache is not populated.
+- **Upload is best-effort**: GCS upload failures are logged but do not block pod startup.
+- **No automatic cleanup**: When packages change, old archives remain in GCS. Configure GCS lifecycle policies to auto-delete stale objects.
+- **openssl required**: The init container uses `openssl` CLI for JWT signing. Present in standard Python images and the Kaspr base image.
+
+### Troubleshooting GCS Cache
+
+**Authentication failures:**
+```bash
+# Check the Secret exists and has the correct key
+kubectl get secret gcs-sa-key -o jsonpath='{.data.sa\.json}' | base64 -d | head -5
+
+# Check init container logs
+kubectl logs <pod> -c install-packages
+```
+
+**Archive too large:**
+If you see "Archive size exceeds limit", increase `maxArchiveSize` or accept per-pod installation.
+
+**Permissions:**
+The service account needs `roles/storage.objectAdmin` (or at minimum `storage.objects.create` + `storage.objects.get`) on the bucket.
+
 ## Status Reporting
 
 The operator reports package installation status using Kubernetes conditions and metadata fields.

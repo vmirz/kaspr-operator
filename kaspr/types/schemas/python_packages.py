@@ -1,9 +1,12 @@
 """Python packages schemas for validation."""
 
 import re
-from marshmallow import fields, validates, ValidationError
+import warnings
+from marshmallow import fields, validates, validates_schema, ValidationError
 from kaspr.types.base import BaseSchema
 from kaspr.types.models.python_packages import (
+    GCSCacheConfig,
+    GCSSecretReference,
     PythonPackagesCache,
     PythonPackagesCredentials,
     PythonPackagesInstallPolicy,
@@ -14,11 +17,58 @@ from kaspr.types.models.python_packages import (
 )
 
 
+class GCSSecretReferenceSchema(BaseSchema):
+    """Schema for GCS service account key Secret reference."""
+
+    __model__ = GCSSecretReference
+
+    name = fields.String(
+        data_key="name",
+        required=True,
+    )
+    key = fields.String(
+        data_key="key",
+        allow_none=True,
+        load_default=None,
+    )
+
+
+class GCSCacheConfigSchema(BaseSchema):
+    """Schema for GCS cache configuration."""
+
+    __model__ = GCSCacheConfig
+
+    bucket = fields.String(
+        data_key="bucket",
+        required=True,
+    )
+    prefix = fields.String(
+        data_key="prefix",
+        allow_none=True,
+        load_default=None,
+    )
+    max_archive_size = fields.String(
+        data_key="maxArchiveSize",
+        allow_none=True,
+        load_default=None,
+    )
+    secret_ref = fields.Nested(
+        GCSSecretReferenceSchema(),
+        data_key="secretRef",
+        required=True,
+    )
+
+
 class PythonPackagesCacheSchema(BaseSchema):
     """Schema for Python packages cache configuration."""
     
     __model__ = PythonPackagesCache
     
+    type = fields.String(
+        data_key="type",
+        allow_none=True,
+        load_default=None,
+    )
     enabled = fields.Boolean(
         data_key="enabled",
         allow_none=True,
@@ -44,6 +94,22 @@ class PythonPackagesCacheSchema(BaseSchema):
         allow_none=True,
         load_default=None,
     )
+    gcs = fields.Nested(
+        GCSCacheConfigSchema(),
+        data_key="gcs",
+        allow_none=True,
+        load_default=None,
+    )
+    
+    @validates("type")
+    def validate_type(self, value):
+        """Validate cache type."""
+        if value is not None:
+            valid_types = ["pvc", "gcs"]
+            if value not in valid_types:
+                raise ValidationError(
+                    f"Invalid cache type: {value}. Must be one of {valid_types}"
+                )
     
     @validates("access_mode")
     def validate_access_mode(self, value):
@@ -52,6 +118,25 @@ class PythonPackagesCacheSchema(BaseSchema):
             raise ValidationError(
                 f"Invalid access mode: {value}. Only 'ReadWriteMany' is currently supported for shared package cache."
             )
+    
+    @validates_schema
+    def validate_gcs_config(self, data, **kwargs):
+        """Validate GCS configuration is provided when type is gcs."""
+        cache_type = data.get("type")
+        if cache_type == "gcs":
+            if not data.get("gcs"):
+                raise ValidationError(
+                    "GCS configuration (gcs) is required when cache type is 'gcs'.",
+                    field_name="gcs",
+                )
+            if data.get("enabled") is not None:
+                warnings.warn(
+                    "cache.enabled is ignored when cache.type is 'gcs'. "
+                    "GCS caching is always active when type is 'gcs'. "
+                    "Remove the 'enabled' field to silence this warning.",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
 
 class PythonPackagesInstallPolicySchema(BaseSchema):

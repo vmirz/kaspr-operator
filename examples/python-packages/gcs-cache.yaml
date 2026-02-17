@@ -1,0 +1,51 @@
+# Example: GCS Cache for Python Packages
+#
+# Uses a Google Cloud Storage bucket as a shared package cache instead of a
+# ReadWriteMany PVC. Useful when RWX storage is not available or when sharing
+# caches across clusters.
+#
+# Prerequisites:
+#   1. A GCS bucket (e.g. gsutil mb gs://my-kaspr-packages)
+#   2. A GCP service account with storage.objectAdmin on the bucket
+#   3. The SA key JSON stored as a Kubernetes Secret:
+#        kubectl create secret generic gcs-sa-key \
+#          --from-file=sa.json=/path/to/sa-key.json
+#
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: gcs-cache-example
+  namespace: default
+spec:
+  replicas: 3
+  bootstrapServers: "kafka:9092"
+  image: "twmvmirz/py3.9-rocksdb8.1.1:latest"
+
+  pythonPackages:
+    packages:
+      - requests==2.31.0
+      - numpy>=1.24.0
+      - pandas>=2.0.0
+
+    cache:
+      type: gcs
+      gcs:
+        bucket: my-kaspr-packages
+        prefix: "kaspr-packages/"        # optional — default: "kaspr-packages/"
+        maxArchiveSize: "1Gi"            # optional — default: "1Gi"
+        secretRef:
+          name: gcs-sa-key               # required — Kubernetes Secret name
+          key: sa.json                   # optional — default: "sa.json"
+
+    installPolicy:
+      timeout: 600
+      retries: 3
+      onFailure: block
+
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"

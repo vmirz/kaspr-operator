@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.15.1
+--
+### Added
+* **Python Packages - GCS Cache Support**: Google Cloud Storage as an alternative package cache backend
+  * New `cache.type: gcs` option eliminates the need for ReadWriteMany PVCs
+  * Packages archived and cached in a GCS bucket, shared across pods and clusters
+  * Authentication via mounted GCP service account key JSON (`cache.gcs.secretRef`)
+  * Configurable bucket, key prefix, and max archive size
+  * Init container authenticates with GCS using Python stdlib + openssl (no extra dependencies)
+  * Cache hit extracts pre-built archive for fast startup; cache miss falls back to pip install then uploads
+  * Upload is best-effort and non-fatal; archive size limit prevents oversized uploads
+  * Schema validation warns when `cache.enabled` is set alongside `cache.type: gcs`
+
 ## 0.15.0
 --
 ### Added
