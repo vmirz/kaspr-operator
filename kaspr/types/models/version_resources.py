@@ -24,10 +24,17 @@ class KasprVersionResources:
     _VERSIONS = (
         KasprVersion(
             operator_version="0.16.0",
+            version="0.8.2",
+            image="kasprio/kaspr:0.8.2-alpha",
+            supported=True,
+            default=True,
+        ),        
+        KasprVersion(
+            operator_version="0.16.0",
             version="0.8.1",
             image="kasprio/kaspr:0.8.1-alpha",
             supported=True,
-            default=True,
+            default=False,
         ),
         KasprVersion(
             operator_version="0.16.0",
