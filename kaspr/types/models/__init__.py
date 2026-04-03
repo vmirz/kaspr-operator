@@ -65,6 +65,8 @@ from .kasprtask_spec import (
     KasprTaskProcessorsSpec,
     KasprTaskSpec,
 )
+from .kasprjoin_resources import KasprJoinResources
+from .kasprjoin_spec import KasprJoinSpec
 from .python_packages import (
     PythonPackagesCache,
     PythonPackagesInstallPolicy,
@@ -133,6 +135,8 @@ __all__ = [
     "KasprTaskProcessorsInit",
     "KasprTaskProcessorsSpec",
     "KasprTaskSpec",
+    "KasprJoinResources",
+    "KasprJoinSpec",
     "PythonPackagesCache",
     "PythonPackagesInstallPolicy",
     "PythonPackagesResources",

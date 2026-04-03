@@ -5,6 +5,7 @@ from kaspr.types.schemas.kaspragent_spec import KasprAgentSpecSchema
 from kaspr.types.schemas.kasprwebview_spec import KasprWebViewSpecSchema
 from kaspr.types.schemas.kasprtable_spec import KasprTableSpecSchema
 from kaspr.types.schemas.kasprtask_spec import KasprTaskSpecSchema
+from kaspr.types.schemas.kasprjoin_spec import KasprJoinSpecSchema
 
 
 class KasprAppComponentsSchema(BaseSchema):
@@ -31,6 +32,12 @@ class KasprAppComponentsSchema(BaseSchema):
     tasks = fields.List(
         fields.Nested(KasprTaskSpecSchema()),
         data_key="tasks",
+        required=False,
+        load_default=[],
+    )
+    joins = fields.List(
+        fields.Nested(KasprJoinSpecSchema()),
+        data_key="joins",
         required=False,
         load_default=[],
     )
