@@ -8,7 +8,7 @@ from kaspr.utils.helpers import camel_to_snake
 class KasprJoinSpecSchema(BaseSchema):
     __model__ = KasprJoinSpec
 
-    name = fields.String(data_key="name", required=True)
+    name = fields.String(data_key="name", allow_none=True, load_default=None)
     description = fields.String(
         data_key="description", allow_none=True, load_default=None
     )

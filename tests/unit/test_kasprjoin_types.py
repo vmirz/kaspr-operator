@@ -14,7 +14,6 @@ class TestKasprJoinSpecSchema:
     def setup_method(self):
         self.schema = KasprJoinSpecSchema()
         self.valid_input = {
-            "name": "orders-products-join",
             "description": "Join orders with products by product_id",
             "leftTable": "orders",
             "rightTable": "products",
@@ -29,7 +28,7 @@ class TestKasprJoinSpecSchema:
     def test_load_valid_input(self):
         result = self.schema.load(self.valid_input)
         assert isinstance(result, KasprJoinSpec)
-        assert result.name == "orders-products-join"
+        assert result.name is None  # name is derived from metadata.name, not spec
         assert result.description == "Join orders with products by product_id"
         assert result.left_table == "orders"
         assert result.right_table == "products"
@@ -40,7 +39,6 @@ class TestKasprJoinSpecSchema:
 
     def test_load_minimal_input(self):
         minimal = {
-            "name": "test-join",
             "leftTable": "left",
             "rightTable": "right",
             "extractor": {
@@ -49,7 +47,7 @@ class TestKasprJoinSpecSchema:
         }
         result = self.schema.load(minimal)
         assert isinstance(result, KasprJoinSpec)
-        assert result.name == "test-join"
+        assert result.name is None  # name is derived from metadata.name
         assert result.left_table == "left"
         assert result.right_table == "right"
         assert result.description is None
@@ -58,7 +56,6 @@ class TestKasprJoinSpecSchema:
 
     def test_join_type_defaults_to_inner(self):
         data = {
-            "name": "test-join",
             "leftTable": "a",
             "rightTable": "b",
             "extractor": {"python": "def f(v): return v"},
@@ -68,7 +65,6 @@ class TestKasprJoinSpecSchema:
 
     def test_output_channel_defaults_to_none(self):
         data = {
-            "name": "test-join",
             "leftTable": "a",
             "rightTable": "b",
             "extractor": {"python": "def f(v): return v"},
@@ -76,19 +72,8 @@ class TestKasprJoinSpecSchema:
         result = self.schema.load(data)
         assert result.output_channel is None
 
-    def test_load_missing_name_raises(self):
-        data = {
-            "leftTable": "a",
-            "rightTable": "b",
-            "extractor": {"python": "def f(v): return v"},
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            self.schema.load(data)
-        assert "name" in exc_info.value.messages
-
     def test_load_missing_left_table_raises(self):
         data = {
-            "name": "test-join",
             "rightTable": "b",
             "extractor": {"python": "def f(v): return v"},
         }
@@ -98,7 +83,6 @@ class TestKasprJoinSpecSchema:
 
     def test_load_missing_right_table_raises(self):
         data = {
-            "name": "test-join",
             "leftTable": "a",
             "extractor": {"python": "def f(v): return v"},
         }
@@ -108,7 +92,6 @@ class TestKasprJoinSpecSchema:
 
     def test_load_missing_extractor_raises(self):
         data = {
-            "name": "test-join",
             "leftTable": "a",
             "rightTable": "b",
         }
@@ -137,7 +120,6 @@ class TestKasprJoinSpecSchema:
 
     def test_load_left_join_type(self):
         data = {
-            "name": "test-join",
             "leftTable": "a",
             "rightTable": "b",
             "extractor": {"python": "def f(v): return v"},
@@ -192,7 +174,6 @@ class TestKasprAppComponentsWithJoins:
             "tasks": [],
             "joins": [
                 {
-                    "name": "test-join",
                     "leftTable": "a",
                     "rightTable": "b",
                     "extractor": {"python": "def f(v): return v"},
@@ -203,7 +184,7 @@ class TestKasprAppComponentsWithJoins:
         assert hasattr(result, "joins")
         assert len(result.joins) == 1
         assert isinstance(result.joins[0], KasprJoinSpec)
-        assert result.joins[0].name == "test-join"
+        assert result.joins[0].left_table == "a"
 
     def test_components_schema_joins_defaults_to_empty(self):
         schema = KasprAppComponentsSchema()
@@ -221,13 +202,11 @@ class TestKasprAppComponentsWithJoins:
         data = {
             "joins": [
                 {
-                    "name": "join-1",
                     "leftTable": "a",
                     "rightTable": "b",
                     "extractor": {"python": "def f(v): return v.get('id')"},
                 },
                 {
-                    "name": "join-2",
                     "leftTable": "a",
                     "rightTable": "c",
                     "extractor": {"python": "def g(v): return v.get('key')"},
@@ -238,8 +217,10 @@ class TestKasprAppComponentsWithJoins:
         }
         result = schema.load(data)
         assert len(result.joins) == 2
-        assert result.joins[0].name == "join-1"
+        assert result.joins[0].left_table == "a"
+        assert result.joins[0].right_table == "b"
         assert result.joins[0].join_type == "inner"
-        assert result.joins[1].name == "join-2"
+        assert result.joins[1].left_table == "a"
+        assert result.joins[1].right_table == "c"
         assert result.joins[1].join_type == "left"
         assert result.joins[1].output_channel == "custom-channel"
