@@ -34,7 +34,7 @@ spec:
                   type: string
                   description: >
                     Name of the left-side KasprTable resource.
-                    This is the "driving" table whose changes trigger FK extraction.
+                    This is the "driving" table whose changes trigger key extraction.
                     Must belong to the same KasprApp (same kaspr.io/app label).
                 rightTable:
                   type: string
