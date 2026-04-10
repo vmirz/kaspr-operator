@@ -24,8 +24,8 @@ class KasprVersionResources:
     _VERSIONS = (
         KasprVersion(
             operator_version="0.17.0",
-            version="0.9.0",
-            image="kasprio/kaspr:0.9.0-alpha",
+            version="0.9.1",
+            image="kasprio/kaspr:0.9.1-alpha",
             supported=True,
             default=True,
         ),          
