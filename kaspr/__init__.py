@@ -13,7 +13,7 @@ try:
 
     env_file = os.environ.get("ENV_FILE", ".env")
     path = find_dotenv(filename=env_file, raise_error_if_not_found=True)
-    print(f"Loading environemnt variables from {path}")
+    print(f"Loading environment variables from {path}")
     load_dotenv(dotenv_path=path)
 
 except Exception:
@@ -39,4 +39,4 @@ __all__ = [
     "kasprtask",
 ]
 
-__version__ = "0.16.2"
+__version__ = "0.17.0"
