@@ -55,6 +55,7 @@ from .kasprtask_spec import (
     KasprTaskProcessorFilterOperatorSchema,
     KasprTaskProcessorInitSchema
 )
+from .kasprjoin_spec import KasprJoinSpecSchema
 from .python_packages import (
     PythonPackagesCacheSchema,
     PythonPackagesInstallPolicySchema,
@@ -110,6 +111,7 @@ __all__ = [
     "ContainerTemplateSchema",
     "ConfigMapKeySelectorSchema",
     "SecretKeySelectorSchema",
+    "KasprJoinSpecSchema",
     "PythonPackagesCacheSchema",
     "PythonPackagesInstallPolicySchema",
     "PythonPackagesResourcesSchema",

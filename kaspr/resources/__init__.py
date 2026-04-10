@@ -2,6 +2,7 @@ from .kasprtable import KasprTable
 from .kaspragent import KasprAgent
 from .kasprwebview import KasprWebView
 from .kasprtask import KasprTask
+from .kasprjoin import KasprJoin
 from .kasprapp import KasprApp
 
-__all__ = ["KasprApp", "KasprAgent", "KasprWebView", "KasprTable", "KasprTask"]
+__all__ = ["KasprApp", "KasprAgent", "KasprWebView", "KasprTable", "KasprTask", "KasprJoin"]

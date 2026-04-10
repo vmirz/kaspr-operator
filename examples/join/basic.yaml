@@ -1,0 +1,106 @@
+# KasprJoin Basic Example
+# This example demonstrates a key join between an orders table and a products table.
+# The join produces an output channel that an agent consumes to create enriched orders.
+#
+# Prerequisites:
+#   - A KasprApp named "order-system" must exist
+#   - Kafka topics "raw-orders" and "raw-products" must exist
+#
+# Usage:
+#   kubectl apply -f examples/join/basic.yaml
+#   kubectl get kjoin
+#   kubectl describe kjoin orders-products-join
+
+---
+# Orders table (keyed by order_id)
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: orders
+  labels:
+    kaspr.io/app: order-system
+spec:
+  name: orders
+  description: "Orders keyed by order_id"
+  partitions: 6
+
+---
+# Products table (keyed by product_id)
+apiVersion: kaspr.io/v1alpha1
+kind: KasprTable
+metadata:
+  name: products
+  labels:
+    kaspr.io/app: order-system
+spec:
+  name: products
+  description: "Product catalog keyed by product_id"
+  partitions: 6
+
+---
+# Key join: orders -> products by product_id
+apiVersion: kaspr.io/v1alpha1
+kind: KasprJoin
+metadata:
+  name: orders-products-join
+  labels:
+    kaspr.io/app: order-system
+spec:
+  description: "Join orders with products by product_id"
+  leftTable: orders
+  rightTable: products
+  extractor:
+    entrypoint: get_product_id
+    python: |
+      def get_product_id(order):
+          return order.get("product_id")
+  type: inner
+  outputChannel: orders-products-joined
+
+---
+# Agent that processes the joined order+product stream
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: process-enriched-orders
+  labels:
+    kaspr.io/app: order-system
+spec:
+  description: "Processes joined order+product records from key join"
+  input:
+    channel:
+      name: orders-products-joined
+  output:
+    topics:
+      - name: enriched-orders
+        keySelector:
+          python: |
+            def get_key(value):
+                return value.get("order_id")
+  processors:
+    pipeline:
+      - enrich
+    init:
+      python: |
+        from datetime import datetime, timezone
+    operations:
+      - name: enrich
+        map:
+          entrypoint: enrich_order
+          python: |
+            def enrich_order(value):
+                """
+                value is a JoinedValue dict:
+                  {"left": <order>, "right": <product>}
+                """
+                order = value["left"]
+                product = value["right"]
+                return {
+                    "order_id": order.get("order_id"),
+                    "product_id": order.get("product_id"),
+                    "quantity": order.get("quantity"),
+                    "product_name": product.get("name"),
+                    "unit_price": product.get("price"),
+                    "total": product.get("price", 0) * order.get("quantity", 0),
+                    "enriched_at": datetime.now(timezone.utc).isoformat()
+                }
