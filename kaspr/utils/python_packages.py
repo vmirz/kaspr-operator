@@ -28,6 +28,11 @@ def compute_packages_hash(spec: PythonPackagesSpec) -> str:
     This hash is used to detect changes in package configuration and trigger
     pod restarts when packages need to be reinstalled.
     
+    Note: Python version compatibility is handled at runtime by the init
+    container script, which records and checks the Python major.minor version
+    inside the marker file. This avoids unnecessary reinstalls on every
+    Kaspr image bump when the Python version hasn't actually changed.
+    
     Args:
         spec: The PythonPackagesSpec containing packages and install policy
         
@@ -261,6 +266,12 @@ echo "Timeout: {timeout}s"
 echo "Retries: {retries}"
 echo "On failure: {on_failure}"
 
+# Detect Python major.minor version at runtime
+# This is used to invalidate cache when the base image's Python is upgraded,
+# without triggering reinstalls on every Kaspr version bump.
+PYTHON_VERSION=$(python3 -c "import sys; print(f'{{sys.version_info.major}}.{{sys.version_info.minor}}')")
+echo "Python version: $PYTHON_VERSION"
+
 # Ensure cache directory exists
 mkdir -p {cache_path}
 mkdir -p "$(dirname {lock_file})"
@@ -317,6 +328,7 @@ install_packages() {{
             cat > "{marker_file}" <<EOF
 {{
   "packages": [$packages_json],
+  "python_version": "$PYTHON_VERSION",
   "install_time": "$install_start",
   "duration": "${{duration}}s",
   "pod_name": "$HOSTNAME"
@@ -353,9 +365,25 @@ if flock -x -w {timeout} 200; then
     
     # Check if packages with this hash are already installed
     if [ -f "{marker_file}" ]; then
-        echo "Packages with hash {packages_hash} already installed, skipping installation"
-        flock -u 200
-        exit 0
+        # Verify the cached packages were built with the same Python version.
+        # Compiled extensions (.so files) are not compatible across Python
+        # major.minor versions, so a Python upgrade must trigger a reinstall.
+        CACHED_PY=$(python3 -c "
+import json, sys
+try:
+    data = json.load(open('{marker_file}'))
+    print(data.get('python_version', ''))
+except Exception:
+    print('')
+")
+        if [ "$CACHED_PY" = "$PYTHON_VERSION" ]; then
+            echo "Packages with hash {packages_hash} already installed (Python $PYTHON_VERSION), skipping installation"
+            flock -u 200
+            exit 0
+        else
+            echo "Python version changed ($CACHED_PY -> $PYTHON_VERSION), reinstalling packages"
+            rm -f {cache_path}/.installed-*
+        fi
     fi
     
     # Remove old marker files
@@ -464,6 +492,18 @@ echo "Timeout: {timeout}s"
 echo "Retries: {retries}"
 echo "On failure: {on_failure}"
 echo "Max archive size: {max_archive_size_bytes} bytes"
+
+# Detect Python major.minor version at runtime
+# GCS object key is suffixed with Python version so different Python versions
+# get separate cached archives.
+PYTHON_VERSION=$(python3 -c "import sys; print(f'{{sys.version_info.major}}.{{sys.version_info.minor}}')")
+echo "Python version: $PYTHON_VERSION"
+
+# Append Python version to GCS object key
+# e.g. kaspr-packages/my-app/a1b2c3d4.tar.gz -> kaspr-packages/my-app/a1b2c3d4-py3.12.tar.gz
+GCS_OBJECT_KEY="${{GCS_OBJECT_KEY%.tar.gz}}-py${{PYTHON_VERSION}}.tar.gz"
+echo "GCS object key (with Python version): $GCS_OBJECT_KEY"
+export GCS_OBJECT_KEY
 
 # Ensure install directory exists
 mkdir -p {cache_path}
