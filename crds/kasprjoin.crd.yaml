@@ -1,0 +1,78 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kasprjoins.kaspr.io
+spec:
+  scope: Namespaced
+  group: kaspr.io
+  names:
+    kind: KasprJoin
+    plural: kasprjoins
+    singular: kasprjoin
+    shortNames:
+      - kjoin
+      - kj
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+              properties:
+                name:
+                  type: string
+                  description: The name of the key join.
+                description:
+                  type: string
+                  description: A short description of what this key join does.
+                leftTable:
+                  type: string
+                  description: >
+                    Name of the left-side KasprTable resource.
+                    This is the "driving" table whose changes trigger key extraction.
+                    Must belong to the same KasprApp (same kaspr.io/app label).
+                rightTable:
+                  type: string
+                  description: >
+                    Name of the right-side KasprTable resource (the "lookup" table).
+                    Must belong to the same KasprApp (same kaspr.io/app label).
+                extractor:
+                  type: object
+                  description: >
+                    Python function that extracts the join key from left-table values.
+                    The returned value is used to look up the corresponding record
+                    in the right table.
+                  properties:
+                    entrypoint:
+                      type: string
+                      description: Name of the function to run.
+                    python:
+                      type: string
+                      description: Python code defining the extractor function.
+                  required:
+                    - python
+                type:
+                  type: string
+                  description: >
+                    Join semantics. "inner" skips emission when right side is None.
+                    "left" emits JoinedValue with right=None when no match exists.
+                  enum: ["inner", "left"]
+                  default: "inner"
+                outputChannel:
+                  type: string
+                  description: >
+                    Name of the output channel for joined results.
+                    KasprAgents reference this via input.channel.name.
+                    Defaults to "{name}-channel" if not specified.
+              required:
+                - leftTable
+                - rightTable
+                - extractor
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true

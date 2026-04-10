@@ -16,6 +16,10 @@ class KasprAppConfigSchema(BaseSchema):
     topic_partitions: int = fields.Int(data_key="topicPartitions", dump_default=None)
     topic_allow_declare: bool = fields.Bool(data_key="topicAllowDeclare", dump_default=None)
 
+    # serializers
+    key_serializer: str = fields.Str(data_key="keySerializer", dump_default=None)
+    value_serializer: str = fields.Str(data_key="valueSerializer", dump_default=None)
+
     # kafka message scheduler
     scheduler_enabled: bool = fields.Bool(data_key="schedulerEnabled", dump_default=None)
     scheduler_debug_stats_enabled: bool = fields.Bool(data_key="schedulerDebugStatsEnabled", dump_default=None)

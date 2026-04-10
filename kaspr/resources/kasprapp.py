@@ -3233,5 +3233,7 @@ class KasprApp(BaseResource):
         if self._packages_hash is None and self.python_packages:
             # Import here to avoid circular dependency
             from kaspr.utils.python_packages import compute_packages_hash
-            self._packages_hash = compute_packages_hash(self.python_packages)
+            self._packages_hash = compute_packages_hash(
+                self.python_packages
+            )
         return self._packages_hash

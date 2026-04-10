@@ -12,6 +12,10 @@ class KasprAppConfig(BaseModel):
     topic_partitions: int
     topic_allow_declare: bool
 
+    # serializers
+    key_serializer: str
+    value_serializer: str
+
     # kafka message scheduler
     scheduler_enabled: bool
     scheduler_debug_stats_enabled: bool
