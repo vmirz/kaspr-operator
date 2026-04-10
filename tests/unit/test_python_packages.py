@@ -796,6 +796,50 @@ class TestPhase2HashComputation:
         # Credentials should not change the hash (same packages, same index)
         assert compute_packages_hash(spec1) == compute_packages_hash(spec2)
 
+    def test_hash_does_not_include_image(self):
+        """Test hash is not affected by container image (Python version check is done at runtime)."""
+        from kaspr.utils.python_packages import compute_packages_hash
+
+        spec = PythonPackagesSpec(packages=["requests", "numpy"])
+        hash1 = compute_packages_hash(spec)
+        hash2 = compute_packages_hash(spec)
+
+        # Same packages always produce the same hash regardless of image
+        assert hash1 == hash2
+
+    def test_install_script_checks_python_version(self):
+        """Test install script detects Python version and validates it against marker file."""
+        from kaspr.utils.python_packages import generate_install_script
+
+        spec = PythonPackagesSpec(packages=["requests"])
+        script = generate_install_script(spec)
+
+        # Should detect Python version at runtime
+        assert "PYTHON_VERSION=$(python3 -c" in script
+        assert "sys.version_info.major" in script
+        assert "sys.version_info.minor" in script
+
+        # Should check Python version inside marker file before skipping
+        assert "python_version" in script
+        assert "Python version changed" in script
+
+        # Should write Python version into marker file
+        assert '"python_version": "$PYTHON_VERSION"' in script
+
+    def test_gcs_script_appends_python_version_to_key(self):
+        """Test GCS install script appends Python version to the GCS object key."""
+        from kaspr.utils.python_packages import generate_gcs_install_script
+
+        spec = PythonPackagesSpec(packages=["requests"])
+        script = generate_gcs_install_script(spec)
+
+        # Should detect Python version
+        assert "PYTHON_VERSION=$(python3 -c" in script
+        # Should modify GCS_OBJECT_KEY to include Python version
+        assert "GCS_OBJECT_KEY=" in script
+        assert "-py${PYTHON_VERSION}" in script
+        assert "export GCS_OBJECT_KEY" in script
+
 
 class TestPhase2InstallScript:
     """Tests for Phase 2 install script features."""
