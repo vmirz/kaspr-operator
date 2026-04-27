@@ -66,6 +66,11 @@ CLIENT_STATUS_CHECK_TIMEOUT_SECONDS = float(
     _getenv("CLIENT_STATUS_CHECK_TIMEOUT_SECONDS", 15.0)
 )
 
+#: Custom container image registry to use instead of Docker Hub
+#: e.g. "sipapexdev.azurecr.io" will turn "kasprio/kaspr:0.9.1-alpha"
+#: into "sipapexdev.azurecr.io/kasprio/kaspr:0.9.1-alpha"
+KASPR_IMAGE_REGISTRY = str(_getenv("KASPR_IMAGE_REGISTRY", ""))
+
 #: Enable automatic rebalance when Kafka subscriptions change
 AUTO_REBALANCE_ENABLED = bool(
     _getenv("AUTO_REBALANCE_ENABLED", True)
@@ -93,6 +98,7 @@ class Settings:
     auto_rebalance_enabled: bool = AUTO_REBALANCE_ENABLED
     hung_member_detection_enabled: bool = HUNG_MEMBER_DETECTION_ENABLED
     hung_rebalancing_threshold_seconds: int = HUNG_REBALANCING_THRESHOLD_SECONDS
+    kaspr_image_registry: str = KASPR_IMAGE_REGISTRY
 
     def __init__(
         self,
