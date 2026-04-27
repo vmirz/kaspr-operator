@@ -852,8 +852,12 @@ class KasprApp(BaseResource):
 
     def prepare_image(self) -> str:
         """Container image to use."""
-        # Use image provide in spec, otherwise use the image defined for the given version
-        return self._image if self._image else self.version.image
+        # Use image provided in spec, otherwise use the image defined for the given version
+        image = self._image if self._image else self.version.image
+        # Prepend custom registry if configured
+        if self.conf.kaspr_image_registry:
+            image = f"{self.conf.kaspr_image_registry.rstrip('/')}/{image}"
+        return image
 
     def prepare_service(self) -> V1Service:
         """Build service resource."""
