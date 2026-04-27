@@ -67,8 +67,6 @@ CLIENT_STATUS_CHECK_TIMEOUT_SECONDS = float(
 )
 
 #: Custom container image registry to use instead of Docker Hub
-#: e.g. "sipapexdev.azurecr.io" will turn "kasprio/kaspr:0.9.1-alpha"
-#: into "sipapexdev.azurecr.io/kasprio/kaspr:0.9.1-alpha"
 KASPR_IMAGE_REGISTRY = str(_getenv("KASPR_IMAGE_REGISTRY", ""))
 
 #: Enable automatic rebalance when Kafka subscriptions change
