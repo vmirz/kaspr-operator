@@ -1,4 +1,8 @@
-from typing import NamedTuple, List
+from pathlib import Path
+from typing import List, NamedTuple, Optional, Tuple
+
+import yaml
+
 
 class VersionInfo(NamedTuple):
     major: int
@@ -7,516 +11,114 @@ class VersionInfo(NamedTuple):
     releaselevel: str
     serial: str
 
+
 class KasprVersion(NamedTuple):
     operator_version: str
     version: str
     image: str
     supported: bool
-    default: True
+    default: bool
 
     def __repr__(self) -> str:
         return f"{self.version}"
 
 
 class KasprVersionResources:
-    #: Mapping of operator version to kaspr application version
-    # TODO: This should be moved to a configuration file
-    _VERSIONS = (
-        KasprVersion(
-            operator_version="0.17.2",
-            version="0.9.1",
-            image="kasprio/kaspr:0.9.1-alpha",
-            supported=True,
-            default=True,
-        ),        
-        KasprVersion(
-            operator_version="0.17.0",
-            version="0.9.1",
-            image="kasprio/kaspr:0.9.1-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.16.0",
-            version="0.8.2",
-            image="kasprio/kaspr:0.8.2-alpha",
-            supported=True,
-            default=False,
-        ),        
-        KasprVersion(
-            operator_version="0.16.0",
-            version="0.8.1",
-            image="kasprio/kaspr:0.8.1-alpha",
-            supported=True,
-            default=False,
-        ),
-        KasprVersion(
-            operator_version="0.16.0",
-            version="0.8.0",
-            image="kasprio/kaspr:0.8.0-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.14.5",
-            version="0.7.5",
-            image="kasprio/kaspr:0.7.6-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.14.4",
-            version="0.7.5",
-            image="kasprio/kaspr:0.7.5-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.14.0",
-            version="0.7.5",
-            image="kasprio/kaspr:0.7.5-alpha",
-            supported=True,
-            default=False,
-        ),    
-        KasprVersion(
-            operator_version="0.13.3",
-            version="0.7.5",
-            image="kasprio/kaspr:0.7.5-alpha",
-            supported=True,
-            default=False,
-        ),             
-        KasprVersion(
-            operator_version="0.13.1",
-            version="0.7.5",
-            image="kasprio/kaspr:0.7.5-alpha",
-            supported=True,
-            default=False,
-        ),         
-        KasprVersion(
-            operator_version="0.13.0",
-            version="0.7.5",
-            image="kasprio/kaspr:0.7.5-alpha",
-            supported=True,
-            default=False,
-        ), 
-        KasprVersion(
-            operator_version="0.12.0",
-            version="0.7.5",
-            image="kasprio/kaspr:0.7.5-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.11.1",
-            version="0.7.5",
-            image="kasprio/kaspr:0.7.5-alpha",
-            supported=True,
-            default=False,
-        ),        
-        KasprVersion(
-            operator_version="0.9.6",
-            version="0.7.5",
-            image="kasprio/kaspr:0.7.5-alpha",
-            supported=True,
-            default=False,
-        ),
-        KasprVersion(
-            operator_version="0.9.5",
-            version="0.7.4",
-            image="kasprio/kaspr:0.7.4-alpha",
-            supported=True,
-            default=False,
-        ),
-        KasprVersion(
-            operator_version="0.9.4",
-            version="0.7.3",
-            image="kasprio/kaspr:0.7.3-alpha",
-            supported=True,
-            default=False,
-        ),    
-        KasprVersion(
-            operator_version="0.9.3",
-            version="0.7.2",
-            image="kasprio/kaspr:0.7.2-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.9.2",
-            version="0.7.1",
-            image="kasprio/kaspr:0.7.1-alpha",
-            supported=True,
-            default=False,
-        ),            
-        KasprVersion(
-            operator_version="0.9.0",
-            version="0.7.0",
-            image="kasprio/kaspr:0.7.0-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.8.8",
-            version="0.6.15",
-            image="kasprio/kaspr:0.6.15-alpha",
-            supported=True,
-            default=False,
-        ),  
-        KasprVersion(
-            operator_version="0.8.7",
-            version="0.6.15",
-            image="kasprio/kaspr:0.6.15-alpha",
-            supported=True,
-            default=False,
-        ),  
-        KasprVersion(
-            operator_version="0.8.5",
-            version="0.6.15",
-            image="kasprio/kaspr:0.6.15-alpha",
-            supported=True,
-            default=False,
-        ),  
-        KasprVersion(
-            operator_version="0.8.4",
-            version="0.6.14",
-            image="kasprio/kaspr:0.6.14-alpha",
-            supported=True,
-            default=False,
-        ),  
-        KasprVersion(
-            operator_version="0.8.2",
-            version="0.6.13",
-            image="kasprio/kaspr:0.6.13-alpha",
-            supported=True,
-            default=False,
-        ),        
-        KasprVersion(
-            operator_version="0.8.0",
-            version="0.6.12",
-            image="kasprio/kaspr:0.6.12-alpha",
-            supported=True,
-            default=False,
-        ),
-        KasprVersion(
-            operator_version="0.7.9",
-            version="0.6.11",
-            image="kasprio/kaspr:0.6.11-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.7.8",
-            version="0.6.11",
-            image="kasprio/kaspr:0.6.11-alpha",
-            supported=True,
-            default=False,
-        ),           
-        KasprVersion(
-            operator_version="0.7.6",
-            version="0.6.11",
-            image="kasprio/kaspr:0.6.11-alpha",
-            supported=True,
-            default=False,
-        ),             
-        KasprVersion(
-            operator_version="0.7.5",
-            version="0.6.11",
-            image="kasprio/kaspr:0.6.11-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.7.4",
-            version="0.6.11",
-            image="kasprio/kaspr:0.6.11-alpha",
-            supported=True,
-            default=False,
-        ),           
-        KasprVersion(
-            operator_version="0.7.1",
-            version="0.6.11",
-            image="kasprio/kaspr:0.6.11-alpha",
-            supported=True,
-            default=False,
-        ),            
-        KasprVersion(
-            operator_version="0.7.0",
-            version="0.6.10",
-            image="kasprio/kaspr:0.6.10-alpha",
-            supported=True,
-            default=False,
-        ),            
-        KasprVersion(
-            operator_version="0.6.5",
-            version="0.6.9",
-            image="kasprio/kaspr:0.6.9-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.6.3",
-            version="0.6.8",
-            image="kasprio/kaspr:0.6.8-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.6.2",
-            version="0.6.7",
-            image="kasprio/kaspr:0.6.7-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.6.1",
-            version="0.6.7",
-            image="kasprio/kaspr:0.6.7-alpha",
-            supported=True,
-            default=False,
-        ),            
-        KasprVersion(
-            operator_version="0.6.0",
-            version="0.6.0",
-            image="kasprio/kaspr:0.6.6-alpha",
-            supported=True,
-            default=False,
-        ),        
-        KasprVersion(
-            operator_version="0.5.28",
-            version="0.5.28",
-            image="kasprio/kaspr:0.6.5-alpha",
-            supported=True,
-            default=False,
-        ),
-        KasprVersion(
-            operator_version="0.5.27",
-            version="0.5.27",
-            image="kasprio/kaspr:0.6.5-alpha",
-            supported=True,
-            default=False,
-        ),           
-        KasprVersion(
-            operator_version="0.5.26",
-            version="0.5.26",
-            image="kasprio/kaspr:0.6.4-alpha",
-            supported=True,
-            default=False,
-        ),           
-        KasprVersion(
-            operator_version="0.5.25",
-            version="0.5.25",
-            image="kasprio/kaspr:0.6.3-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.5.24",
-            version="0.5.24",
-            image="kasprio/kaspr:0.6.2-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.5.22",
-            version="0.5.22",
-            image="kasprio/kaspr:0.6.1-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.5.21",
-            version="0.5.21",
-            image="kasprio/kaspr:0.5.19-alpha",
-            supported=True,
-            default=False,
-        ),  
-        KasprVersion(
-            operator_version="0.5.20",
-            version="0.5.20",
-            image="kasprio/kaspr:0.5.19-alpha",
-            supported=True,
-            default=False,
-        ),           
-        KasprVersion(
-            operator_version="0.5.19",
-            version="0.5.19",
-            image="kasprio/kaspr:0.5.18-alpha",
-            supported=True,
-            default=False,
-        ),            
-        KasprVersion(
-            operator_version="0.5.18",
-            version="0.5.18",
-            image="kasprio/kaspr:0.5.17-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.5.17",
-            version="0.5.17",
-            image="kasprio/kaspr:0.5.16-alpha",
-            supported=True,
-            default=False,
-        ),         
-        KasprVersion(
-            operator_version="0.5.16",
-            version="0.5.16",
-            image="kasprio/kaspr:0.5.15-alpha",
-            supported=True,
-            default=False,
-        ),             
-        KasprVersion(
-            operator_version="0.5.15",
-            version="0.5.15",
-            image="kasprio/kaspr:0.5.14-alpha",
-            supported=True,
-            default=False,
-        ),            
-        KasprVersion(
-            operator_version="0.5.14",
-            version="0.5.14",
-            image="kasprio/kaspr:0.5.13-alpha",
-            supported=True,
-            default=False,
-        ),    
-        KasprVersion(
-            operator_version="0.5.13",
-            version="0.5.13",
-            image="kasprio/kaspr:0.5.12-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.5.11",
-            version="0.5.11",
-            image="kasprio/kaspr:0.5.11-alpha",
-            supported=True,
-            default=False,
-        ),        
-        KasprVersion(
-            operator_version="0.5.8",
-            version="0.5.10",
-            image="kasprio/kaspr:0.5.10-alpha",
-            supported=True,
-            default=False,
-        ),
-        KasprVersion(
-            operator_version="0.5.5",
-            version="0.5.9",
-            image="kasprio/kaspr:0.5.9-alpha",
-            supported=True,
-            default=False,
-        ),        
-        KasprVersion(
-            operator_version="0.4.1",
-            version="0.5.8",
-            image="kasprio/kaspr:0.5.8-alpha",
-            supported=True,
-            default=False,
-        ),
-        KasprVersion(
-            operator_version="0.4.0",
-            version="0.5.6",
-            image="kasprio/kaspr:0.5.6-alpha",
-            supported=True,
-            default=False,
-        ),           
-        KasprVersion(
-            operator_version="0.3.9",
-            version="0.5.4",
-            image="kasprio/kaspr:0.5.4-alpha",
-            supported=True,
-            default=False,
-        ),           
-        KasprVersion(
-            operator_version="0.3.7",
-            version="0.5.2",
-            image="kasprio/kaspr:0.5.2-alpha",
-            supported=True,
-            default=False,
-        ),           
-        KasprVersion(
-            operator_version="0.3.2",
-            version="0.5.1",
-            image="kasprio/kaspr:0.5.1-alpha",
-            supported=True,
-            default=False,
-        ),          
-        KasprVersion(
-            operator_version="0.3.1",
-            version="0.5.1",
-            image="kasprio/kaspr:0.5.1-alpha",
-            supported=True,
-            default=False,
-        ),        
-        KasprVersion(
-            operator_version="0.3.0",
-            version="0.4.4",
-            image="kasprio/kaspr:0.4.4-alpha",
-            supported=True,
-            default=False,
-        ),
-        KasprVersion(
-            operator_version="0.2.0",
-            version="0.3.0-dev1",
-            image="kasprio/kaspr:0.3.0-dev1",
-            supported=True,
-            default=False,
-        ),  
-        KasprVersion(
-            operator_version="0.1.10",
-            version="0.2.2-alpha",
-            image="kasprio/kaspr:0.2.2-alpha",
-            supported=False,
-            default=False,
-        ),  
-        KasprVersion(
-            operator_version="0.1.10",
-            version="0.1.2",
-            image="kasprio/kaspr:0.1.2",
-            supported=False,
-            default=False,
-        ),        
-        KasprVersion(
-            operator_version="0.1.10",
-            version="0.1.1",
-            image="kasprio/kaspr:0.1.1",
-            supported=False,
-            default=False,
-        ),
-        KasprVersion(
-            operator_version="0.1.0",
-            version="0.1.0",
-            image="kasprio/kaspr:0.1.0",
-            supported=True,
-            default=False,
-        ),
+    """Version mappings loaded from a static YAML config file."""
+
+    _CONFIG_PATH = (
+        Path(__file__).resolve().parent.parent / "config" / "kaspr_versions.yaml"
     )
+    _VERSIONS: Tuple[KasprVersion, ...] = tuple()
+    _LOADED = False
 
     @classmethod
-    def default_version(self) -> KasprVersion:
-        """Returns the default kaspr image version for the current operator version."""
-        default = [version for version in self._VERSIONS if version.default]
-        if not default:
+    def _load_versions(cls) -> Tuple[KasprVersion, ...]:
+        if cls._LOADED:
+            return cls._VERSIONS
+
+        if not cls._CONFIG_PATH.exists():
+            raise RuntimeError(
+                f"Kaspr versions config file was not found: {cls._CONFIG_PATH}"
+            )
+
+        with cls._CONFIG_PATH.open("r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+
+        if not isinstance(data, dict):
+            raise RuntimeError("Kaspr versions config must be a YAML object.")
+
+        versions_data = data.get("versions")
+        if not isinstance(versions_data, list):
+            raise RuntimeError(
+                "Kaspr versions config must contain a 'versions' list."
+            )
+
+        versions: List[KasprVersion] = []
+        for idx, item in enumerate(versions_data):
+            if not isinstance(item, dict):
+                raise RuntimeError(
+                    f"Invalid version entry at index {idx}: expected object."
+                )
+
+            missing = {
+                key
+                for key in (
+                    "operator_version",
+                    "version",
+                    "image",
+                    "supported",
+                    "default",
+                )
+                if key not in item
+            }
+            if missing:
+                missing_str = ", ".join(sorted(missing))
+                raise RuntimeError(
+                    f"Invalid version entry at index {idx}: missing {missing_str}."
+                )
+
+            version = KasprVersion(
+                operator_version=str(item["operator_version"]),
+                version=str(item["version"]),
+                image=str(item["image"]),
+                supported=bool(item["supported"]),
+                default=bool(item["default"]),
+            )
+            versions.append(version)
+
+        defaults = [version for version in versions if version.default]
+        if not defaults:
             raise RuntimeError("A default kaspr version is not configured.")
-        if len(default) > 1:
-            raise RecursionError("Only one default kaspr version is allowed.")
+        if len(defaults) > 1:
+            raise RuntimeError("Only one default kaspr version is allowed.")
+
+        cls._VERSIONS = tuple(versions)
+        cls._LOADED = True
+        return cls._VERSIONS
+
+    @classmethod
+    def default_version(cls) -> KasprVersion:
+        """Returns the default kaspr image version for the current operator version."""
+        versions = cls._load_versions()
+        default = [version for version in versions if version.default]
         return default[0]
 
     @classmethod
-    def is_supported_version(cls, version: str):
+    def is_supported_version(cls, version: str) -> bool:
+        versions = cls._load_versions()
         kv: List[KasprVersion] = [
-            v for v in cls._VERSIONS if v.version == version and v.supported
+            v for v in versions if v.version == version and v.supported
         ]
         if kv:
             return True
         return False
-    
+
     @classmethod
-    def from_version(self, version: str) -> KasprVersion:
+    def from_version(cls, version: str) -> Optional[KasprVersion]:
         """Returns version information from a kaspr version string"""
-        kv: List[KasprVersion] = [
-            v for v in self._VERSIONS if v.version == version
-        ]
+        versions = cls._load_versions()
+        kv: List[KasprVersion] = [v for v in versions if v.version == version]
         if kv:
             return kv[0]
+        return None
