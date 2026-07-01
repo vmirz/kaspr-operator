@@ -1,9 +1,14 @@
 versions:
+  - operator_version: "0.18.14"
+    version: "0.11.7"
+    image: "kasprio/kaspr:0.11.7"
+    supported: true
+    default: true
   - operator_version: "0.18.12"
     version: "0.11.6"
     image: "kasprio/kaspr:0.11.6"
     supported: true
-    default: true
+    default: false
   - operator_version: "0.18.11"
     version: "0.11.5"
     image: "kasprio/kaspr:0.11.5"
