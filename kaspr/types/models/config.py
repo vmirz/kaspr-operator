@@ -18,6 +18,7 @@ class KasprAppConfig(BaseModel):
 
     # kafka message scheduler
     scheduler_enabled: bool
+    scheduler_cron_enabled: bool
     scheduler_debug_stats_enabled: bool
     scheduler_topic_partitions: int
     scheduler_checkpoint_save_interval_seconds: float
@@ -26,6 +27,9 @@ class KasprAppConfig(BaseModel):
     scheduler_janitor_checkpoint_interval: float
     scheduler_janitor_clean_interval_seconds: float
     scheduler_janitor_highwater_offset_seconds: float
+    scheduler_cron_tick_interval_seconds: float
+    scheduler_cron_tick_buffer_seconds: float
+    scheduler_cron_min_interval_seconds: float
 
     # rocksdb
     store_rocksdb_write_buffer_size: int
