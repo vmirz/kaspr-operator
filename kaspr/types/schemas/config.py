@@ -22,6 +22,7 @@ class KasprAppConfigSchema(BaseSchema):
 
     # kafka message scheduler
     scheduler_enabled: bool = fields.Bool(data_key="schedulerEnabled", dump_default=None)
+    scheduler_cron_enabled: bool = fields.Bool(data_key="schedulerCronEnabled", dump_default=None)
     scheduler_debug_stats_enabled: bool = fields.Bool(data_key="schedulerDebugStatsEnabled", dump_default=None)
     scheduler_topic_partitions: int = fields.Int(data_key="schedulerTopicPartitions", dump_default=None)
     scheduler_checkpoint_save_interval_seconds: float = fields.Float(data_key="schedulerCheckpointSaveIntervalSeconds", dump_default=None)
@@ -30,6 +31,9 @@ class KasprAppConfigSchema(BaseSchema):
     scheduler_janitor_checkpoint_interval: float = fields.Float(data_key="schedulerJanitorCheckpointInterval", dump_default=None)
     scheduler_janitor_clean_interval_seconds: float = fields.Float(data_key="schedulerJanitorCleanIntervalSeconds", dump_default=None)
     scheduler_janitor_highwater_offset_seconds: float = fields.Float(data_key="schedulerJanitorHighwaterOffsetSeconds", dump_default=None)
+    scheduler_cron_tick_interval_seconds: float = fields.Float(data_key="schedulerCronTickIntervalSeconds", dump_default=None)
+    scheduler_cron_tick_buffer_seconds: float = fields.Float(data_key="schedulerCronTickBufferSeconds", dump_default=None)
+    scheduler_cron_min_interval_seconds: float = fields.Float(data_key="schedulerCronMinIntervalSeconds", dump_default=None)
 
     # rocksdb
     store_rocksdb_write_buffer_size: int = fields.Int(data_key="storeRocksdbWriteBufferSize", dump_default=None)
