@@ -1,0 +1,40 @@
+apiVersion: kaspr.io/v1alpha1
+kind: KasprApp
+metadata:
+  name: python-packages-github-ssh
+spec:
+  bootstrapServers: kafka:9092
+  replicas: 1
+  pythonPackages:
+    packages:
+      - git+ssh://git@github.com/my-org/private-package.git@v1.2.3#egg=private-package
+    cache:
+      enabled: true
+      size: 1Gi
+      accessMode: ReadWriteMany
+    installPolicy:
+      retries: 3
+      timeout: 600
+  template:
+    pod:
+      volumes:
+        - name: github-ssh
+          secret:
+            secretName: github-deploy-key
+            items:
+              - key: id_ed25519
+                path: id_ed25519
+              - key: known_hosts
+                path: known_hosts
+    pythonPackagesInitContainer:
+      env:
+        - name: GIT_SSH_COMMAND
+          value: >-
+            ssh -i /var/run/secrets/github-ssh/id_ed25519
+            -o IdentitiesOnly=yes
+            -o UserKnownHostsFile=/var/run/secrets/github-ssh/known_hosts
+            -o StrictHostKeyChecking=yes
+      volumeMounts:
+        - name: github-ssh
+          mountPath: /var/run/secrets/github-ssh
+          readOnly: true
