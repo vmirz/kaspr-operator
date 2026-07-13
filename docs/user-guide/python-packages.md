@@ -1113,6 +1113,45 @@ packages:
   - git+https://github.com/user/repo.git@v1.0.0
 ```
 
+For private GitHub repositories over SSH, mount the deploy key only into the
+`install-packages` init container using `template.pythonPackagesInitContainer`.
+Define the Secret volume under `template.pod.volumes`, then add an init-container
+mount and `GIT_SSH_COMMAND`:
+
+```yaml
+pythonPackages:
+  packages:
+    - git+ssh://git@github.com/my-org/private-package.git@v1.2.3#egg=private-package
+template:
+  pod:
+    volumes:
+      - name: github-ssh
+        secret:
+          secretName: github-deploy-key
+          items:
+            - key: id_ed25519
+              path: id_ed25519
+            - key: known_hosts
+              path: known_hosts
+  pythonPackagesInitContainer:
+    env:
+      - name: GIT_SSH_COMMAND
+        value: >-
+          ssh -i /var/run/secrets/github-ssh/id_ed25519
+          -o IdentitiesOnly=yes
+          -o UserKnownHostsFile=/var/run/secrets/github-ssh/known_hosts
+          -o StrictHostKeyChecking=yes
+    volumeMounts:
+      - name: github-ssh
+        mountPath: /var/run/secrets/github-ssh
+        readOnly: true
+```
+
+Requirements:
+- The Kaspr image used by the init container must include `git` and an SSH client.
+- The mounted Secret should contain both the private key and a `known_hosts` file.
+- The deploy key must have read access to the target repository.
+
 ### Q: How much overhead does this add?
 
 **A:**

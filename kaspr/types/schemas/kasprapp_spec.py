@@ -44,6 +44,12 @@ class KasprAppTemplateSchema(BaseSchema):
         allow_none=True,
         load_default=lambda: ContainerTemplateSchema().load({}),
     )
+    python_packages_init_container = fields.Nested(
+        ContainerTemplateSchema(),
+        data_key="pythonPackagesInitContainer",
+        allow_none=True,
+        load_default=lambda: ContainerTemplateSchema().load({}),
+    )
 
 
 class KasprAppSpecSchema(BaseSchema):

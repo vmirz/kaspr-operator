@@ -208,6 +208,7 @@ class KasprApp(BaseResource):
     template_pod: PodTemplate
     template_service: ServiceTemplate
     template_container: ContainerTemplate
+    template_python_packages_init_container: ContainerTemplate
 
     # PodDisruptionBudgetTemplate templatePodDisruptionBudget;
     # ResourceTemplate templateInitClusterRoleBinding;
@@ -283,6 +284,9 @@ class KasprApp(BaseResource):
         app.template_pod = spec.template.pod
         app.template_service = spec.template.service
         app.template_container = spec.template.kaspr_container
+        app.template_python_packages_init_container = (
+            spec.template.python_packages_init_container
+        )
         return app
 
     @classmethod
@@ -1420,6 +1424,9 @@ class KasprApp(BaseResource):
                 mount_path=cache_path,
             )
         ]
+        volume_mounts.extend(
+            self.prepare_python_packages_init_container_volume_mounts()
+        )
         
         # Add SA key volume mount for GCS mode
         if cache_type == "gcs":
@@ -1440,6 +1447,61 @@ class KasprApp(BaseResource):
             volume_mounts=volume_mounts,
             resources=resource_requirements,
         )
+
+    def prepare_python_packages_init_container_env_vars(self) -> List[V1EnvVar]:
+        """Prepare additional environment variables for the Python packages init container."""
+        env_vars = []
+        template = self.template_python_packages_init_container
+        if template and template.env:
+            for cev in template.env:
+                if cev.value is not None:
+                    env_vars.append(V1EnvVar(name=cev.name, value=cev.value))
+                elif cev.value_from:
+                    if cev.value_from.config_map_key_ref:
+                        env_vars.append(
+                            V1EnvVar(
+                                name=cev.name,
+                                value_from=V1EnvVarSource(
+                                    config_map_key_ref=V1ConfigMapKeySelector(
+                                        key=cev.value_from.config_map_key_ref.key,
+                                        name=cev.value_from.config_map_key_ref.name,
+                                        optional=cev.value_from.config_map_key_ref.optional,
+                                    )
+                                ),
+                            )
+                        )
+                    elif cev.value_from.secret_key_ref:
+                        env_vars.append(
+                            V1EnvVar(
+                                name=cev.name,
+                                value_from=V1EnvVarSource(
+                                    secret_key_ref=V1SecretKeySelector(
+                                        key=cev.value_from.secret_key_ref.key,
+                                        name=cev.value_from.secret_key_ref.name,
+                                        optional=cev.value_from.secret_key_ref.optional,
+                                    )
+                                ),
+                            )
+                        )
+        return env_vars
+
+    def prepare_python_packages_init_container_volume_mounts(self) -> List[V1VolumeMount]:
+        """Prepare additional volume mounts for the Python packages init container."""
+        volume_mounts = []
+        template = self.template_python_packages_init_container
+        if template and template.volume_mounts:
+            for vm in template.volume_mounts:
+                volume_mounts.append(
+                    V1VolumeMount(
+                        name=vm.name,
+                        mount_path=vm.mount_path,
+                        sub_path=vm.sub_path,
+                        read_only=vm.read_only,
+                        mount_propagation=vm.mount_propagation,
+                        sub_path_expr=vm.sub_path_expr,
+                    )
+                )
+        return volume_mounts
 
     def prepare_python_packages_env_vars(self, cache_enabled: bool = False, cache_type: str = None) -> List[V1EnvVar]:
         """Prepare environment variables for the Python packages init container.
@@ -1490,6 +1552,9 @@ class KasprApp(BaseResource):
         
         # Credential env vars from Secret
         env_vars.extend(self.prepare_python_packages_credentials_env_vars())
+
+        # Template env vars specific to the Python packages init container.
+        env_vars.extend(self.prepare_python_packages_init_container_env_vars())
 
         # Pass through operator env vars referenced directly in package specs so
         # runtime shell expansion can resolve VCS URLs like ${GITHUB_TOKEN}.
