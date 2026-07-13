@@ -1,4 +1,5 @@
 import asyncio
+import os
 import kopf
 import time
 import logging
@@ -1489,6 +1490,29 @@ class KasprApp(BaseResource):
         
         # Credential env vars from Secret
         env_vars.extend(self.prepare_python_packages_credentials_env_vars())
+
+        # Pass through operator env vars referenced directly in package specs so
+        # runtime shell expansion can resolve VCS URLs like ${GITHUB_TOKEN}.
+        if hasattr(self.python_packages, 'packages') and self.python_packages.packages:
+            from kaspr.utils.python_packages import extract_env_var_names
+
+            referenced_names = []
+            seen = set()
+            for package_spec in self.python_packages.packages:
+                for env_name in extract_env_var_names(package_spec):
+                    if env_name not in seen:
+                        seen.add(env_name)
+                        referenced_names.append(env_name)
+
+            missing_names = [name for name in referenced_names if name not in os.environ]
+            if missing_names:
+                missing = ", ".join(sorted(missing_names))
+                raise kopf.PermanentError(
+                    f"Python package spec references undefined operator environment variable(s): {missing}"
+                )
+
+            for env_name in referenced_names:
+                env_vars.append(V1EnvVar(name=env_name, value=os.environ[env_name]))
         
         return env_vars
 
