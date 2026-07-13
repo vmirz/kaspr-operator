@@ -18,6 +18,7 @@ class KasprAppTemplate(BaseModel):
     pod: Optional[PodTemplate]
     service: Optional[ServiceTemplate]
     kaspr_container: Optional[ContainerTemplate]
+    python_packages_init_container: Optional[ContainerTemplate]
 
 class KasprAppSpec(BaseModel):
     """KasprApp CRD spec"""

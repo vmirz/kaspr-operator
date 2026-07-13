@@ -378,6 +378,43 @@ kubectl create secret generic pypi-credentials \
 
 See [private-registry.yaml](private-registry.yaml) and [enterprise-complete.yaml](enterprise-complete.yaml) for full examples.
 
+### GitHub SSH Deploy Keys
+
+Use `template.pythonPackagesInitContainer` when pip needs SSH-specific mounts or
+environment for `git+ssh://` installs. Define the Secret-backed volume at the pod
+level, then mount it only into the `install-packages` init container:
+
+```yaml
+pythonPackages:
+  packages:
+    - git+ssh://git@github.com/my-org/private-package.git@v1.2.3#egg=private-package
+template:
+  pod:
+    volumes:
+      - name: github-ssh
+        secret:
+          secretName: github-deploy-key
+          items:
+            - key: id_ed25519
+              path: id_ed25519
+            - key: known_hosts
+              path: known_hosts
+  pythonPackagesInitContainer:
+    env:
+      - name: GIT_SSH_COMMAND
+        value: >-
+          ssh -i /var/run/secrets/github-ssh/id_ed25519
+          -o IdentitiesOnly=yes
+          -o UserKnownHostsFile=/var/run/secrets/github-ssh/known_hosts
+          -o StrictHostKeyChecking=yes
+    volumeMounts:
+      - name: github-ssh
+        mountPath: /var/run/secrets/github-ssh
+        readOnly: true
+```
+
+See [github-ssh-deploy-key.yaml](github-ssh-deploy-key.yaml) for a full example.
+
 ## Best Practices
 
 1. **Pin versions** for reproducible builds:
@@ -405,7 +442,7 @@ See [private-registry.yaml](private-registry.yaml) and [enterprise-complete.yaml
 5. **Handle failures gracefully**:
    - Use `onFailure: warn` for non-critical packages
    - Use `onFailure: block` for essential dependencies
-
+   
 ## See Also
 
 - [User Guide](../../docs/user-guide/python-packages.md) - Comprehensive documentation

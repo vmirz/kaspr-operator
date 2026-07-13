@@ -4,6 +4,14 @@ import kopf
 import pytest
 from unittest.mock import Mock, patch
 from kaspr.resources.kasprapp import KasprApp
+from kaspr.types.models.container_template import (
+    ConfigMapKeySelector,
+    ContainerEnvVar,
+    ContainerEnvVarSource,
+    ContainerTemplate,
+    SecretKeySelector,
+    VolumeMount,
+)
 from kaspr.types.models.python_packages import (
     PythonPackagesSpec,
     PythonPackagesCache,
@@ -44,6 +52,7 @@ def base_spec():
     spec.template.pod.volumes = None  # Avoid Mock iteration errors in prepare_volumes
     spec.template.service = None
     spec.template.kaspr_container = None
+    spec.template.python_packages_init_container = None
     spec.python_packages = None
     return spec
 
@@ -368,6 +377,100 @@ class TestPreparePackagesInitContainer:
             app.prepare_packages_init_container()
 
         assert "GITHUB_TOKEN" in str(exc_info.value)
+
+    def test_prepare_packages_init_container_includes_template_mounts_and_env(self, base_spec):
+        """Test pythonPackagesInitContainer mounts and env are applied to install-packages."""
+        base_spec.python_packages = PythonPackagesSpec(
+            packages=["git+ssh://git@github.com/org/private-repo.git@v1.2.3#egg=privatepkg"],
+            cache=PythonPackagesCache(enabled=True),
+        )
+        base_spec.template.python_packages_init_container = ContainerTemplate(
+            env=[
+                ContainerEnvVar(
+                    name="GIT_SSH_COMMAND",
+                    value=(
+                        "ssh -i /var/run/secrets/github-ssh/id_ed25519 "
+                        "-o IdentitiesOnly=yes "
+                        "-o UserKnownHostsFile=/var/run/secrets/github-ssh/known_hosts "
+                        "-o StrictHostKeyChecking=yes"
+                    ),
+                ),
+                ContainerEnvVar(
+                    name="SSH_AUTH_SOCK",
+                    value_from=ContainerEnvVarSource(
+                        secret_key_ref=SecretKeySelector(
+                            name="ssh-agent-secret",
+                            key="sock",
+                            optional=True,
+                        )
+                    ),
+                ),
+                ContainerEnvVar(
+                    name="SSH_CONFIG_PATH",
+                    value_from=ContainerEnvVarSource(
+                        config_map_key_ref=ConfigMapKeySelector(
+                            name="ssh-config",
+                            key="config",
+                            optional=False,
+                        )
+                    ),
+                ),
+            ],
+            volume_mounts=[
+                VolumeMount(
+                    name="github-ssh",
+                    mount_path="/var/run/secrets/github-ssh",
+                    read_only=True,
+                )
+            ],
+        )
+
+        app = KasprApp.from_spec(
+            name="test-app",
+            kind="KasprApp",
+            namespace="test-namespace",
+            spec=base_spec,
+        )
+
+        container = app.prepare_packages_init_container()
+
+        mounts_by_name = {mount.name: mount for mount in container.volume_mounts}
+        assert "github-ssh" in mounts_by_name
+        assert mounts_by_name["github-ssh"].mount_path == "/var/run/secrets/github-ssh"
+        assert mounts_by_name["github-ssh"].read_only is True
+
+        env_by_name = {env.name: env for env in container.env}
+        assert env_by_name["GIT_SSH_COMMAND"].value.startswith("ssh -i /var/run/secrets/github-ssh/id_ed25519")
+        assert env_by_name["SSH_AUTH_SOCK"].value_from.secret_key_ref.name == "ssh-agent-secret"
+        assert env_by_name["SSH_CONFIG_PATH"].value_from.config_map_key_ref.name == "ssh-config"
+
+    def test_prepare_packages_init_container_does_not_use_main_container_template_mounts(self, base_spec):
+        """Test init container only consumes pythonPackagesInitContainer mounts."""
+        base_spec.python_packages = PythonPackagesSpec(
+            packages=["pandas==2.0.0"],
+            cache=PythonPackagesCache(enabled=True),
+        )
+        base_spec.template.kaspr_container = ContainerTemplate(
+            volume_mounts=[
+                VolumeMount(
+                    name="main-only",
+                    mount_path="/var/run/secrets/main-only",
+                    read_only=True,
+                )
+            ]
+        )
+
+        app = KasprApp.from_spec(
+            name="test-app",
+            kind="KasprApp",
+            namespace="test-namespace",
+            spec=base_spec,
+        )
+
+        container = app.prepare_packages_init_container()
+
+        mount_names = [mount.name for mount in container.volume_mounts]
+        assert "main-only" not in mount_names
 
 
 class TestPreparePackagesVolumeMounts:
