@@ -257,11 +257,12 @@ class TestPythonPackagesSpec:
                 "numpy>=1.24.0",  # Minimum version
                 "sqlalchemy>=2.0.0,<3.0.0",  # Version range
                 "psycopg2-binary",  # Package with dash
+                "git+https://github.com/user/repo.git@v1.0.0",  # VCS URL
             ]
         }
         result = schema.load(data)
         assert isinstance(result, PythonPackagesSpec)
-        assert len(result.packages) == 5
+        assert len(result.packages) == 6
 
 
 class TestPythonPackagesStatus:
@@ -403,6 +404,8 @@ class TestPythonPackagesUtilities:
             "pillow!=9.0.0",
             "boto3>1.0.0",
             "urllib3<2.0.0",
+            "git+https://github.com/user/repo.git@v1.0.0",
+            "git+https://${GITHUB_TOKEN}@github.com/user/repo.git@v1.0.0",
         ]
         
         for package in valid_packages:
@@ -490,6 +493,20 @@ class TestPythonPackagesUtilities:
             generate_install_script(spec)
         
         assert "Invalid package names" in str(exc_info.value)
+
+    def test_generate_install_script_git_package_with_env_var(self):
+        """Test VCS package specs are preserved for runtime env expansion."""
+        from kaspr.utils.python_packages import generate_install_script
+
+        spec = PythonPackagesSpec(
+            packages=["git+https://${GITHUB_TOKEN}@github.com/user/repo.git@v1.0.0"]
+        )
+
+        script = generate_install_script(spec)
+
+        assert 'local package_spec_0="git+https://${GITHUB_TOKEN}@github.com/user/repo.git@v1.0.0"' in script
+        assert "printf '%q'" in script
+        assert 'echo \'Packages: ["git+https://${GITHUB_TOKEN}@github.com/user/repo.git@v1.0.0"]\'' in script
     
     def test_generate_install_script_retry_logic(self):
         """Test that script contains proper retry logic."""

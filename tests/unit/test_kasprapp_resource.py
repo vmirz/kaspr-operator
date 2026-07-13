@@ -1,5 +1,6 @@
 """Unit tests for KasprApp resource Python packages integration."""
 
+import kopf
 import pytest
 from unittest.mock import Mock, patch
 from kaspr.resources.kasprapp import KasprApp
@@ -324,6 +325,49 @@ class TestPreparePackagesInitContainer:
         script = container.args[0]
         assert "flock" in script
         assert "/opt/kaspr/packages/.install.lock" in script
+
+    def test_prepare_packages_init_container_passes_referenced_operator_env_vars(self, base_spec, monkeypatch):
+        """Test referenced operator env vars are injected into the init container."""
+        monkeypatch.setenv("GITHUB_TOKEN", "token-123")
+        packages_spec = PythonPackagesSpec(
+            packages=["git+https://${GITHUB_TOKEN}@github.com/user/repo.git@v1.0.0"],
+            cache=PythonPackagesCache(enabled=True),
+        )
+        base_spec.python_packages = packages_spec
+
+        app = KasprApp.from_spec(
+            name="test-app",
+            kind="KasprApp",
+            namespace="test-namespace",
+            spec=base_spec,
+        )
+
+        container = app.prepare_packages_init_container()
+        env_by_name = {env.name: env.value for env in container.env}
+
+        assert env_by_name["GITHUB_TOKEN"] == "token-123"
+        assert 'local package_spec_0="git+https://${GITHUB_TOKEN}@github.com/user/repo.git@v1.0.0"' in container.args[0]
+
+    def test_prepare_packages_init_container_raises_for_missing_operator_env_var(self, base_spec, monkeypatch):
+        """Test missing operator env vars referenced in package specs fail fast."""
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        packages_spec = PythonPackagesSpec(
+            packages=["git+https://${GITHUB_TOKEN}@github.com/user/repo.git@v1.0.0"],
+            cache=PythonPackagesCache(enabled=True),
+        )
+        base_spec.python_packages = packages_spec
+
+        app = KasprApp.from_spec(
+            name="test-app",
+            kind="KasprApp",
+            namespace="test-namespace",
+            spec=base_spec,
+        )
+
+        with pytest.raises(kopf.PermanentError) as exc_info:
+            app.prepare_packages_init_container()
+
+        assert "GITHUB_TOKEN" in str(exc_info.value)
 
 
 class TestPreparePackagesVolumeMounts:
