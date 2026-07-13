@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+import shlex
 
 from kaspr.types.models.python_packages import PythonPackagesSpec
 from kaspr.utils.gcs import (
@@ -18,6 +19,18 @@ PACKAGE_NAME_PATTERN = re.compile(
     r'^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?'  # Package name (must start/end with alphanumeric)
     r'(\[[a-zA-Z0-9,._-]+\])?'  # Optional extras like [dev,test]
     r'(([<>=!~]=?|[<>])[0-9a-zA-Z._-]+(,[<>=!~]+[0-9a-zA-Z._-]+)*)?$'  # Optional version with multiple specifiers
+)
+
+DIRECT_REFERENCE_PATTERN = re.compile(
+    r'^(?:'
+    r'(?:(?:git|hg|svn|bzr)\+(?:https?|ssh)://[^\s"`\\]+)'
+    r'|(?:(?:https?|ssh)://[^\s"`\\]+)'
+    r'|(?:git@[^:\s]+:[^\s"`\\]+)'
+    r')$'
+)
+
+ENV_VAR_REFERENCE_PATTERN = re.compile(
+    r'\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))'
 )
 
 
@@ -80,12 +93,15 @@ def validate_package_name(package: str) -> bool:
     Validate that a package name follows pip's accepted format.
     
     Validates package names with optional extras and version specifiers.
+    Also accepts pip VCS/direct references without whitespace.
     Examples of valid packages:
         - requests
         - numpy==1.24.0
         - pandas>=2.0.0,<3.0.0
         - scipy[all]
         - tensorflow>=2.0.0
+        - git+https://github.com/user/repo.git@v1.0.0
+        - git+https://${GITHUB_TOKEN}@github.com/user/repo.git@v1.0.0
     
     Args:
         package: The package string to validate
@@ -102,11 +118,41 @@ def validate_package_name(package: str) -> bool:
     if not package:
         return False
     
-    # Check against pattern
-    return PACKAGE_NAME_PATTERN.match(package) is not None
+    # Check against supported formats
+    return (
+        PACKAGE_NAME_PATTERN.match(package) is not None
+        or DIRECT_REFERENCE_PATTERN.match(package) is not None
+    )
 
 
-def _build_pip_install_cmd(cache_path: str, packages_str: str) -> str:
+def extract_env_var_names(value: str) -> list[str]:
+    """Return shell-style environment variable names referenced in a string."""
+    if not value or not isinstance(value, str):
+        return []
+
+    names = []
+    seen = set()
+    for match in ENV_VAR_REFERENCE_PATTERN.finditer(value):
+        name = match.group("braced") or match.group("plain")
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _build_package_args_block(packages: list[str]) -> str:
+    """Build shell-safe package argument expansion for pip."""
+    package_lines = []
+    for idx, package in enumerate(packages):
+        package_literal = package.replace("\\", "\\\\").replace('"', '\\"')
+        package_lines.append(f'    local package_spec_{idx}="{package_literal}"')
+        package_lines.append(
+            f'    pip_cmd="$pip_cmd $(printf \'%q\' "$package_spec_{idx}")"'
+        )
+    return "\n".join(package_lines)
+
+
+def _build_pip_install_cmd(cache_path: str, packages: list[str]) -> str:
     """Build the pip install command with support for custom indexes and credentials.
     
     Index URL, extra index URLs, trusted hosts, and credentials are read from
@@ -115,6 +161,7 @@ def _build_pip_install_cmd(cache_path: str, packages_str: str) -> str:
     Credentials are embedded into both --index-url and --extra-index-url URLs
     when PYPI_USERNAME and PYPI_PASSWORD are set.
     """
+    package_args_block = _build_package_args_block(packages)
     return f"""build_pip_command() {{
     local pip_cmd="pip install --no-warn-script-location --target {cache_path} --no-cache-dir"
     
@@ -153,8 +200,8 @@ def _build_pip_install_cmd(cache_path: str, packages_str: str) -> str:
             pip_cmd="$pip_cmd --trusted-host $host"
         done
     fi
-    
-    pip_cmd="$pip_cmd {packages_str}"
+
+{package_args_block}
     echo "$pip_cmd"
 }}
 """
@@ -238,17 +285,15 @@ def generate_install_script(
     if invalid_packages:
         raise ValueError(f"Invalid package names: {', '.join(invalid_packages)}")
     
-    # Build the packages list for pip install (no inner quotes needed -
-    # package names are validated to contain no whitespace or shell metacharacters)
-    packages_str = " ".join(spec.packages)
-    
     # Use provided hash or compute it
     if packages_hash is None:
         packages_hash = compute_packages_hash(spec)
     marker_file = f"{cache_path}/.installed-{packages_hash}"
+    packages_json = json.dumps(spec.packages)
+    packages_log_line = shlex.quote(f"Packages: {packages_json}")
     
     # Build pip command helper and error detection block
-    pip_cmd_helper = _build_pip_install_cmd(cache_path, packages_str)
+    pip_cmd_helper = _build_pip_install_cmd(cache_path, spec.packages)
     error_detection = _build_error_detection_block()
     
     # Stale lock threshold: install timeout + 5 minute buffer
@@ -260,7 +305,7 @@ set -e
 
 echo "Python Package Installer - Starting"
 echo "Cache path: {cache_path}"
-echo "Packages: {' '.join(spec.packages)}"
+echo {packages_log_line}
 echo "Packages hash: {packages_hash}"
 echo "Timeout: {timeout}s"
 echo "Retries: {retries}"
@@ -311,23 +356,10 @@ install_packages() {{
             # Calculate duration
             local install_end_ts=$(date +%s)
             local duration=$((install_end_ts - install_start_ts))
-            
-            # Create marker file with metadata using proper JSON escaping
-            # Build packages array with proper double quotes
-            local packages_json=""
-            local first=true
-            for pkg in {' '.join(spec.packages)}; do
-                if [ "$first" = true ]; then
-                    packages_json="\\"$pkg\\""
-                    first=false
-                else
-                    packages_json="$packages_json, \\"$pkg\\""
-                fi
-            done
-            
+
             cat > "{marker_file}" <<EOF
 {{
-  "packages": [$packages_json],
+  "packages": {packages_json},
   "python_version": "$PYTHON_VERSION",
   "install_time": "$install_start",
   "duration": "${{duration}}s",
@@ -466,15 +498,13 @@ def generate_gcs_install_script(
     if invalid_packages:
         raise ValueError(f"Invalid package names: {', '.join(invalid_packages)}")
 
-    # Build the packages list for pip install
-    packages_str = " ".join(spec.packages)
-
     # Use provided hash or compute it
     if packages_hash is None:
         packages_hash = compute_packages_hash(spec)
+    packages_log_line = shlex.quote(f"Packages: {json.dumps(spec.packages)}")
 
     # Build pip command helper and error detection block
-    pip_cmd_helper = _build_pip_install_cmd(cache_path, packages_str)
+    pip_cmd_helper = _build_pip_install_cmd(cache_path, spec.packages)
     error_detection = _build_error_detection_block()
 
     # Generate inline Python scripts for GCS operations
@@ -486,7 +516,7 @@ set -e
 
 echo "Python Package Installer - GCS Cache Mode"
 echo "Cache path: {cache_path}"
-echo "Packages: {' '.join(spec.packages)}"
+echo {packages_log_line}
 echo "Packages hash: {packages_hash}"
 echo "Timeout: {timeout}s"
 echo "Retries: {retries}"
@@ -645,12 +675,10 @@ def generate_emptydir_install_script(
     if invalid_packages:
         raise ValueError(f"Invalid package names: {', '.join(invalid_packages)}")
     
-    # Build the packages list for pip install (no inner quotes needed -
-    # package names are validated to contain no whitespace or shell metacharacters)
-    packages_str = " ".join(spec.packages)
-    
+    packages_log_line = shlex.quote(f"Packages: {json.dumps(spec.packages)}")
+
     # Build pip command helper and error detection block
-    pip_cmd_helper = _build_pip_install_cmd(cache_path, packages_str)
+    pip_cmd_helper = _build_pip_install_cmd(cache_path, spec.packages)
     error_detection = _build_error_detection_block()
     
     # Generate the script
@@ -659,7 +687,7 @@ set -e
 
 echo "Python Package Installer - emptyDir Mode"
 echo "Install path: {cache_path}"
-echo "Packages: {' '.join(spec.packages)}"
+echo {packages_log_line}
 echo "Timeout: {timeout}s"
 echo "Retries: {retries}"
 echo "On failure: {on_failure}"
