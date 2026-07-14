@@ -2000,6 +2000,8 @@ class KasprApp(BaseResource):
                         V1Volume(
                             name=volume.name,
                             secret=V1SecretVolumeSource(
+                                default_mode=volume.secret.default_mode,
+                                optional=volume.secret.optional,
                                 secret_name=volume.secret.secret_name,
                                 items=[
                                     V1KeyToPath(
@@ -2015,6 +2017,8 @@ class KasprApp(BaseResource):
                         V1Volume(
                             name=volume.name,
                             config_map=V1ConfigMapVolumeSource(
+                                default_mode=volume.config_map.default_mode,
+                                optional=volume.config_map.optional,
                                 name=volume.config_map.name,
                                 items=[
                                     V1KeyToPath(
