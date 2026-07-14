@@ -2275,6 +2275,17 @@ class KasprApp(BaseResource):
                             break
                     if packages_hash_env is not None:
                         break
+
+        # Extract PACKAGES_HASH env var from the main container if it exists.
+        # This captures pythonPackages changes even when cache is disabled
+        # (emptyDir mode), where the init container omits PACKAGES_HASH.
+        main_packages_hash_env = None
+        main_container = stateful_set.spec.template.spec.containers[0]
+        if main_container.env:
+            for env_var in main_container.env:
+                if env_var.name == "PACKAGES_HASH":
+                    main_packages_hash_env = env_var.value
+                    break
         
         watch_fields = {
             "spec": {
@@ -2292,6 +2303,12 @@ class KasprApp(BaseResource):
                 },
             }
         }
+
+        # Include PACKAGES_HASH from main container in watch fields if present.
+        if main_packages_hash_env is not None:
+            watch_fields["spec"]["template"]["spec"]["containers"][0]["env"] = [
+                {"name": "PACKAGES_HASH", "value": main_packages_hash_env}
+            ]
         
         # Include PACKAGES_HASH from init container in watch fields if present
         if packages_hash_env is not None:
