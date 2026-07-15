@@ -16,6 +16,7 @@ from kaspr.types.schemas.kasprapp_spec import (
 from kaspr.types.models import KasprAppSpec
 from kaspr.types.schemas import (
     KasprAgentSpecSchema,
+    KasprTaskSpecSchema,
     KasprWebViewSpecSchema,
     KasprTableSpecSchema,
 )
@@ -2237,7 +2238,7 @@ async def monitor_related_resources(
                         task["metadata"]["name"],
                         KasprTask.KIND,
                         namespace,
-                        KasprTableSpecSchema().load(task["spec"]),
+                        KasprTaskSpecSchema().load(task["spec"]),
                         dict(task["metadata"]["labels"]),
                     )
                 )
