@@ -47,7 +47,7 @@ async def reconciliation(
     agent = KasprAgent.from_spec(name, KIND, namespace, spec_model, dict(labels))
     # Warn if the agent's app does not exists.
     app = await KasprApp.default().fetch(agent.app_name, namespace)
-    await agent.create()
+    await agent.synchronize()
     # fetch the agent's app and update it's status.
     patch.status.update(
         {
@@ -147,7 +147,7 @@ async def monitor_agent(
             logger.info("Monitoring stopped.")
             break
         except Exception as e:
-            logger.error("Unexpected error during monitoring: {e}")
+            logger.error(f"Unexpected error during monitoring: {e}")
             logger.exception(e)
 
 
@@ -160,8 +160,7 @@ async def reconcile(name, spec, namespace, labels, logger: logging.Logger, **kwa
     
     try:
         spec_model: KasprAgentSpec = KasprAgentSpecSchema().load(spec)
-        agent = KasprAgent.from_spec(name, KIND, namespace, spec_model, dict(labels))
-        
+        agent = KasprAgent.from_spec(name, KIND, namespace, spec_model, dict(labels))        
         sensor_state = sensor.on_reconcile_start(
             agent.app_name, name, namespace, 0, "timer"
         )
