@@ -94,6 +94,7 @@ class BaseAppComponent(BaseResource):
             
             success = True
             try:
+                self.unite()
                 await self.create_config_map(self.core_v1_api, self.namespace, self.config_map)
             except Exception:
                 success = False
@@ -210,6 +211,15 @@ class BaseAppComponent(BaseResource):
         This method should be used to prepare the patch.
         """
         patch = []
+
+        if config_map.metadata and config_map.metadata.annotations is not None:
+            patch.append(
+                {
+                    "op": "replace",
+                    "path": "/metadata/annotations",
+                    "value": config_map.metadata.annotations,
+                }
+            )
 
         if config_map.data:
             patch.append(
