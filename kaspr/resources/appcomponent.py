@@ -162,9 +162,13 @@ class BaseAppComponent(BaseResource):
             label_selector=label_selector,
         )
 
-    async def patch_config_map(self):
-        """Update resources as a result of app settings change."""
-        await self.patch_config_map(
+    async def patch_config_map(self, *args, **kwargs):
+        """Patch a config map or, with no args, patch this component's config map."""
+        if args or kwargs:
+            return await BaseResource.patch_config_map(self, *args, **kwargs)
+
+        return await BaseResource.patch_config_map(
+            self,
             self.core_v1_api,
             self.config_map_name,
             self.namespace,
