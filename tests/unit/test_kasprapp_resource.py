@@ -1,6 +1,5 @@
 """Unit tests for KasprApp resource Python packages integration."""
 
-import kopf
 import pytest
 from unittest.mock import Mock, patch
 from kaspr.resources.kasprapp import KasprApp
@@ -624,6 +623,28 @@ class TestStatefulSetIntegration:
         pvc = kasprapp_with_packages.prepare_python_packages_pvc()
         assert pvc is not None
         assert "kaspr.io/resource-hash" in pvc.metadata.annotations
+
+    def test_prepare_statefulset_watch_fields_include_service_account_name(
+        self, kasprapp_without_packages
+    ):
+        """Existing StatefulSets must drift when serviceAccountName is missing."""
+        desired = kasprapp_without_packages.stateful_set
+        actual = kasprapp_without_packages.stateful_set
+        actual.spec.template.spec.service_account_name = None
+
+        desired_watch = kasprapp_without_packages.prepare_statefulset_watch_fields(
+            desired
+        )
+        actual_watch = kasprapp_without_packages.prepare_statefulset_watch_fields(
+            actual
+        )
+
+        assert (
+            desired_watch["spec"]["template"]["spec"]["serviceAccountName"]
+            == "test-app-app"
+        )
+        assert actual_watch["spec"]["template"]["spec"]["serviceAccountName"] is None
+        assert desired_watch != actual_watch
 
 
 class TestPrepareVolumeMount:
