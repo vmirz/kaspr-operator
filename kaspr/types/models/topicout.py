@@ -5,6 +5,7 @@ from kaspr.types.models.code import CodeSpec
 class TopicOutSpec(BaseModel):
     name: str
     name_selector: Optional[CodeSpec]
+    pass_through: Optional[bool]
     ack: Optional[bool]
     key_serializer: Optional[str]
     value_serializer: Optional[str]
