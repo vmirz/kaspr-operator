@@ -238,6 +238,9 @@ spec:
                               ack:
                                 type: boolean
                                 description: Wait for acknoledgement from the broker before considering the message sent
+                              passThrough:
+                                type: boolean
+                                description: Preserve the original processor value for downstream pipeline steps after publishing.
                               keySerializer:
                                 type: string
                                 description: Serializer for the key of the message
