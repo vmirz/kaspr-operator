@@ -2293,6 +2293,7 @@ class KasprApp(BaseResource):
                 "replicas": stateful_set.spec.replicas,
                 "template": {
                     "spec": {
+                        "serviceAccountName": stateful_set.spec.template.spec.service_account_name,
                         "containers": [
                             {
                                 "image": stateful_set.spec.template.spec.containers[
