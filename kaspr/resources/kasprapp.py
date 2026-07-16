@@ -2125,6 +2125,7 @@ class KasprApp(BaseResource):
             init_containers.append(self.packages_init_container)
         
         return V1PodSpec(
+            service_account_name=self.service_account_name,
             image_pull_secrets=self.template_pod.image_pull_secrets,
             security_context=self.template_pod.security_context,
             termination_grace_period_seconds=self.template_pod.termination_grace_period_seconds,
