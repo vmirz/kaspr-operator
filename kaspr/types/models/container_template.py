@@ -10,10 +10,15 @@ class SecretKeySelector(BaseModel):
     key: str
     name: str
     optional: Optional[bool] 
+
+class FieldRefSelector(BaseModel):
+    field_path: str
+    api_version: Optional[str]
     
 class ContainerEnvVarSource(BaseModel):
     config_map_key_ref: Optional[ConfigMapKeySelector]
     secret_key_ref: Optional[SecretKeySelector]
+    field_ref: Optional[FieldRefSelector]
 
 class ContainerEnvVar(BaseModel):
     name: str
