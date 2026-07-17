@@ -977,6 +977,16 @@ spec:
                                       optional:
                                         type: boolean
                                     description: Reference to a key in a config map.
+                                  fieldRef:
+                                    type: object
+                                    properties:
+                                      apiVersion:
+                                        type: string
+                                      fieldPath:
+                                        type: string
+                                    required:
+                                      - fieldPath
+                                    description: Reference to a pod field via the Kubernetes downward API.
                                 oneOf:
                                   - properties:
                                       secretKeyRef: {}
@@ -986,6 +996,10 @@ spec:
                                       configMapKeyRef: {}
                                     required:
                                       - configMapKeyRef
+                                  - properties:
+                                      fieldRef: {}
+                                    required:
+                                      - fieldRef
                                 description: Reference to the secret or config map property to which the environment variable is set.
                             oneOf:
                               - properties:
@@ -1129,6 +1143,16 @@ spec:
                                       optional:
                                         type: boolean
                                     description: Reference to a key in a config map.
+                                  fieldRef:
+                                    type: object
+                                    properties:
+                                      apiVersion:
+                                        type: string
+                                      fieldPath:
+                                        type: string
+                                    required:
+                                      - fieldPath
+                                    description: Reference to a pod field via the Kubernetes downward API.
                                 oneOf:
                                   - properties:
                                       secretKeyRef: {}
@@ -1138,6 +1162,10 @@ spec:
                                       configMapKeyRef: {}
                                     required:
                                       - configMapKeyRef
+                                  - properties:
+                                      fieldRef: {}
+                                    required:
+                                      - fieldRef
                                 description: Reference to the secret or config map property to which the environment variable is set.
                             oneOf:
                               - properties:

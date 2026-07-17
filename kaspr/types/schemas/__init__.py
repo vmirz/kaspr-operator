@@ -40,6 +40,7 @@ from .service_template import ServiceTemplateSchema
 from .container_template import (
     ConfigMapKeySelectorSchema,
     SecretKeySelectorSchema,
+    FieldRefSelectorSchema,
     ContainerEnvVarSourceSchema,
     ContainerEnvVarSchema,
     VolumeMountSchema,
@@ -111,6 +112,7 @@ __all__ = [
     "ContainerTemplateSchema",
     "ConfigMapKeySelectorSchema",
     "SecretKeySelectorSchema",
+    "FieldRefSelectorSchema",
     "KasprJoinSpecSchema",
     "PythonPackagesCacheSchema",
     "PythonPackagesInstallPolicySchema",

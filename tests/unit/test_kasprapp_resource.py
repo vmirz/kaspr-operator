@@ -1,6 +1,8 @@
 """Unit tests for KasprApp resource Python packages integration."""
 
+import kopf
 import pytest
+from marshmallow import ValidationError
 from unittest.mock import Mock, patch
 from kaspr.resources.kasprapp import KasprApp
 from kaspr.types.models.container_template import (
@@ -8,6 +10,7 @@ from kaspr.types.models.container_template import (
     ContainerEnvVar,
     ContainerEnvVarSource,
     ContainerTemplate,
+    FieldRefSelector,
     SecretKeySelector,
     VolumeMount,
 )
@@ -20,6 +23,7 @@ from kaspr.types.models.python_packages import (
 from kaspr.types.models.kasprapp_spec import KasprAppSpec
 from kaspr.types.models.storage import KasprAppStorage
 from kaspr.types.models.config import KasprAppConfig
+from kaspr.types.schemas.container_template import ContainerTemplateSchema
 
 
 @pytest.fixture
@@ -117,6 +121,99 @@ def kasprapp_cache_disabled(base_spec):
         spec=base_spec,
     )
     return app
+
+
+class TestContainerTemplateSchema:
+    """Tests for shared container template env schema validation."""
+
+    def test_load_accepts_field_ref_env_source(self):
+        template = ContainerTemplateSchema().load(
+            {
+                "env": [
+                    {
+                        "name": "MATERIALIZER_RUNTIME_MEMBER_ID",
+                        "valueFrom": {
+                            "fieldRef": {
+                                "fieldPath": "metadata.name",
+                            }
+                        },
+                    }
+                ]
+            }
+        )
+
+        env_var = template.env[0]
+        assert env_var.name == "MATERIALIZER_RUNTIME_MEMBER_ID"
+        assert env_var.value_from.field_ref.field_path == "metadata.name"
+        assert env_var.value_from.field_ref.api_version is None
+
+    def test_load_accepts_secret_and_configmap_env_sources(self):
+        template = ContainerTemplateSchema().load(
+            {
+                "env": [
+                    {
+                        "name": "SECRET_VALUE",
+                        "valueFrom": {
+                            "secretKeyRef": {
+                                "name": "app-secret",
+                                "key": "password",
+                            }
+                        },
+                    },
+                    {
+                        "name": "CONFIG_VALUE",
+                        "valueFrom": {
+                            "configMapKeyRef": {
+                                "name": "app-config",
+                                "key": "setting",
+                            }
+                        },
+                    },
+                ]
+            }
+        )
+
+        assert template.env[0].value_from.secret_key_ref.name == "app-secret"
+        assert template.env[1].value_from.config_map_key_ref.name == "app-config"
+
+    def test_load_rejects_multiple_value_from_sources(self):
+        with pytest.raises(ValidationError):
+            ContainerTemplateSchema().load(
+                {
+                    "env": [
+                        {
+                            "name": "INVALID",
+                            "valueFrom": {
+                                "fieldRef": {
+                                    "fieldPath": "metadata.name",
+                                },
+                                "secretKeyRef": {
+                                    "name": "app-secret",
+                                    "key": "password",
+                                },
+                            },
+                        }
+                    ]
+                }
+            )
+
+    def test_load_rejects_value_and_value_from_together(self):
+        with pytest.raises(ValidationError):
+            ContainerTemplateSchema().load(
+                {
+                    "env": [
+                        {
+                            "name": "INVALID",
+                            "value": "literal",
+                            "valueFrom": {
+                                "fieldRef": {
+                                    "fieldPath": "metadata.name",
+                                }
+                            },
+                        }
+                    ]
+                }
+            )
 
 
 class TestPreparePackagesPVC:
@@ -414,6 +511,14 @@ class TestPreparePackagesInitContainer:
                         )
                     ),
                 ),
+                ContainerEnvVar(
+                    name="MATERIALIZER_RUNTIME_MEMBER_ID",
+                    value_from=ContainerEnvVarSource(
+                        field_ref=FieldRefSelector(
+                            field_path="metadata.name",
+                        )
+                    ),
+                ),
             ],
             volume_mounts=[
                 VolumeMount(
@@ -442,6 +547,7 @@ class TestPreparePackagesInitContainer:
         assert env_by_name["GIT_SSH_COMMAND"].value.startswith("ssh -i /var/run/secrets/github-ssh/id_ed25519")
         assert env_by_name["SSH_AUTH_SOCK"].value_from.secret_key_ref.name == "ssh-agent-secret"
         assert env_by_name["SSH_CONFIG_PATH"].value_from.config_map_key_ref.name == "ssh-config"
+        assert env_by_name["MATERIALIZER_RUNTIME_MEMBER_ID"].value_from.field_ref.field_path == "metadata.name"
 
     def test_prepare_packages_init_container_does_not_use_main_container_template_mounts(self, base_spec):
         """Test init container only consumes pythonPackagesInitContainer mounts."""
@@ -470,6 +576,41 @@ class TestPreparePackagesInitContainer:
 
         mount_names = [mount.name for mount in container.volume_mounts]
         assert "main-only" not in mount_names
+
+    def test_prepare_kaspr_container_renders_template_field_ref_env(self, base_spec):
+        """Test the main Kaspr container preserves fieldRef env sources in the StatefulSet."""
+        base_spec.template.kaspr_container = ContainerTemplate(
+            env=[
+                ContainerEnvVar(
+                    name="MATERIALIZER_RUNTIME_MEMBER_ID",
+                    value_from=ContainerEnvVarSource(
+                        field_ref=FieldRefSelector(
+                            field_path="metadata.name",
+                        )
+                    ),
+                )
+            ]
+        )
+
+        app = KasprApp.from_spec(
+            name="test-app",
+            kind="KasprApp",
+            namespace="test-namespace",
+            spec=base_spec,
+        )
+
+        stateful_set = app.stateful_set
+        main_container = next(
+            container
+            for container in stateful_set.spec.template.spec.containers
+            if container.name == app.KASPR_CONTAINER_NAME
+        )
+        env_by_name = {env.name: env for env in main_container.env}
+
+        assert (
+            env_by_name["MATERIALIZER_RUNTIME_MEMBER_ID"].value_from.field_ref.field_path
+            == "metadata.name"
+        )
 
 
 class TestPreparePackagesVolumeMounts:

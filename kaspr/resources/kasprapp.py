@@ -1454,35 +1454,7 @@ class KasprApp(BaseResource):
         template = self.template_python_packages_init_container
         if template and template.env:
             for cev in template.env:
-                if cev.value is not None:
-                    env_vars.append(V1EnvVar(name=cev.name, value=cev.value))
-                elif cev.value_from:
-                    if cev.value_from.config_map_key_ref:
-                        env_vars.append(
-                            V1EnvVar(
-                                name=cev.name,
-                                value_from=V1EnvVarSource(
-                                    config_map_key_ref=V1ConfigMapKeySelector(
-                                        key=cev.value_from.config_map_key_ref.key,
-                                        name=cev.value_from.config_map_key_ref.name,
-                                        optional=cev.value_from.config_map_key_ref.optional,
-                                    )
-                                ),
-                            )
-                        )
-                    elif cev.value_from.secret_key_ref:
-                        env_vars.append(
-                            V1EnvVar(
-                                name=cev.name,
-                                value_from=V1EnvVarSource(
-                                    secret_key_ref=V1SecretKeySelector(
-                                        key=cev.value_from.secret_key_ref.key,
-                                        name=cev.value_from.secret_key_ref.name,
-                                        optional=cev.value_from.secret_key_ref.optional,
-                                    )
-                                ),
-                            )
-                        )
+                env_vars.append(self.prepare_template_env_var(cev))
         return env_vars
 
     def prepare_python_packages_init_container_volume_mounts(self) -> List[V1VolumeMount]:
@@ -1726,40 +1698,70 @@ class KasprApp(BaseResource):
 
         return env_vars
 
+    def prepare_template_env_var_source(self, value_from) -> V1EnvVarSource:
+        """Build a Kubernetes env var source from a validated template env source."""
+        sources = []
+        if value_from.config_map_key_ref is not None:
+            sources.append(
+                V1EnvVarSource(
+                    config_map_key_ref=V1ConfigMapKeySelector(
+                        key=value_from.config_map_key_ref.key,
+                        name=value_from.config_map_key_ref.name,
+                        optional=value_from.config_map_key_ref.optional,
+                    )
+                )
+            )
+        if value_from.secret_key_ref is not None:
+            sources.append(
+                V1EnvVarSource(
+                    secret_key_ref=V1SecretKeySelector(
+                        key=value_from.secret_key_ref.key,
+                        name=value_from.secret_key_ref.name,
+                        optional=value_from.secret_key_ref.optional,
+                    )
+                )
+            )
+        field_ref = getattr(value_from, "field_ref", None)
+        if field_ref is not None:
+            sources.append(
+                V1EnvVarSource(
+                    field_ref=V1ObjectFieldSelector(
+                        api_version=field_ref.api_version,
+                        field_path=field_ref.field_path,
+                    )
+                )
+            )
+
+        if len(sources) != 1:
+            raise kopf.PermanentError(
+                "Template env var valueFrom must set exactly one of configMapKeyRef, secretKeyRef, or fieldRef."
+            )
+
+        return sources[0]
+
+    def prepare_template_env_var(self, container_env_var) -> V1EnvVar:
+        """Build a Kubernetes env var from a validated container template env spec."""
+        has_value = container_env_var.value is not None
+        has_value_from = container_env_var.value_from is not None
+        if has_value == has_value_from:
+            raise kopf.PermanentError(
+                f"Template env var '{container_env_var.name}' must set exactly one of value or valueFrom."
+            )
+
+        if has_value:
+            return V1EnvVar(name=container_env_var.name, value=container_env_var.value)
+
+        return V1EnvVar(
+            name=container_env_var.name,
+            value_from=self.prepare_template_env_var_source(container_env_var.value_from),
+        )
+
     def prepare_container_template_env_vars(self) -> List[V1EnvVar]:
         """Prepare additional environment variables from template."""
         env_vars = []
         if self.template_container.env:
             for cev in self.template_container.env:
-                if cev.value:
-                    env_vars.append(V1EnvVar(name=cev.name, value=cev.value))
-                elif cev.value_from:
-                    if cev.value_from.config_map_key_ref:
-                        env_vars.append(
-                            V1EnvVar(
-                                name=cev.name,
-                                value_from=V1EnvVarSource(
-                                    config_map_key_ref=V1ConfigMapKeySelector(
-                                        key=cev.value_from.config_map_key_ref.key,
-                                        name=cev.value_from.config_map_key_ref.name,
-                                        optional=cev.value_from.config_map_key_ref.optional,
-                                    )
-                                ),
-                            )
-                        )
-                    elif cev.value_from.secret_key_ref:
-                        env_vars.append(
-                            V1EnvVar(
-                                name=cev.name,
-                                value_from=V1EnvVarSource(
-                                    secret_key_ref=V1SecretKeySelector(
-                                        key=cev.value_from.secret_key_ref.key,
-                                        name=cev.value_from.secret_key_ref.name,
-                                        optional=cev.value_from.secret_key_ref.optional,
-                                    )
-                                ),
-                            )
-                        )
+                env_vars.append(self.prepare_template_env_var(cev))
         return env_vars
 
     def prepare_kafka_credentials_env_dict(self) -> Dict[str, str]:
