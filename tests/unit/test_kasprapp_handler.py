@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+from kubernetes_asyncio.client import ApiException
 from kubernetes_asyncio.client import V1ConfigMap, V1ObjectMeta
 
 from kaspr.handlers import kasprapp as handler
@@ -185,3 +186,39 @@ def test_synchronize_calls_unite_before_creating_config_map(monkeypatch):
     asyncio.run(component.synchronize())
 
     assert calls == ["unite", "create"]
+
+
+def test_on_error_stringifies_api_exception_message():
+    patch = SimpleNamespace(status={})
+    error = ApiException(status=422, reason="Unprocessable Entity")
+    error.body = (
+        '{"message":"StatefulSet.apps \"develop-materializer-manual-orders-app\" '
+        'is invalid: spec.template.spec.initContainers[0].volumeMounts[1].name: '
+        'Not found: \"github-ssh\""}'
+    )
+
+    handler.on_error(error, spec={}, meta={"generation": 1}, status={}, patch=patch)
+
+    progressing = next(
+        cond for cond in patch.status["conditions"] if cond["type"] == "Progressing"
+    )
+    assert isinstance(progressing["message"], str)
+    assert "Kubernetes API error (422): Unprocessable Entity" in progressing["message"]
+    assert 'Not found: "github-ssh"' in progressing["message"]
+
+
+def test_on_error_stringifies_generic_exception():
+    patch = SimpleNamespace(status={})
+
+    handler.on_error(
+        ValueError("broken spec"),
+        spec={},
+        meta={"generation": 1},
+        status={},
+        patch=patch,
+    )
+
+    progressing = next(
+        cond for cond in patch.status["conditions"] if cond["type"] == "Progressing"
+    )
+    assert progressing["message"] == "broken spec"

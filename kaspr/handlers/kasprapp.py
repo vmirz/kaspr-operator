@@ -119,13 +119,14 @@ def on_error(error, spec, meta, status, patch, **_):
     """Handle errors during reconciliation."""
     gen = meta.get("generation", 0)
     conds = (status or {}).get("conditions", [])
+    error_message = _stringify_error(error)
     conds = upsert_condition(
         conds,
         {
             "type": "Progressing",
             "status": "False",
             "reason": "Error",
-            "message": error if error else "Reconcile failed; see events/logs",
+            "message": error_message,
             "observedGeneration": gen,
         },
     )
@@ -140,6 +141,26 @@ def on_error(error, spec, meta, status, patch, **_):
         },
     )
     patch.status["conditions"] = conds
+
+
+def _stringify_error(error) -> str:
+    """Convert exceptions to JSON-serializable status messages."""
+    if not error:
+        return "Reconcile failed; see events/logs"
+
+    if isinstance(error, ApiException):
+        prefix = f"Kubernetes API error ({error.status}): {error.reason}"
+        try:
+            if error.body:
+                body = json.loads(error.body)
+                message = body.get("message") or body.get("status")
+                if message:
+                    return f"{prefix} - {message}"
+        except (TypeError, ValueError, AttributeError):
+            pass
+        return prefix
+
+    return str(error)
 
 
 def _extract_agent_info(resources: List) -> List[Dict]:
