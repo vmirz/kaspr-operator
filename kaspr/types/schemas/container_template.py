@@ -1,4 +1,4 @@
-from marshmallow import fields, post_dump
+from marshmallow import ValidationError, fields, post_dump, validates_schema
 from kaspr.utils.helpers import camel_to_snake
 from kaspr.types.base import BaseSchema
 from kaspr.types.models import (
@@ -6,6 +6,7 @@ from kaspr.types.models import (
     ContainerEnvVar,
     ContainerEnvVarSource,
     ConfigMapKeySelector,
+    FieldRefSelector,
     SecretKeySelector,
     VolumeMount,
 )
@@ -55,6 +56,23 @@ class SecretKeySelectorSchema(BaseSchema):
     )
 
 
+class FieldRefSelectorSchema(BaseSchema):
+    """Schema for Kubernetes downward API field references."""
+
+    __model__ = FieldRefSelector
+    field_path = fields.Str(
+        data_key="fieldPath",
+        required=True,
+        allow_none=False,
+    )
+    api_version = fields.Str(
+        data_key="apiVersion",
+        required=False,
+        allow_none=True,
+        load_default=None,
+    )
+
+
 class ContainerEnvVarSourceSchema(BaseSchema):
     """Schema for Container Environment Variable Source."""
 
@@ -73,6 +91,34 @@ class ContainerEnvVarSourceSchema(BaseSchema):
         allow_none=True,
         load_default=None,
     )
+    field_ref = fields.Nested(
+        FieldRefSelectorSchema(),
+        data_key="fieldRef",
+        required=False,
+        allow_none=True,
+        load_default=None,
+    )
+
+    @validates_schema(pass_original=True)
+    def validate_supported_source(self, data, original_data, **kwargs):
+        """Require exactly one supported Kubernetes env source."""
+        source_fields = {
+            "configMapKeyRef": data.get("config_map_key_ref"),
+            "secretKeyRef": data.get("secret_key_ref"),
+            "fieldRef": data.get("field_ref"),
+        }
+        provided_sources = [name for name, value in source_fields.items() if value is not None]
+        if len(provided_sources) != 1:
+            raise ValidationError(
+                "Exactly one of configMapKeyRef, secretKeyRef, or fieldRef must be set.",
+            )
+
+        if isinstance(original_data, dict):
+            extra_keys = set(original_data.keys()) - set(source_fields.keys())
+            if extra_keys:
+                raise ValidationError(
+                    f"Unsupported valueFrom source(s): {', '.join(sorted(extra_keys))}"
+                )
 
 
 class ContainerEnvVarSchema(BaseSchema):
@@ -97,6 +143,16 @@ class ContainerEnvVarSchema(BaseSchema):
         allow_none=True,
         load_default=None,
     )
+
+    @validates_schema
+    def validate_value_or_value_from(self, data, **kwargs):
+        """Require exactly one Kubernetes EnvVar value mode."""
+        has_value = data.get("value") is not None
+        has_value_from = data.get("value_from") is not None
+        if has_value == has_value_from:
+            raise ValidationError(
+                "Exactly one of value or valueFrom must be set.",
+            )
 
     @post_dump
     def camel_to_snake_dump(self, data, **kwargs):

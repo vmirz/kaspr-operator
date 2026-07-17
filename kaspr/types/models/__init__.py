@@ -48,7 +48,8 @@ from .pod_template import (
 from .service_template import ServiceTemplate
 from .container_template import (
     ConfigMapKeySelector,
-    SecretKeySelector,    
+    SecretKeySelector,
+    FieldRefSelector,
     ContainerEnvVarSource,
     ContainerEnvVar,
     VolumeMount,
@@ -122,6 +123,7 @@ __all__ = [
     "ServiceTemplate",
     "ConfigMapKeySelector",
     "SecretKeySelector",
+    "FieldRefSelector",
     "ContainerEnvVarSource",
     "ContainerEnvVar",
     "VolumeMount",
