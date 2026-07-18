@@ -163,6 +163,15 @@ def test_prepare_config_map_patch_updates_hash_annotation():
     assert component.config_map.metadata.annotations["kaspr.io/resource-hash"] == component.hash
 
 
+def test_prepare_config_map_hash_ignores_resource_hash_annotation():
+    component = _DummyComponent()
+
+    expected_hash = component.prepare_config_map_hash(component.config_map)
+    component.config_map.metadata.annotations["kaspr.io/resource-hash"] = "stale-hash"
+
+    assert component.prepare_config_map_hash(component.config_map) == expected_hash
+
+
 def test_synchronize_calls_unite_before_creating_config_map(monkeypatch):
     component = _DummyComponent()
     calls = []
