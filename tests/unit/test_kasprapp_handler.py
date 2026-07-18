@@ -197,6 +197,46 @@ def test_synchronize_calls_unite_before_creating_config_map(monkeypatch):
     assert calls == ["unite", "create"]
 
 
+def test_synchronize_patches_stale_hash_annotation_when_data_matches(monkeypatch):
+    component = _DummyComponent()
+    patches = []
+
+    actual_config_map = V1ConfigMap(
+        metadata=V1ObjectMeta(
+            name=component.config_map_name,
+            namespace=component.namespace,
+            annotations={"kaspr.io/resource-hash": "stale-hash"},
+        ),
+        data=component.config_map.data,
+    )
+
+    async def fake_fetch_config_map(*args, **kwargs):
+        return actual_config_map
+
+    async def fake_patch_config_map(*args, **kwargs):
+        patches.append(kwargs["config_map"])
+
+    component.sensor = Mock()
+    component.sensor.on_resource_sync_start.return_value = object()
+
+    monkeypatch.setattr(component, "fetch_config_map", fake_fetch_config_map)
+    monkeypatch.setattr(component, "patch_config_map", fake_patch_config_map)
+
+    asyncio.run(component.synchronize())
+
+    assert len(patches) == 1
+    assert {
+        "op": "replace",
+        "path": "/metadata/annotations",
+        "value": component.config_map.metadata.annotations,
+    } in patches[0]
+    assert {
+        "op": "replace",
+        "path": "/data",
+        "value": component.config_map.data,
+    } in patches[0]
+
+
 def test_on_error_stringifies_api_exception_message():
     patch = SimpleNamespace(status={})
     error = ApiException(status=422, reason="Unprocessable Entity")

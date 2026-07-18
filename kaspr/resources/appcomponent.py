@@ -242,7 +242,13 @@ class BaseAppComponent(BaseResource):
         These fields are tracked for changes made outside the operator and are used to
         determine if a patch is needed.
         """
+        annotations = config_map.metadata.annotations if config_map.metadata else {}
         return {
+            "annotations": {
+                self.RESOURCE_HASH_ANNOTATION: (annotations or {}).get(
+                    self.RESOURCE_HASH_ANNOTATION
+                ),
+            },
             "data": config_map.data,
         }
 
