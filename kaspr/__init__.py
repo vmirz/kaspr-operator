@@ -39,5 +39,5 @@ __all__ = [
     "kasprtask",
 ]
 
-__version__ = "0.18.36"
+__version__ = "0.18.37"
     
