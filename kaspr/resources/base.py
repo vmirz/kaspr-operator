@@ -1,3 +1,4 @@
+import copy
 import kaspr
 import mmh3
 import hashlib
@@ -31,6 +32,7 @@ class BaseResource:
     """Base resource model."""
 
     KASPR_OPERATOR_NAME = "kaspr-operator"
+    RESOURCE_HASH_ANNOTATION = "kaspr.io/resource-hash"
 
     _cluster: str
     _namespace: str
@@ -107,6 +109,32 @@ class BaseResource:
     def prepare_hash_annotation(self, hash: Union[str, int]) -> Dict[str, str]:
         """Prepare hash annotation for k8s resources."""
         return {"kaspr.io/resource-hash": str(hash)}
+
+    def compute_resource_hash(self, resource: Any) -> str:
+        """Compute a stable resource hash excluding the operator hash annotation."""
+        if hasattr(resource, "to_dict"):
+            resource_data = resource.to_dict()
+        elif isinstance(resource, dict):
+            resource_data = copy.deepcopy(resource)
+        else:
+            raise ValueError(f"Hash of {type(resource)} is not supported.")
+
+        metadata = resource_data.get("metadata") or {}
+        annotations = metadata.get("annotations") or {}
+        if self.RESOURCE_HASH_ANNOTATION in annotations:
+            annotations = dict(annotations)
+            annotations.pop(self.RESOURCE_HASH_ANNOTATION, None)
+
+            metadata = dict(metadata)
+            if annotations:
+                metadata["annotations"] = annotations
+            else:
+                metadata.pop("annotations", None)
+
+            resource_data = dict(resource_data)
+            resource_data["metadata"] = metadata
+
+        return self.compute_hash(resource_data)
 
     async def fetch_service(
         self, core_v1_api: CoreV1Api, name: str, namespace: str

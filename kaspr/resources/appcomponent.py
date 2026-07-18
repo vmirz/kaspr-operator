@@ -207,7 +207,7 @@ class BaseAppComponent(BaseResource):
 
     def prepare_config_map_hash(self, config_map: V1ConfigMap) -> str:
         """Prepare config map hash."""
-        return self.compute_hash(config_map.to_dict())
+        return self.compute_resource_hash(config_map)
 
     def prepare_config_map_patch(self, config_map: V1ConfigMap) -> Dict:
         """Prepare patch for config map resource.

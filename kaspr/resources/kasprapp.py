@@ -895,7 +895,7 @@ class KasprApp(BaseResource):
 
     def prepare_service_hash(self, service: V1Service) -> str:
         """Compute hash for app's service resource."""
-        return self.compute_hash(service.to_dict())
+        return self.compute_resource_hash(service)
 
     def prepare_service_patch(self, service: V1Service) -> Dict:
         """Prepare patch for service resource.
@@ -969,7 +969,7 @@ class KasprApp(BaseResource):
 
     def prepare_headless_service_hash(self, service: V1Service) -> str:
         """Compute hash for app's headless service resource."""
-        return self.compute_hash(service.to_dict())
+        return self.compute_resource_hash(service)
 
     def prepare_headless_service_patch(self, service: V1Service) -> Dict:
         """Prepare patch for headless service resource.
@@ -1021,7 +1021,7 @@ class KasprApp(BaseResource):
 
     def prepare_service_account_hash(self, service_account: V1ServiceAccount) -> str:
         """Compute hash for service account resource."""
-        return self.compute_hash(service_account.to_dict())
+        return self.compute_resource_hash(service_account)
 
     def prepare_settings_config_map(self) -> V1ConfigMap:
         """Build a config map resource."""
@@ -1044,7 +1044,7 @@ class KasprApp(BaseResource):
 
     def prepare_settings_config_map_hash(self, config_map: V1ConfigMap) -> str:
         """Compute hash for config map resource."""
-        return self.compute_hash(config_map.to_dict())
+        return self.compute_resource_hash(config_map)
 
     def prepare_settings_config_map_patch(self, config_map: V1ConfigMap) -> Dict:
         """Prepare patch for config map resource.
@@ -1096,7 +1096,7 @@ class KasprApp(BaseResource):
 
     def prepare_persistent_volume_claim_hash(self, pvc: V1PersistentVolumeClaim) -> str:
         """Compute hash for PVC resource."""
-        return self.compute_hash(pvc.to_dict())
+        return self.compute_resource_hash(pvc)
 
     def prepare_persistent_volume_claim_retention_policy(self):
         return V1StatefulSetPersistentVolumeClaimRetentionPolicy(
@@ -1222,7 +1222,7 @@ class KasprApp(BaseResource):
 
     def prepare_python_packages_pvc_hash(self, pvc: V1PersistentVolumeClaim) -> str:
         """Compute hash for packages PVC resource."""
-        return self.compute_hash(pvc.to_dict())
+        return self.compute_resource_hash(pvc)
     
     def prepare_python_packages_pvc_watch_fields(self, pvc: V1PersistentVolumeClaim) -> Dict:
         """Prepare fields of interest when comparing actual vs desired state for packages PVC.
@@ -2181,7 +2181,7 @@ class KasprApp(BaseResource):
 
     def prepare_statefulset_hash(self, stateful_set: V1StatefulSet) -> str:
         """Compute hash for stateful set resource."""
-        return self.compute_hash(stateful_set.to_dict())
+        return self.compute_resource_hash(stateful_set)
 
     def prepare_statefulset_patch(
         self, stateful_set: V1StatefulSet, replicas_override: int = None
@@ -2412,7 +2412,7 @@ class KasprApp(BaseResource):
 
     def prepare_hpa_hash(self, hpa: V2HorizontalPodAutoscaler) -> str:
         """Compute hash for HPA resource."""
-        return self.compute_hash(hpa.to_dict())
+        return self.compute_resource_hash(hpa)
 
     def prepare_hpa_patch(self, hpa: V2HorizontalPodAutoscaler) -> Dict:
         """Prepare patch for HPA resource.
