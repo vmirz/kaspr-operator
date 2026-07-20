@@ -277,6 +277,92 @@ class TestPreparePackagesPVC:
         
         assert pvc is not None
         assert pvc.spec.storage_class_name == "fast-ssd"
+
+
+def test_create_syncs_hpa_before_stateful_set(monkeypatch, kasprapp_without_packages):
+    calls = []
+
+    async def record(name):
+        calls.append(name)
+
+    monkeypatch.setattr(kasprapp_without_packages, "unite", lambda: calls.append("unite"))
+    monkeypatch.setattr(
+        kasprapp_without_packages, "sync_service_account", lambda: record("service_account")
+    )
+    monkeypatch.setattr(
+        kasprapp_without_packages, "sync_settings_config_map", lambda: record("config_map")
+    )
+    monkeypatch.setattr(
+        kasprapp_without_packages, "sync_python_packages_pvc", lambda: record("python_packages_pvc")
+    )
+    monkeypatch.setattr(kasprapp_without_packages, "sync_service", lambda: record("service"))
+    monkeypatch.setattr(
+        kasprapp_without_packages, "sync_headless_service", lambda: record("headless_service")
+    )
+    monkeypatch.setattr(kasprapp_without_packages, "sync_hpa", lambda: record("hpa"))
+    monkeypatch.setattr(
+        kasprapp_without_packages, "sync_stateful_set", lambda: record("stateful_set")
+    )
+
+    import asyncio
+
+    asyncio.run(kasprapp_without_packages.create())
+
+    assert calls == [
+        "unite",
+        "service_account",
+        "config_map",
+        "python_packages_pvc",
+        "service",
+        "headless_service",
+        "hpa",
+        "stateful_set",
+    ]
+
+
+def test_synchronize_unites_before_syncing_children(monkeypatch, kasprapp_without_packages):
+    calls = []
+
+    async def record(name):
+        calls.append(name)
+
+    monkeypatch.setattr(kasprapp_without_packages, "unite", lambda: calls.append("unite"))
+    monkeypatch.setattr(
+        kasprapp_without_packages, "sync_auth_credentials", lambda: record("auth")
+    )
+    monkeypatch.setattr(kasprapp_without_packages, "sync_service", lambda: record("service"))
+    monkeypatch.setattr(
+        kasprapp_without_packages, "sync_headless_service", lambda: record("headless_service")
+    )
+    monkeypatch.setattr(
+        kasprapp_without_packages, "sync_service_account", lambda: record("service_account")
+    )
+    monkeypatch.setattr(
+        kasprapp_without_packages, "sync_settings_config_map", lambda: record("config_map")
+    )
+    monkeypatch.setattr(
+        kasprapp_without_packages, "sync_python_packages_pvc", lambda: record("python_packages_pvc")
+    )
+    monkeypatch.setattr(kasprapp_without_packages, "sync_hpa", lambda: record("hpa"))
+    monkeypatch.setattr(
+        kasprapp_without_packages, "sync_stateful_set", lambda: record("stateful_set")
+    )
+
+    import asyncio
+
+    asyncio.run(kasprapp_without_packages.synchronize())
+
+    assert calls == [
+        "unite",
+        "auth",
+        "service",
+        "headless_service",
+        "service_account",
+        "config_map",
+        "python_packages_pvc",
+        "hpa",
+        "stateful_set",
+    ]
     
     def test_prepare_packages_pvc_with_custom_access_mode(self, base_spec):
         """Test PVC generation with custom access mode."""

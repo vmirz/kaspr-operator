@@ -271,3 +271,39 @@ def test_on_error_stringifies_generic_exception():
         cond for cond in patch.status["conditions"] if cond["type"] == "Progressing"
     )
     assert progressing["message"] == "broken spec"
+
+
+def test_on_create_requests_reconciliation(monkeypatch):
+    calls = []
+
+    class FakeApp:
+        reconciliation_paused = False
+
+        async def create(self):
+            calls.append("create")
+
+    async def fake_request_reconciliation(name, namespace=None, logger=None, **kwargs):
+        calls.append(("request_reconciliation", name, namespace))
+
+    monkeypatch.setattr(handler.KasprAppSpecSchema, "load", lambda self, value: object())
+    monkeypatch.setattr(
+        handler.KasprApp,
+        "from_spec",
+        classmethod(lambda cls, *args, **kwargs: FakeApp()),
+    )
+    monkeypatch.setattr(handler, "request_reconciliation", fake_request_reconciliation)
+
+    asyncio.run(
+        handler.on_create(
+            spec={},
+            name="test-app",
+            meta={},
+            status={},
+            patch=SimpleNamespace(status={}),
+            namespace="test-namespace",
+            annotations={},
+            logger=Mock(),
+        )
+    )
+
+    assert calls == ["create", ("request_reconciliation", "test-app", "test-namespace")]
