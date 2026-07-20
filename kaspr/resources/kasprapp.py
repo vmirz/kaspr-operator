@@ -301,6 +301,7 @@ class KasprApp(BaseResource):
 
     async def synchronize(self) -> "KasprApp":
         """Compare current state with desired state for all child resources and create/patch as needed."""
+        self.unite()
         await self.sync_auth_credentials()
         await self.sync_service()
         await self.sync_headless_service()
@@ -2516,6 +2517,7 @@ class KasprApp(BaseResource):
         await self.sync_python_packages_pvc()
         await self.sync_service()
         await self.sync_headless_service()
+        await self.sync_hpa()
         await self.sync_stateful_set()
 
     async def patch_replicas(self):
