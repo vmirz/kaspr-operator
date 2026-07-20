@@ -1667,6 +1667,7 @@ async def on_create(
     
     try:
         await app.create()
+        await request_reconciliation(name, namespace=namespace, logger=logger)
     except Exception as e:
         logger.error(f"Failed to create KasprApp: {e}")
         on_error(e, spec, meta, status, patch, **kwargs)
