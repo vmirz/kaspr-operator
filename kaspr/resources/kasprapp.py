@@ -2708,9 +2708,12 @@ class KasprApp(BaseResource):
         if not await self.fetch_stateful_set(
             self.apps_v1_api, self.stateful_set_name, self.namespace
         ):
-            raise kopf.TemporaryError(
-                f"StatefulSet `{self.stateful_set_name}` not found in `{self.namespace}` namespace."
+            self.logger.info(
+                "Skipping volume-mounted resource patch because StatefulSet %s is missing in %s namespace.",
+                self.stateful_set_name,
+                self.namespace,
             )
+            return
         await self.patch_stateful_set(
             self.apps_v1_api,
             self.stateful_set_name,
