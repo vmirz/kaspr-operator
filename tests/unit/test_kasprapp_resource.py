@@ -363,6 +363,36 @@ def test_synchronize_unites_before_syncing_children(monkeypatch, kasprapp_withou
         "hpa",
         "stateful_set",
     ]
+
+
+def test_patch_volume_mounted_resources_skips_missing_statefulset(
+    monkeypatch, kasprapp_without_packages
+):
+    calls = []
+
+    async def fake_fetch_stateful_set(*args, **kwargs):
+        return None
+
+    async def fake_patch_stateful_set(*args, **kwargs):
+        calls.append("patch")
+
+    kasprapp_without_packages.logger = Mock()
+    kasprapp_without_packages.__dict__["volume_mounts"] = []
+    kasprapp_without_packages.__dict__["volumes"] = []
+    kasprapp_without_packages.__dict__["env_vars"] = []
+    monkeypatch.setattr(
+        kasprapp_without_packages, "fetch_stateful_set", fake_fetch_stateful_set
+    )
+    monkeypatch.setattr(
+        kasprapp_without_packages, "patch_stateful_set", fake_patch_stateful_set
+    )
+
+    import asyncio
+
+    asyncio.run(kasprapp_without_packages.patch_volume_mounted_resources())
+
+    assert calls == []
+    kasprapp_without_packages.logger.info.assert_called_once()
     
     def test_prepare_packages_pvc_with_custom_access_mode(self, base_spec):
         """Test PVC generation with custom access mode."""
