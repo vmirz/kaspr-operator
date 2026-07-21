@@ -2054,12 +2054,9 @@ async def on_python_packages_update(
 async def on_delete(name, **kwargs):
     """Handle deletion of KasprApp resources."""
     # Clean up all global state for this resource
-    if name in reconciliation_queue:
-        del reconciliation_queue[name]
-    if name in patch_request_queues:
-        del patch_request_queues[name]
-    if name in reconciliation_locks:
-        del reconciliation_locks[name]
+    reconciliation_queue.pop(name, None)
+    patch_request_queues.pop(name, None)
+    reconciliation_locks.pop(name, None)
     names_in_queue.discard(name)
     
     # Clean up hung member tracking
@@ -2105,7 +2102,9 @@ async def patch_resource(name, patch, **kwargs):
         )
     ```
     """
-    queue = patch_request_queues[name]
+    queue = patch_request_queues.get(name)
+    if queue is None:
+        return
 
     def set_patch(request):
         fields = request["field"].split(".")
@@ -2144,10 +2143,15 @@ async def process_reconciliation_requests(
     if stopped:
         return
     try:
-        queue_is_empty = reconciliation_queue[name].empty()
+        queue = reconciliation_queue.get(name)
+        if queue is None:
+            names_in_queue.discard(name)
+            return
+
+        queue_is_empty = queue.empty()
         if not queue_is_empty:
             queue_start_time = time.time()
-            reconciliation_queue[name].get_nowait()
+            queue.get_nowait()
             
             # Instrument dequeue with wait time
             sensor = get_sensor()
@@ -2173,17 +2177,22 @@ async def process_reconciliation_requests(
                 f"Reconciliation for {name} completed in {execution_time:.2f} seconds"
             )
             # Allow this name to be requeued after processing
-            names_in_queue.remove(name)
-            reconciliation_queue[name].task_done()
+            names_in_queue.discard(name)
+            queue.task_done()
     except asyncio.QueueEmpty:
         pass
     except Exception as e:
         logger.error(f"Error processing reconciliation request: {e}")
         # Ensure we don't get stuck on failed requests
-        names_in_queue.remove(name)
+        names_in_queue.discard(name)
 
 
-@kopf.daemon(kind=APP_KIND, initial_delay=5.0)
+@kopf.daemon(
+    kind=APP_KIND,
+    cancellation_backoff=2.0,
+    cancellation_timeout=5.0,
+    initial_delay=5.0,
+)
 async def monitor_related_resources(
     stopped,
     name,
@@ -2269,7 +2278,7 @@ async def monitor_related_resources(
             app.with_tables(tables)
             app.with_tasks(tasks)
             await app.patch_volume_mounted_resources()
-            await asyncio.sleep(10)  # Avoid tight loop
+            await stopped.wait(10)  # Avoid tight loop and exit promptly on deletion
 
         except asyncio.CancelledError:
             logger.info("Stopping monitoring...")
@@ -2277,7 +2286,7 @@ async def monitor_related_resources(
         except Exception as e:
             logger.error(f"Unexpected error during monitoring: {e}")
             logger.exception(e)
-            await asyncio.sleep(10)  # Avoid tight loop on error
+            await stopped.wait(10)  # Avoid tight loop on error and exit promptly on deletion
 
 
 @kopf.timer(APP_KIND, initial_delay=5.0, interval=30.0, backoff=10.0)
