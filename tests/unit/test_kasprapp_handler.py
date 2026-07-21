@@ -14,9 +14,15 @@ from kaspr.resources.appcomponent import BaseAppComponent
 class _StopFlag:
     def __init__(self):
         self.stopped = False
+        self.wait_calls = []
 
     def __bool__(self):
         return self.stopped
+
+    async def wait(self, seconds=None):
+        self.wait_calls.append(seconds)
+        self.stopped = True
+        return True
 
 
 class _FakeApp:
@@ -94,9 +100,6 @@ def test_monitor_related_resources_uses_task_schema(monkeypatch):
             seen["task_spec"] = value
             return {"parsed": True, "name": value["name"]}
 
-    async def fake_sleep(_seconds):
-        return None
-
     monkeypatch.setattr(handler, "fetch_app_related_resources", fake_fetch_related_resources)
     monkeypatch.setattr(handler.KasprAppSpecSchema, "load", lambda self, value: object())
     monkeypatch.setattr(
@@ -116,7 +119,6 @@ def test_monitor_related_resources_uses_task_schema(monkeypatch):
             }
         ),
     )
-    monkeypatch.setattr(handler.asyncio, "sleep", fake_sleep)
 
     asyncio.run(
         handler.monitor_related_resources(
@@ -143,6 +145,59 @@ def test_monitor_related_resources_uses_task_schema(monkeypatch):
             "labels": {"kaspr.io/app": "develop-materializer-control-plane"},
         }
     ]
+    assert stop_flag.wait_calls == [10]
+
+
+def test_patch_resource_skips_missing_queue():
+    patch = SimpleNamespace(status={})
+
+    asyncio.run(handler.patch_resource(name="missing-app", patch=patch))
+
+    assert patch.status == {}
+
+
+def test_process_reconciliation_requests_skips_missing_queue(monkeypatch):
+    handler.names_in_queue.add("missing-app")
+    reconcile_calls = []
+
+    async def fake_reconcile(*args, **kwargs):
+        reconcile_calls.append(True)
+
+    monkeypatch.setattr(handler, "reconcile", fake_reconcile)
+
+    asyncio.run(
+        handler.process_reconciliation_requests(
+            name="missing-app",
+            namespace="test-namespace",
+            spec={},
+            meta={},
+            status={},
+            patch=SimpleNamespace(status={}),
+            annotations={},
+            logger=Mock(),
+            stopped=False,
+        )
+    )
+
+    assert reconcile_calls == []
+    assert "missing-app" not in handler.names_in_queue
+
+
+def test_on_delete_cleans_up_global_state(monkeypatch):
+    app_name = "delete-me"
+    handler.reconciliation_queue[app_name].put_nowait(app_name)
+    handler.patch_request_queues[app_name].put_nowait({"field": "status", "value": {}})
+    _ = handler.reconciliation_locks[app_name]
+    handler.names_in_queue.add(app_name)
+    handler.hung_member_tracking[(app_name, 0)] = 1
+
+    asyncio.run(handler.on_delete(app_name))
+
+    assert app_name not in handler.reconciliation_queue
+    assert app_name not in handler.patch_request_queues
+    assert app_name not in handler.reconciliation_locks
+    assert app_name not in handler.names_in_queue
+    assert (app_name, 0) not in handler.hung_member_tracking
 
 
 def test_prepare_config_map_patch_updates_hash_annotation():
