@@ -14,6 +14,10 @@ if "jsonpickle" not in sys.modules:
     sys.modules["jsonpickle"] = types.ModuleType("jsonpickle")
 
 from kaspr.types.schemas.kasprtask_spec import KasprTaskProcessorTopicSendOperatorSchema
+from kaspr.types.schemas.kaspragent_spec import (
+    KasprAgentProcessorTopicSendOperatorSchema,
+    KasprAgentSpecSchema,
+)
 from kaspr.types.schemas.kasprwebview_spec import (
     KasprWebViewProcessorTopicSendOperatorSchema,
 )
@@ -39,9 +43,49 @@ def test_webview_topic_send_schema_dumps_pass_through_for_runtime_config():
     assert result["pass_through"] is True
 
 
+def test_agent_topic_send_schema_dumps_pass_through_for_runtime_config():
+    schema = KasprAgentProcessorTopicSendOperatorSchema()
+    model = schema.load({"name": "materialization-requests", "passThrough": True})
+
+    result = schema.dump(model)
+
+    assert result["name"] == "materialization-requests"
+    assert result["pass_through"] is True
+
+
 def test_task_topic_send_schema_defaults_pass_through_false():
     schema = KasprTaskProcessorTopicSendOperatorSchema()
 
     result = schema.load({"name": "materialization-requests"})
 
     assert result.pass_through is False
+
+
+def test_agent_spec_schema_accepts_processor_topic_send_operation():
+    schema = KasprAgentSpecSchema()
+
+    result = schema.load(
+        {
+            "name": "schema-proposal-agent",
+            "input": {"topic": {"name": "input-topic"}},
+            "processors": {
+                "pipeline": ["publish-proposal"],
+                "operations": [
+                    {
+                        "name": "publish-proposal",
+                        "topicSend": {
+                            "name": "schema-proposals",
+                            "passThrough": True,
+                            "valueSelector": {
+                                "python": "def select_value(value):\n    return value['schema_proposal']",
+                                "entrypoint": "select_value",
+                            },
+                        },
+                    }
+                ],
+            },
+        }
+    )
+
+    assert result.processors.operations[0].topic_send.name == "schema-proposals"
+    assert result.processors.operations[0].topic_send.pass_through is True

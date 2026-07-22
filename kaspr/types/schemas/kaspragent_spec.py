@@ -9,7 +9,9 @@ from kaspr.types.models import (
     KasprAgentInputChannel,
     KasprAgentInputTopic,
     KasprAgentOutput,
+    KasprAgentProcessorTopicSendOperator,
     KasprAgentProcessors,
+    KasprAgentProcessorsOperation,
     KasprAgentProcessorsInit,
 )
 from kaspr.types.schemas.topicout import TopicOutSpecSchema
@@ -138,8 +140,21 @@ class KasprAgentOutputSchema(BaseSchema):
     )
 
 
+class KasprAgentProcessorTopicSendOperatorSchema(TopicOutSpecSchema):
+    __model__ = KasprAgentProcessorTopicSendOperator
+
+
 class KasprAgentProcessorsOperationSchema(BaseSchema):
+    __model__ = KasprAgentProcessorsOperation
+
     name = fields.Str(data_key="name", required=True)
+    topic_send = fields.Nested(
+        KasprAgentProcessorTopicSendOperatorSchema(),
+        data_key="topicSend",
+        required=False,
+        allow_none=True,
+        load_default=None,
+    )
     map = fields.Nested(
         MapOperationSchema,
         data_key="map",

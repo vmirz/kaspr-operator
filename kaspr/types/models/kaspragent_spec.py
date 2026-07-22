@@ -5,6 +5,9 @@ from kaspr.types.models.operation import MapOperation, FilterOperation
 from kaspr.types.models.topicout import TopicOutSpec
 from kaspr.types.models.tableref import TableRefSpec
 
+
+class KasprAgentProcessorTopicSendOperator(TopicOutSpec): ...
+
 class KasprAgentInputBuffer(BaseModel):
     max_size: int
     within: str  # e.g., "10s", "5m", "1h", "2d"
@@ -35,6 +38,7 @@ class KasprAgentOutput(BaseModel):
 
 class KasprAgentProcessorsOperation(BaseModel):
     name: str
+    topic_send: Optional[KasprAgentProcessorTopicSendOperator]
     map: Optional[MapOperation]
     filter: Optional[FilterOperation]
     tables: Optional[List[TableRefSpec]]
