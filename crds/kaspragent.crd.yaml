@@ -236,6 +236,101 @@ spec:
                               required:
                                 - name
                                 - paramName
+                          topicSend:
+                            description: Send a message to a kafka topic.
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                                description: Name of the kafka topic to send the message to.
+                              nameSelector:
+                                type: object
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              ack:
+                                type: boolean
+                                description: Wait for acknoledgement from the broker before considering the message sent
+                              passThrough:
+                                type: boolean
+                                description: Preserve the original processor value for downstream pipeline steps after publishing.
+                              keySerializer:
+                                type: string
+                                description: Serializer for the key of the message
+                                enum: ["raw", "json", "pickle", "binary"]
+                              valueSerializer:
+                                type: string
+                                description: Serializer for the value of the message
+                                enum: ["raw", "json", "pickle", "binary"]
+                              keySelector:
+                                type: object
+                                description: Python code to determine the key of the message
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              valueSelector:
+                                type: object
+                                description: Python code to determine the value of the message
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              partitionSelector:
+                                type: object
+                                description: Python code to determine the topic partition of the message
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              headersSelector:
+                                type: object
+                                description: Python code to determine the headers of the message
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                              predicate:
+                                type: object
+                                description: Python code to determine if the message should be sent
+                                properties:
+                                  entrypoint:
+                                    type: string
+                                    description: Name of the function to run.
+                                  python:
+                                    type: string
+                                    description: Python code to run.
+                                required:
+                                  - python
+                            anyOf:
+                              - required: ["name"]
+                              - required: ["nameSelector"]
                           map:
                             type: object
                             properties:
