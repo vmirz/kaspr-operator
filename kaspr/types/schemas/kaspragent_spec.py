@@ -176,6 +176,11 @@ class KasprAgentProcessorsOperationSchema(BaseSchema):
         load_default=list,
     )
 
+    @post_dump
+    def camel_to_snake_dump(self, data, **kwargs):
+        """Convert data keys from camelCase to snake_case."""
+        return camel_to_snake(data)    
+
 
 class KasprAgentProcessorsInitSchema(CodeSpecSchema):
     __model__ = KasprAgentProcessorsInit
