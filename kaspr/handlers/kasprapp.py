@@ -399,6 +399,15 @@ def _update_basic_status_fields(
             rebalancing_changed = new_member.get("rebalancing") != current_member.get("rebalancing")
             recovering_changed = new_member.get("recovering") != current_member.get("recovering")
             state_changed = leader_changed or rebalancing_changed or recovering_changed
+            pod_uid_changed = (
+                bool(new_member.get("podUID"))
+                and new_member.get("podUID") != current_member.get("podUID")
+            )
+            pod_creation_changed = (
+                bool(new_member.get("podCreationTime"))
+                and new_member.get("podCreationTime") != current_member.get("podCreationTime")
+            )
+            incarnation_changed = pod_uid_changed or pod_creation_changed
             
             # Build filtered member object with only desired properties
             filtered_member = {
@@ -407,9 +416,14 @@ def _update_basic_status_fields(
                 "rebalancing": new_member.get("rebalancing"),
                 "recovering": new_member.get("recovering"),
             }
+
+            if new_member.get("podUID"):
+                filtered_member["podUID"] = new_member.get("podUID")
+            if new_member.get("podCreationTime"):
+                filtered_member["podCreationTime"] = new_member.get("podCreationTime")
             
             # Preserve or update lastTransitionTime
-            if state_changed or "lastTransitionTime" not in current_member:
+            if state_changed or incarnation_changed or "lastTransitionTime" not in current_member:
                 # State changed or first time seeing this member - update timestamp
                 filtered_member["lastTransitionTime"] = now()
                 
@@ -423,6 +437,11 @@ def _update_basic_status_fields(
                     if recovering_changed:
                         changes.append(f"recovering: {current_member.get('recovering')} -> {new_member.get('recovering')}")
                     logger.info(f"Member {member_id} state changed: {', '.join(changes)}")
+                elif incarnation_changed:
+                    logger.info(
+                        f"Member {member_id} pod incarnation changed: "
+                        f"podUID {current_member.get('podUID')} -> {new_member.get('podUID')}"
+                    )
             else:
                 # No state change - preserve existing timestamp
                 filtered_member["lastTransitionTime"] = current_member.get("lastTransitionTime")
@@ -1579,8 +1598,11 @@ async def update_status(
                 status_update["conditions"] = conds
                 logger.info("Python packages removed from spec, clearing PythonPackagesReady condition")
 
-        # Detect hung rebalancing members
-        hung_member_ids = await _detect_hung_members(_status, app, name, namespace, logger)
+        # Detect hung rebalancing members against the effective status snapshot,
+        # including freshly computed member transition timestamps.
+        effective_status = dict(_status)
+        effective_status.update(status_update)
+        hung_member_ids = await _detect_hung_members(effective_status, app, name, namespace, logger)
         
         _update_conditions(status_update, _status, _actual_status, gen, cur_gen, app, hung_member_ids)
         await _attempt_auto_rebalance(status_update, _status, _actual_status, annotations, app, name, namespace, logger)

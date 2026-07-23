@@ -2907,6 +2907,40 @@ class KasprApp(BaseResource):
         if not self.conf.client_status_check_enabled:
             return []
 
+        # Map StatefulSet ordinals to pod incarnation metadata so callers can
+        # distinguish a fresh pod from a previous incarnation of the same member id.
+        pod_metadata_by_idx: Dict[int, Dict[str, str]] = {}
+        try:
+            pods = await self.list_pods(
+                self.core_v1_api,
+                self.namespace,
+                self.labels.kasper_label_selectors().as_dict(),
+            )
+            if pods and pods.items:
+                for pod in pods.items:
+                    pod_name = getattr(pod.metadata, "name", "") if pod.metadata else ""
+                    if not pod_name or not pod_name.startswith(f"{self.component_name}-"):
+                        continue
+                    try:
+                        idx = int(pod_name.rsplit("-", 1)[-1])
+                    except (ValueError, IndexError):
+                        continue
+                    metadata: Dict[str, str] = {}
+                    pod_uid = getattr(pod.metadata, "uid", None) if pod.metadata else None
+                    if pod_uid:
+                        metadata["podUID"] = pod_uid
+                    creation_ts = (
+                        getattr(pod.metadata, "creation_timestamp", None)
+                        if pod.metadata
+                        else None
+                    )
+                    if creation_ts:
+                        metadata["podCreationTime"] = creation_ts.isoformat()
+                    if metadata:
+                        pod_metadata_by_idx[idx] = metadata
+        except Exception as e:
+            self.logger.warning(f"Failed to fetch pod metadata for member statuses: {e}")
+
         async def fetch_member_status(idx: int):
             """Fetch status from a single member."""
             try:
@@ -2934,9 +2968,9 @@ class KasprApp(BaseResource):
                     continue
                 idx, status = result
                 if status is not None:
-                    member_statuses.append(
-                        {"id": idx, "lastUpdateTime": now(), **status}
-                    )
+                    member_status = {"id": idx, "lastUpdateTime": now(), **status}
+                    member_status.update(pod_metadata_by_idx.get(idx, {}))
+                    member_statuses.append(member_status)
 
             if not member_statuses:
                 self.logger.warning("All worker status checks failed")
