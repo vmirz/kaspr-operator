@@ -1,6 +1,7 @@
 """Unit tests for KasprApp handler related-resource monitoring."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -198,6 +199,158 @@ def test_on_delete_cleans_up_global_state(monkeypatch):
     assert app_name not in handler.reconciliation_locks
     assert app_name not in handler.names_in_queue
     assert (app_name, 0) not in handler.hung_member_tracking
+
+
+def test_update_basic_status_fields_resets_transition_time_on_pod_uid_change(monkeypatch):
+    previous_ts = "2026-07-23T00:00:00+00:00"
+    refreshed_ts = "2026-07-23T00:10:00+00:00"
+    monkeypatch.setattr(handler, "now", lambda: refreshed_ts)
+
+    status_update = {}
+    current_status = {
+        "members": [
+            {
+                "id": 0,
+                "leader": False,
+                "rebalancing": True,
+                "recovering": False,
+                "lastTransitionTime": previous_ts,
+                "podUID": "old-uid",
+                "podCreationTime": "2026-07-22T23:59:00+00:00",
+            }
+        ]
+    }
+    actual_status = {
+        "members": [
+            {
+                "id": 0,
+                "leader": False,
+                "rebalancing": True,
+                "recovering": False,
+                "podUID": "new-uid",
+                "podCreationTime": "2026-07-23T00:09:30+00:00",
+            }
+        ]
+    }
+
+    handler._update_basic_status_fields(
+        status_update,
+        current_status,
+        actual_status,
+        app=SimpleNamespace(),
+        logger=Mock(),
+    )
+
+    assert status_update["members"][0]["lastTransitionTime"] == refreshed_ts
+    assert status_update["members"][0]["podUID"] == "new-uid"
+
+
+def test_update_status_does_not_terminate_fresh_member_with_stale_transition(monkeypatch):
+    app_name = "test-app"
+    namespace = "test-namespace"
+    fresh_ts = datetime.now(timezone.utc).isoformat()
+    stale_ts = (datetime.now(timezone.utc) - timedelta(seconds=1200)).isoformat()
+
+    handler.hung_member_tracking.clear()
+    handler.hung_member_tracking[(app_name, 0)] = 2
+
+    class FakeApp:
+        def __init__(self):
+            self.annotations = {}
+            self.python_packages = None
+            self.static_group_membership_enabled = False
+            self.replicas = 1
+            self.terminate_calls = []
+            self.conf = SimpleNamespace(
+                hung_member_detection_enabled=True,
+                hung_rebalancing_threshold_seconds=300,
+                auto_rebalance_enabled=False,
+                client_status_check_enabled=True,
+            )
+
+        async def fetch_app_status(self):
+            return {
+                "kasprVersion": "0.11.18",
+                "availableMembers": 1,
+                "desiredMembers": 1,
+                "rolloutInProgress": False,
+                "members": [
+                    {
+                        "id": 0,
+                        "leader": False,
+                        "rebalancing": True,
+                        "recovering": False,
+                        "podUID": "fresh-pod-uid",
+                        "podCreationTime": fresh_ts,
+                    }
+                ],
+            }
+
+        async def terminate_member(self, member_id):
+            self.terminate_calls.append(member_id)
+            return True
+
+    fake_app = FakeApp()
+
+    async def fake_fetch_related_resources(name, namespace):
+        return {
+            "agents": [],
+            "webviews": [],
+            "tables": [],
+            "tasks": [],
+            "success": True,
+        }
+
+    monkeypatch.setattr(handler.KasprAppSpecSchema, "load", lambda self, value: object())
+    monkeypatch.setattr(
+        handler.KasprApp,
+        "from_spec",
+        classmethod(lambda cls, *args, **kwargs: fake_app),
+    )
+    monkeypatch.setattr(handler, "fetch_app_related_resources", fake_fetch_related_resources)
+    monkeypatch.setattr(handler, "now", lambda: fresh_ts)
+
+    patch = SimpleNamespace(status={})
+    status = {
+        "observedGeneration": 1,
+        "conditions": [
+            {
+                "type": "Progressing",
+                "status": "False",
+                "reason": "ReconcileComplete",
+                "message": "All resources are in desired state",
+                "observedGeneration": 1,
+            }
+        ],
+        "members": [
+            {
+                "id": 0,
+                "leader": False,
+                "rebalancing": True,
+                "recovering": False,
+                "lastTransitionTime": stale_ts,
+                "podUID": "stale-pod-uid",
+                "podCreationTime": stale_ts,
+            }
+        ],
+    }
+
+    asyncio.run(
+        handler.update_status(
+            name=app_name,
+            spec={},
+            meta={"generation": 1},
+            status=status,
+            patch=patch,
+            namespace=namespace,
+            annotations={},
+            logger=Mock(),
+        )
+    )
+
+    assert fake_app.terminate_calls == []
+    assert (app_name, 0) not in handler.hung_member_tracking
+    assert patch.status["members"][0]["lastTransitionTime"] == fresh_ts
 
 
 def test_prepare_config_map_patch_updates_hash_annotation():
