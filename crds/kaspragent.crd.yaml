@@ -123,6 +123,9 @@ spec:
                                 description: Python code to run.
                             required:
                               - python
+                          declare:
+                            type: boolean
+                            description: If true, declare the output topic once lazily before the first publish.
                           ack:
                             type: boolean
                             description: Wait for acknoledgement from the broker before considering the message sent
@@ -134,6 +137,24 @@ spec:
                             type: string
                             description: Serializer for the value of the message
                             enum: ["raw", "json", "pickle", "binary"]
+                          partitions:
+                            type: integer
+                            description: Number of partitions for the topic. Optional.
+                          retention:
+                            type: integer
+                            description: Retention period for the topic in seconds. Optional.
+                          compacting:
+                            type: boolean
+                            description: Whether log compaction is enabled for the topic. Optional.
+                          deleting:
+                            type: boolean
+                            description: Whether log deletion is enabled for the topic. Optional.
+                          replicas:
+                            type: integer
+                            description: Number of replicas for the topic. Optional.
+                          config:
+                            type: object
+                            description: Additional configuration for the topic as key-value pairs. Optional.
                           keySelector:
                             type: object
                             properties:
@@ -254,6 +275,9 @@ spec:
                                     description: Python code to run.
                                 required:
                                   - python
+                              declare:
+                                type: boolean
+                                description: If true, declare the output topic once lazily before the first publish.
                               ack:
                                 type: boolean
                                 description: Wait for acknoledgement from the broker before considering the message sent
@@ -268,6 +292,24 @@ spec:
                                 type: string
                                 description: Serializer for the value of the message
                                 enum: ["raw", "json", "pickle", "binary"]
+                              partitions:
+                                type: integer
+                                description: Number of partitions for the topic. Optional.
+                              retention:
+                                type: integer
+                                description: Retention period for the topic in seconds. Optional.
+                              compacting:
+                                type: boolean
+                                description: Whether log compaction is enabled for the topic. Optional.
+                              deleting:
+                                type: boolean
+                                description: Whether log deletion is enabled for the topic. Optional.
+                              replicas:
+                                type: integer
+                                description: Number of replicas for the topic. Optional.
+                              config:
+                                type: object
+                                description: Additional configuration for the topic as key-value pairs. Optional.
                               keySelector:
                                 type: object
                                 description: Python code to determine the key of the message

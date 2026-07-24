@@ -12,6 +12,7 @@ class TopicOutSpecSchema(BaseSchema):
     name_selector = fields.Nested(
         CodeSpecSchema(), data_key="nameSelector", required=False, load_default=None
     )
+    declare = fields.Bool(data_key="declare", required=False, load_default=False)
     pass_through = fields.Bool(
         data_key="passThrough", required=False, load_default=False
     )
@@ -21,6 +22,18 @@ class TopicOutSpecSchema(BaseSchema):
     )
     value_serializer = fields.Str(
         data_key="valueSerializer", required=False, load_default=None
+    )
+    partitions = fields.Int(data_key="partitions", required=False, load_default=None)
+    retention = fields.Int(data_key="retention", required=False, load_default=None)
+    compacting = fields.Bool(data_key="compacting", required=False, load_default=None)
+    deleting = fields.Bool(data_key="deleting", required=False, load_default=None)
+    replicas = fields.Int(data_key="replicas", required=False, load_default=None)
+    config = fields.Dict(
+        keys=fields.Str(required=True),
+        values=fields.Str(required=True),
+        data_key="config",
+        required=False,
+        load_default=None,
     )
     key_selector = fields.Nested(
         CodeSpecSchema(), data_key="keySelector", required=False, load_default=None
