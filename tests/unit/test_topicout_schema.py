@@ -33,6 +33,31 @@ def test_topicout_schema_loads_pass_through_from_crd_field():
     assert result.pass_through is True
 
 
+def test_topicout_schema_loads_declare_and_topic_options_from_crd_fields():
+    schema = TopicOutSpecSchema()
+
+    result = schema.load(
+        {
+            "name": "materialization-requests",
+            "declare": True,
+            "partitions": 12,
+            "retention": 3600,
+            "compacting": True,
+            "deleting": False,
+            "replicas": 3,
+            "config": {"cleanup.policy": "compact"},
+        }
+    )
+
+    assert result.declare is True
+    assert result.partitions == 12
+    assert result.retention == 3600
+    assert result.compacting is True
+    assert result.deleting is False
+    assert result.replicas == 3
+    assert result.config == {"cleanup.policy": "compact"}
+
+
 def test_webview_topic_send_schema_dumps_pass_through_for_runtime_config():
     schema = KasprWebViewProcessorTopicSendOperatorSchema()
     model = schema.load({"name": "materialization-requests", "passThrough": True})
@@ -89,3 +114,50 @@ def test_agent_spec_schema_accepts_processor_topic_send_operation():
 
     assert result.processors.operations[0].topic_send.name == "schema-proposals"
     assert result.processors.operations[0].topic_send.pass_through is True
+
+
+def test_agent_spec_schema_accepts_output_topic_declaration_options():
+    schema = KasprAgentSpecSchema()
+
+    result = schema.load(
+        {
+            "name": "schema-proposal-agent",
+            "input": {"topic": {"name": "input-topic"}},
+            "output": {
+                "topics": [
+                    {
+                        "name": "schema-proposals",
+                        "declare": True,
+                        "partitions": 12,
+                        "retention": 3600,
+                        "compacting": True,
+                        "deleting": False,
+                        "replicas": 3,
+                        "config": {"cleanup.policy": "compact"},
+                    }
+                ]
+            },
+            "processors": {
+                "pipeline": ["publish-proposal"],
+                "operations": [
+                    {
+                        "name": "publish-proposal",
+                        "map": {
+                            "python": "def passthrough(value):\n    return value",
+                            "entrypoint": "passthrough",
+                        },
+                    }
+                ],
+            },
+        }
+    )
+
+    topic = result.output.topics[0]
+    assert topic.name == "schema-proposals"
+    assert topic.declare is True
+    assert topic.partitions == 12
+    assert topic.retention == 3600
+    assert topic.compacting is True
+    assert topic.deleting is False
+    assert topic.replicas == 3
+    assert topic.config == {"cleanup.policy": "compact"}
