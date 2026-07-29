@@ -4,8 +4,9 @@
 # 
 # This import triggers the monkey-patch in kaspr/utils/override.py which replaces
 # kopf._cogs.helpers.thirdparty in sys.modules to support kubernetes_asyncio.
-from kaspr.utils.override import patch_kopf_thirdparty
-patch_kopf_thirdparty()
+
+# from kaspr.utils.override import patch_kopf_thirdparty
+# patch_kopf_thirdparty()
 
 try:
     import os
