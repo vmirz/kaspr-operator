@@ -1,13 +1,3 @@
-# CRITICAL: Apply Kopf patches BEFORE any other imports
-# This must be the first import to patch kopf._cogs.helpers.thirdparty
-# before Kopf's internal modules are loaded.
-# 
-# This import triggers the monkey-patch in kaspr/utils/override.py which replaces
-# kopf._cogs.helpers.thirdparty in sys.modules to support kubernetes_asyncio.
-
-# from kaspr.utils.override import patch_kopf_thirdparty
-# patch_kopf_thirdparty()
-
 try:
     import os
     from dotenv import load_dotenv, find_dotenv
