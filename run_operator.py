@@ -14,8 +14,8 @@ Examples:
 """
 
 # CRITICAL: Apply patch BEFORE any kopf imports
-from kaspr.utils.override import patch_kopf_thirdparty
-patch_kopf_thirdparty()
+# from kaspr.utils.override import patch_kopf_thirdparty
+# patch_kopf_thirdparty()
 
 # Now safe to import and run kopf  # noqa: E402
 import sys  # noqa: E402
