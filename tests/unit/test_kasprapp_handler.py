@@ -490,6 +490,10 @@ def test_on_create_requests_reconciliation(monkeypatch):
         async def create(self):
             calls.append("create")
 
+    async def fake_attach(app, name, namespace):
+        calls.append(("attach", name, namespace))
+        return True
+
     async def fake_request_reconciliation(name, namespace=None, logger=None, **kwargs):
         calls.append(("request_reconciliation", name, namespace))
 
@@ -499,6 +503,7 @@ def test_on_create_requests_reconciliation(monkeypatch):
         "from_spec",
         classmethod(lambda cls, *args, **kwargs: FakeApp()),
     )
+    monkeypatch.setattr(handler, "attach_app_related_resources", fake_attach)
     monkeypatch.setattr(handler, "request_reconciliation", fake_request_reconciliation)
 
     asyncio.run(
@@ -514,4 +519,134 @@ def test_on_create_requests_reconciliation(monkeypatch):
         )
     )
 
-    assert calls == ["create", ("request_reconciliation", "test-app", "test-namespace")]
+    # Components must be attached before create so the first pod template mounts them.
+    assert calls == [
+        ("attach", "test-app", "test-namespace"),
+        "create",
+        ("request_reconciliation", "test-app", "test-namespace"),
+    ]
+
+
+def test_monitor_related_resources_skips_patch_on_partial_fetch(monkeypatch):
+    stop_flag = _StopFlag()
+    fake_app = _FakeApp(stop_flag)
+
+    async def fake_fetch_related_resources(name, namespace):
+        return {
+            "agents": [],
+            "webviews": [],
+            "tables": [],
+            "tasks": [],
+            "success": False,
+        }
+
+    monkeypatch.setattr(handler, "fetch_app_related_resources", fake_fetch_related_resources)
+    monkeypatch.setattr(handler.KasprAppSpecSchema, "load", lambda self, value: object())
+    monkeypatch.setattr(
+        handler.KasprApp,
+        "from_spec",
+        classmethod(lambda cls, *args, **kwargs: fake_app),
+    )
+
+    async def run():
+        task = asyncio.ensure_future(
+            handler.monitor_related_resources(
+                stopped=stop_flag,
+                name="develop-materializer-control-plane",
+                body={},
+                spec={},
+                meta={},
+                labels={},
+                annotations={},
+                status={},
+                namespace="kafka-sql",
+                patch={},
+                logger=Mock(),
+            )
+        )
+        await asyncio.sleep(0)
+        stop_flag.stopped = True
+        await task
+
+    asyncio.run(run())
+
+    # An incomplete component list would unmount live definitions.
+    assert fake_app.patched is False
+
+
+def test_reconcile_attaches_components_before_synchronize(monkeypatch):
+    calls = []
+
+    class FakeApp:
+        reconciliation_paused = False
+
+        async def synchronize(self):
+            calls.append("synchronize")
+
+    async def fake_attach(app, name, namespace):
+        calls.append("attach")
+        return True
+
+    async def fake_update_status(*args, **kwargs):
+        calls.append("update_status")
+
+    monkeypatch.setattr(handler.KasprAppSpecSchema, "load", lambda self, value: object())
+    monkeypatch.setattr(
+        handler.KasprApp,
+        "from_spec",
+        classmethod(lambda cls, *args, **kwargs: FakeApp()),
+    )
+    monkeypatch.setattr(handler, "attach_app_related_resources", fake_attach)
+    monkeypatch.setattr(handler, "update_status", fake_update_status)
+
+    asyncio.run(
+        handler.reconcile(
+            name="test-app",
+            namespace="test-namespace",
+            spec={},
+            meta={},
+            status={},
+            patch=SimpleNamespace(status={}),
+            annotations={},
+            logger=Mock(),
+        )
+    )
+
+    assert calls == ["attach", "synchronize", "update_status"]
+
+
+def test_reconcile_skips_synchronize_when_components_are_incomplete(monkeypatch):
+    calls = []
+
+    class FakeApp:
+        reconciliation_paused = False
+
+        async def synchronize(self):
+            calls.append("synchronize")
+
+    async def fake_attach(app, name, namespace):
+        return False
+
+    monkeypatch.setattr(handler.KasprAppSpecSchema, "load", lambda self, value: object())
+    monkeypatch.setattr(
+        handler.KasprApp,
+        "from_spec",
+        classmethod(lambda cls, *args, **kwargs: FakeApp()),
+    )
+    monkeypatch.setattr(handler, "attach_app_related_resources", fake_attach)
+
+    asyncio.run(
+        handler.reconcile(
+            name="test-app",
+            namespace="test-namespace",
+            spec={},
+            meta={},
+            status={},
+            patch=SimpleNamespace(status={}),
+            annotations={},
+            logger=Mock(),
+        )
+    )
+
+    # Rendering the template without every component would wipe live definition mounts.
+    assert calls == []

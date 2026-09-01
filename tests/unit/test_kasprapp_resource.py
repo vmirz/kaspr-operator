@@ -4,6 +4,17 @@ import kopf
 import pytest
 from marshmallow import ValidationError
 from unittest.mock import Mock, patch
+from kubernetes_asyncio.client import (
+    V1ConfigMapVolumeSource,
+    V1Container,
+    V1LabelSelector,
+    V1PodSpec,
+    V1PodTemplateSpec,
+    V1StatefulSet,
+    V1StatefulSetSpec,
+    V1Volume,
+    V1VolumeMount,
+)
 from kaspr.resources.kasprapp import KasprApp
 from kaspr.types.models.container_template import (
     ConfigMapKeySelector,
@@ -902,6 +913,75 @@ class TestStatefulSetIntegration:
         )
         assert actual_watch["spec"]["template"]["spec"]["serviceAccountName"] is None
         assert desired_watch != actual_watch
+
+    def test_prepare_statefulset_watch_fields_detect_added_component_volume(
+        self, kasprapp_without_packages
+    ):
+        """Adding a KasprWebView/Agent/Table/Task must be seen as StatefulSet drift."""
+        actual = _stateful_set_with_volumes(["state-table", "list-webview"])
+        desired = _stateful_set_with_volumes(
+            ["state-table", "list-webview", "schema-webview"]
+        )
+
+        actual_watch = kasprapp_without_packages.prepare_statefulset_watch_fields(actual)
+        desired_watch = kasprapp_without_packages.prepare_statefulset_watch_fields(desired)
+
+        assert actual_watch != desired_watch
+        assert (
+            "schema-webview"
+            in desired_watch["spec"]["template"]["spec"]["volumes"]
+        )
+        assert (
+            "schema-webview:/var/lib/data/definitions/schema-webview.yaml"
+            in desired_watch["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+        )
+
+    def test_prepare_statefulset_watch_fields_ignore_volume_ordering(
+        self, kasprapp_without_packages
+    ):
+        """Ordering differences alone must not trigger an endless patch loop."""
+        actual = _stateful_set_with_volumes(["a-agent", "b-webview"])
+        desired = _stateful_set_with_volumes(["b-webview", "a-agent"])
+
+        assert kasprapp_without_packages.prepare_statefulset_watch_fields(
+            actual
+        ) == kasprapp_without_packages.prepare_statefulset_watch_fields(desired)
+
+
+def _stateful_set_with_volumes(names):
+    """Build a minimal StatefulSet carrying one definition volume per name."""
+    return V1StatefulSet(
+        spec=V1StatefulSetSpec(
+            replicas=1,
+            service_name="svc",
+            selector=V1LabelSelector(match_labels={"app": "test"}),
+            template=V1PodTemplateSpec(
+                spec=V1PodSpec(
+                    service_account_name="test-app-app",
+                    containers=[
+                        V1Container(
+                            name="kaspr",
+                            image="kaspr:1.0.0",
+                            volume_mounts=[
+                                V1VolumeMount(
+                                    name=name,
+                                    mount_path=f"/var/lib/data/definitions/{name}.yaml",
+                                )
+                                for name in names
+                            ],
+                        )
+                    ],
+                    volumes=[
+                        V1Volume(
+                            name=name,
+                            config_map=V1ConfigMapVolumeSource(name=name),
+                        )
+                        for name in names
+                    ],
+                )
+            ),
+        )
+    )
 
 
 class TestPrepareVolumeMount:

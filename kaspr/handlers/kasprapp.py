@@ -96,6 +96,67 @@ async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, an
     }
 
 
+async def attach_app_related_resources(
+    app: KasprApp, name: str, namespace: str
+) -> bool:
+    """Attach the app's agents, webviews, tables, and tasks to the app model.
+
+    Returns False when any component fetch failed, in which case the attached
+    collections are incomplete and must not be used to render the pod template.
+    """
+    related = await fetch_app_related_resources(name, namespace)
+
+    app.with_agents(
+        [
+            KasprAgent.from_spec(
+                item["metadata"]["name"],
+                KasprAgent.KIND,
+                namespace,
+                KasprAgentSpecSchema().load(item["spec"]),
+                dict(item["metadata"]["labels"]),
+            )
+            for item in related["agents"]
+        ]
+    )
+    app.with_webviews(
+        [
+            KasprWebView.from_spec(
+                item["metadata"]["name"],
+                KasprWebView.KIND,
+                namespace,
+                KasprWebViewSpecSchema().load(item["spec"]),
+                dict(item["metadata"]["labels"]),
+            )
+            for item in related["webviews"]
+        ]
+    )
+    app.with_tables(
+        [
+            KasprTable.from_spec(
+                item["metadata"]["name"],
+                KasprTable.KIND,
+                namespace,
+                KasprTableSpecSchema().load(item["spec"]),
+                dict(item["metadata"]["labels"]),
+            )
+            for item in related["tables"]
+        ]
+    )
+    app.with_tasks(
+        [
+            KasprTask.from_spec(
+                item["metadata"]["name"],
+                KasprTask.KIND,
+                namespace,
+                KasprTaskSpecSchema().load(item["spec"]),
+                dict(item["metadata"]["labels"]),
+            )
+            for item in related["tasks"]
+        ]
+    )
+    return related["success"]
+
+
 async def request_reconciliation(name, namespace: str = None, **kwargs):
     """Request reconciliation for the KasprApp.
 
@@ -1647,6 +1708,17 @@ async def reconcile(
             sensor.on_reconcile_complete(name, name, namespace, sensor_state, True)
         return
     try:
+        # The pod template mounts one definition volume per related component, so the
+        # components must be attached before the StatefulSet is rendered or compared.
+        if not await attach_app_related_resources(app, name, namespace):
+            logger.warning(
+                "Skipping reconciliation for %s because one or more component "
+                "fetches failed; retrying on the next cycle.",
+                name,
+            )
+            if sensor:
+                sensor.on_reconcile_complete(name, name, namespace, sensor_state, True)
+            return
         logger.debug(f"Reconciling {APP_KIND}/{name} in {namespace} namespace.")
         await app.synchronize()
         logger.debug(f"Reconciled {APP_KIND}/{name} in {namespace} namespace.")
@@ -1688,6 +1760,9 @@ async def on_create(
         )
     
     try:
+        # Render the initial pod template with the component definition volumes already
+        # attached, so the first pod does not start without them.
+        await attach_app_related_resources(app, name, namespace)
         await app.create()
         await request_reconciliation(name, namespace=namespace, logger=logger)
     except Exception as e:
@@ -2244,62 +2319,16 @@ async def monitor_related_resources(
             app = KasprApp.from_spec(
                 name, APP_KIND, namespace, spec_model, annotations, logger=logger
             )
-            agents: List[KasprAgent] = []
-            webviews: List[KasprWebView] = []
-            tables: List[KasprTable] = []
-            tasks: List[KasprTask] = []
-
-            # Fetch all related resources in parallel
-            related_resources = await fetch_app_related_resources(name, namespace)
-
-            for agent in related_resources["agents"]:
-                agents.append(
-                    KasprAgent.from_spec(
-                        agent["metadata"]["name"],
-                        KasprAgent.KIND,
-                        namespace,
-                        KasprAgentSpecSchema().load(agent["spec"]),
-                        dict(agent["metadata"]["labels"]),
-                    )
+            # A partial fetch would render an incomplete volume list and unmount live
+            # components, so leave the StatefulSet untouched until the next cycle.
+            if await attach_app_related_resources(app, name, namespace):
+                await app.patch_volume_mounted_resources()
+            else:
+                logger.warning(
+                    "Skipping volume-mounted resource patch for %s because one or more "
+                    "component fetches failed.",
+                    name,
                 )
-
-            for webview in related_resources["webviews"]:
-                webviews.append(
-                    KasprWebView.from_spec(
-                        webview["metadata"]["name"],
-                        KasprWebView.KIND,
-                        namespace,
-                        KasprWebViewSpecSchema().load(webview["spec"]),
-                        dict(webview["metadata"]["labels"]),
-                    )
-                )
-
-            for table in related_resources["tables"]:
-                tables.append(
-                    KasprTable.from_spec(
-                        table["metadata"]["name"],
-                        KasprTable.KIND,
-                        namespace,
-                        KasprTableSpecSchema().load(table["spec"]),
-                        dict(table["metadata"]["labels"]),
-                    )
-                )
-
-            for task in related_resources["tasks"]:
-                tasks.append(
-                    KasprTask.from_spec(
-                        task["metadata"]["name"],
-                        KasprTask.KIND,
-                        namespace,
-                        KasprTaskSpecSchema().load(task["spec"]),
-                        dict(task["metadata"]["labels"]),
-                    )
-                )
-            app.with_agents(agents)
-            app.with_webviews(webviews)
-            app.with_tables(tables)
-            app.with_tasks(tasks)
-            await app.patch_volume_mounted_resources()
             await stopped.wait(10)  # Avoid tight loop and exit promptly on deletion
 
         except asyncio.CancelledError:
