@@ -2297,11 +2297,23 @@ class KasprApp(BaseResource):
                 "template": {
                     "spec": {
                         "serviceAccountName": stateful_set.spec.template.spec.service_account_name,
+                        # Component definitions are mounted one volume per agent/webview/table/
+                        # task, so adding or removing a component only shows up here. Names are
+                        # compared instead of whole objects because the API server defaults
+                        # fields the operator leaves unset, which would look like endless drift.
+                        "volumes": sorted(
+                            volume.name
+                            for volume in (stateful_set.spec.template.spec.volumes or [])
+                        ),
                         "containers": [
                             {
                                 "image": stateful_set.spec.template.spec.containers[
                                     0
-                                ].image
+                                ].image,
+                                "volumeMounts": sorted(
+                                    f"{mount.name}:{mount.mount_path}"
+                                    for mount in (main_container.volume_mounts or [])
+                                ),
                             }
                         ]
                     }
