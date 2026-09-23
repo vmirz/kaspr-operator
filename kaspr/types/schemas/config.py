@@ -11,6 +11,16 @@ class KasprAppConfigSchema(BaseSchema):
 
     table_dir: str = fields.Str(data_key="tableDir", dump_default=None)
 
+    # broker
+    broker_request_timeout: int = fields.Int(data_key="brokerRequestTimeout", dump_default=None)
+    broker_commit_every: int = fields.Int(data_key="brokerCommitEvery", dump_default=None)
+    broker_commit_interval: int = fields.Int(data_key="brokerCommitInterval", dump_default=None)
+    broker_heartbeat_interval: int = fields.Int(data_key="brokerHeartbeatInterval", dump_default=None)
+    broker_session_timeout: int = fields.Int(data_key="brokerSessionTimeout", dump_default=None)
+    broker_rebalance_timeout: int = fields.Int(data_key="brokerRebalanceTimeout", dump_default=None)
+    broker_max_poll_records: int = fields.Int(data_key="brokerMaxPollRecords", dump_default=None)
+    broker_max_poll_interval: int = fields.Int(data_key="brokerMaxPollInterval", dump_default=None)
+
     # topics
     topic_replication_factor: int = fields.Int(data_key="topicReplicationFactor", dump_default=None)
     topic_partitions: int = fields.Int(data_key="topicPartitions", dump_default=None)

@@ -7,6 +7,16 @@ class KasprAppConfig(BaseModel):
 
     table_dir: str
 
+    # broker
+    broker_request_timeout: int
+    broker_commit_every: int
+    broker_commit_interval: int
+    broker_heartbeat_interval: int
+    broker_session_timeout: int
+    broker_rebalance_timeout: int
+    broker_max_poll_records: int
+    broker_max_poll_interval: int
+
     # topics
     topic_replication_factor: int
     topic_partitions: int
