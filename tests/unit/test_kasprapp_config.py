@@ -25,3 +25,13 @@ def test_broker_settings_render_as_environment_variables():
         "K_BROKER_MAX_POLL_RECORDS": "101",
         "K_BROKER_MAX_POLL_INTERVAL": "1001",
     }
+
+
+def test_table_stale_purge_threshold_renders_as_environment_variable():
+    config = KasprAppConfigSchema().load(
+        {"tableStalePurgeDiskUsageThreshold": 0.9}
+    )
+
+    assert config.as_envs() == {
+        "K_TABLE_STALE_PURGE_DISK_USAGE_THRESHOLD": "0.9",
+    }

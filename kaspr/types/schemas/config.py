@@ -10,6 +10,9 @@ class KasprAppConfigSchema(BaseSchema):
     __model__ = KasprAppConfig
 
     table_dir: str = fields.Str(data_key="tableDir", dump_default=None)
+    table_stale_purge_disk_usage_threshold: float = fields.Float(
+        data_key="tableStalePurgeDiskUsageThreshold", dump_default=None
+    )
 
     # broker
     broker_request_timeout: int = fields.Int(data_key="brokerRequestTimeout", dump_default=None)

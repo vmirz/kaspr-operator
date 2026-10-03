@@ -6,6 +6,7 @@ class KasprAppConfig(BaseModel):
     """kaspr app configurations."""
 
     table_dir: str
+    table_stale_purge_disk_usage_threshold: float
 
     # broker
     broker_request_timeout: int
