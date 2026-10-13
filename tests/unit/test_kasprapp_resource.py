@@ -931,6 +931,28 @@ class TestStatefulSetIntegration:
         assert actual_watch["spec"]["template"]["spec"]["serviceAccountName"] is None
         assert desired_watch != actual_watch
 
+    def test_prepare_statefulset_watch_fields_detect_init_container_image_change(
+        self, kasprapp_without_packages
+    ):
+        """Changing the package installer image must be seen as StatefulSet drift."""
+        actual = _stateful_set_with_volumes([])
+        desired = _stateful_set_with_volumes([])
+        actual.spec.template.spec.init_containers = [
+            V1Container(name="install-packages", image="kaspr:old")
+        ]
+        desired.spec.template.spec.init_containers = [
+            V1Container(name="install-packages", image="python:3.12-bookworm")
+        ]
+
+        actual_watch = kasprapp_without_packages.prepare_statefulset_watch_fields(actual)
+        desired_watch = kasprapp_without_packages.prepare_statefulset_watch_fields(desired)
+
+        assert actual_watch != desired_watch
+        assert (
+            desired_watch["spec"]["template"]["spec"]["initContainers"][0]["image"]
+            == "python:3.12-bookworm"
+        )
+
     def test_prepare_statefulset_watch_fields_detect_added_component_volume(
         self, kasprapp_without_packages
     ):
