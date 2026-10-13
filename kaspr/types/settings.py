@@ -69,6 +69,11 @@ CLIENT_STATUS_CHECK_TIMEOUT_SECONDS = float(
 #: Custom container image registry to use instead of Docker Hub
 KASPR_IMAGE_REGISTRY = str(_getenv("KASPR_IMAGE_REGISTRY", ""))
 
+#: Container image used by the Python packages installation init container
+PYTHON_PACKAGES_INIT_IMAGE = str(
+    _getenv("PYTHON_PACKAGES_INIT_IMAGE", "python:3.12-bookworm")
+)
+
 #: Enable automatic rebalance when Kafka subscriptions change
 AUTO_REBALANCE_ENABLED = bool(
     _getenv("AUTO_REBALANCE_ENABLED", True)
@@ -97,6 +102,7 @@ class Settings:
     hung_member_detection_enabled: bool = HUNG_MEMBER_DETECTION_ENABLED
     hung_rebalancing_threshold_seconds: int = HUNG_REBALANCING_THRESHOLD_SECONDS
     kaspr_image_registry: str = KASPR_IMAGE_REGISTRY
+    python_packages_init_image: str = PYTHON_PACKAGES_INIT_IMAGE
 
     def __init__(
         self,

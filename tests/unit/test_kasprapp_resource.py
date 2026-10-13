@@ -35,6 +35,7 @@ from kaspr.types.models.kasprapp_spec import KasprAppSpec
 from kaspr.types.models.storage import KasprAppStorage
 from kaspr.types.models.config import KasprAppConfig
 from kaspr.types.schemas.container_template import ContainerTemplateSchema
+from kaspr.types.settings import Settings
 
 
 @pytest.fixture
@@ -459,6 +460,10 @@ def test_patch_volume_mounted_resources_skips_missing_statefulset(
 
 class TestPreparePackagesInitContainer:
     """Tests for prepare_packages_init_container method."""
+
+    @pytest.fixture(autouse=True)
+    def operator_settings(self, monkeypatch):
+        monkeypatch.setattr(KasprApp, "conf", Settings(), raising=False)
     
     def test_prepare_packages_init_container_basic(self, kasprapp_with_packages):
         """Test init container generation with basic config."""
@@ -466,7 +471,7 @@ class TestPreparePackagesInitContainer:
         
         assert container is not None
         assert container.name == "install-packages"
-        assert container.image == "test-image:latest"
+        assert container.image == "python:3.12-bookworm"
         assert len(container.command) == 2
         assert container.command[0] == "/bin/bash"
         assert container.command[1] == "-c"
@@ -479,6 +484,18 @@ class TestPreparePackagesInitContainer:
         assert container.volume_mounts[0].name.endswith("-packages")
         assert container.volume_mounts[0].mount_path == "/opt/kaspr/packages"
         assert container.volume_mounts[0].read_only is not True  # Should be read-write for init container
+
+    def test_prepare_packages_init_container_uses_configured_image(
+        self, kasprapp_with_packages, monkeypatch
+    ):
+        configured_image = "registry.example.com/python:3.12-bookworm"
+        monkeypatch.setattr(
+            KasprApp.conf, "python_packages_init_image", configured_image
+        )
+
+        container = kasprapp_with_packages.prepare_packages_init_container()
+
+        assert container.image == configured_image
     
     def test_prepare_packages_init_container_with_resources(self, base_spec):
         """Test init container with custom resource limits."""

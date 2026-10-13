@@ -1441,7 +1441,7 @@ class KasprApp(BaseResource):
         
         return V1Container(
             name="install-packages",
-            image=self.image,  # Use same image as main container
+            image=self.conf.python_packages_init_image,
             command=["/bin/bash", "-c"],
             args=[script],
             env=env_vars if env_vars else None,
