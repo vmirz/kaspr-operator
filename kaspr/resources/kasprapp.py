@@ -2269,16 +2269,17 @@ class KasprApp(BaseResource):
         determine if a patch is needed.
         """
         # Extract PACKAGES_HASH env var from init container if it exists
+        install_packages_init_container = None
         packages_hash_env = None
         if stateful_set.spec.template.spec.init_containers:
             for init_container in stateful_set.spec.template.spec.init_containers:
-                if init_container.name == "install-packages" and init_container.env:
-                    for env_var in init_container.env:
+                if init_container.name == "install-packages":
+                    install_packages_init_container = init_container
+                    for env_var in init_container.env or []:
                         if env_var.name == "PACKAGES_HASH":
                             packages_hash_env = env_var.value
                             break
-                    if packages_hash_env is not None:
-                        break
+                    break
 
         # Extract PACKAGES_HASH env var from the main container if it exists.
         # This captures pythonPackages changes even when cache is disabled
@@ -2327,15 +2328,18 @@ class KasprApp(BaseResource):
                 {"name": "PACKAGES_HASH", "value": main_packages_hash_env}
             ]
         
-        # Include PACKAGES_HASH from init container in watch fields if present
-        if packages_hash_env is not None:
+        # Include the installer image so a changed operator setting patches the StatefulSet.
+        if install_packages_init_container is not None:
+            init_container_watch_fields = {
+                "name": install_packages_init_container.name,
+                "image": install_packages_init_container.image,
+            }
+            if packages_hash_env is not None:
+                init_container_watch_fields["env"] = [
+                    {"name": "PACKAGES_HASH", "value": packages_hash_env}
+                ]
             watch_fields["spec"]["template"]["spec"]["initContainers"] = [
-                {
-                    "name": "install-packages",
-                    "env": [
-                        {"name": "PACKAGES_HASH", "value": packages_hash_env}
-                    ]
-                }
+                init_container_watch_fields
             ]
         
         return watch_fields
