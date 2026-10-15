@@ -1,6 +1,6 @@
 import kopf
 import yaml
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Mapping, Optional
 from kaspr.utils.objects import cached_property
 from kaspr.utils.helpers import ordered_dict_to_dict
 from kaspr.types.models import KasprAppComponents, KasprResourceT
@@ -17,6 +17,9 @@ from kubernetes_asyncio.client.api_client import ApiClient
 from kaspr.resources.base import BaseResource
 from kaspr.common.models.labels import Labels
 from kaspr.sensors import SensorDelegate
+
+# Sentinel telling sync_config_map to read the config map from the API.
+_FETCH = object()
 
 
 class BaseAppComponent(BaseResource):
@@ -39,6 +42,11 @@ class BaseAppComponent(BaseResource):
     kaspr_resource: KasprResourceT
     config_map_name: str
     volume_mount_name: str
+
+    # Body of the custom resource that owns the config map. Required when syncing
+    # outside of this component's own handlers (e.g. from its KasprApp), where kopf
+    # would otherwise adopt the config map to the object being handled.
+    owner: Optional[Mapping[str, Any]] = None
 
     # derived from spec
     _hash: str = None
@@ -81,11 +89,19 @@ class BaseAppComponent(BaseResource):
         """Compare current state with desired state for all child resources and create/patch as needed."""
         await self.sync_config_map()
 
-    async def sync_config_map(self):
-        """Sync config map."""
-        config_map: V1ConfigMap = await self.fetch_config_map(
-            self.core_v1_api, self.config_map_name, self.namespace
-        )
+    async def sync_config_map(self, actual: Optional[V1ConfigMap] = _FETCH):
+        """Sync config map.
+
+        Args:
+            actual: The config map as currently stored, or None if it does not exist.
+                Read from the API when omitted.
+        """
+        if actual is _FETCH:
+            config_map: V1ConfigMap = await self.fetch_config_map(
+                self.core_v1_api, self.config_map_name, self.namespace
+            )
+        else:
+            config_map = actual
         if not config_map:
             # Instrument create operation
             sensor_state = self.sensor.on_resource_sync_start(
@@ -252,20 +268,39 @@ class BaseAppComponent(BaseResource):
             "data": config_map.data,
         }
 
-    async def create(self):
-        """Create component resources."""
+    def validate(self):
+        """Raise a permanent error if the component cannot be reconciled."""
         # we can remove this once validation admission is implemented
         if not self.app_name:
             raise kopf.PermanentError(
                 f"Missing required label: {self.KASPR_APP_NAME_LABEL}"
             )
+
+    async def create(self):
+        """Create component resources."""
+        self.validate()
         self.unite()
         await self.create_config_map(self.core_v1_api, self.namespace, self.config_map)
 
     def unite(self):
         """Ensure all child resources are owned by the root resource"""
+        # Fix the hash first: adoption adds owner references to the config map, and
+        # the hash (which the KasprApp puts in its pods) must not depend on them.
+        _ = self.hash
         children = [self.config_map]
-        kopf.adopt(children)
+        kopf.adopt(children, owner=self.owner)
+
+    async def patch_app_status(self, app_status: str):
+        """Record whether this component's KasprApp exists in its status."""
+        return await self.patch_custom_object_status(
+            self.custom_objects_api,
+            namespace=self.namespace,
+            group=self.GROUP_NAME,
+            version=self.GROUP_VERSION,
+            plural=self.PLURAL_NAME,
+            name=self.cluster,
+            status={"app": {"name": self.app_name, "status": app_status}},
+        )
 
     def info(self) -> Dict:
         """Return kaspr resource info."""

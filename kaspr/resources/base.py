@@ -28,6 +28,15 @@ from kubernetes_asyncio.client import (
 )
 
 
+def _contains(actual: Any, expected: Any) -> bool:
+    """Whether `actual` has every (nested) value of `expected`."""
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            _contains(actual.get(key), value) for key, value in expected.items()
+        )
+    return actual == expected
+
+
 class BaseResource:
     """Base resource model."""
 
@@ -356,6 +365,15 @@ class BaseResource:
             body=config_map,
         )
 
+    async def list_config_maps(
+        self, core_v1_api: CoreV1Api, namespace: str, label_selector: str = None
+    ) -> List[V1ConfigMap]:
+        """List config maps in a namespace, optionally filtered by a label selector."""
+        result = await core_v1_api.list_namespaced_config_map(
+            namespace=namespace, label_selector=label_selector
+        )
+        return result.items or []
+
     async def create_persistent_volume_claim(
         self,
         core_v1_api: CoreV1Api,
@@ -462,6 +480,44 @@ class BaseResource:
                 plural=plural,
                 name=name,
             )
+        except ApiException as ex:
+            if ex.status == 404:
+                return None
+            raise
+
+    async def patch_custom_object_status(
+        self,
+        custom_objects_api: CustomObjectsApi,
+        namespace: str,
+        group: str,
+        version: str,
+        plural: str,
+        name: str,
+        status: Dict[str, Any],
+    ):
+        """Merge-patch the status of a custom object.
+
+        Works whether or not the custom resource has a status subresource: the
+        object itself is patched first, and the status subresource only if the API
+        server dropped the status from that patch.
+
+        Returns the patched object, or None if it no longer exists.
+        """
+        params = dict(
+            group=group,
+            version=version,
+            namespace=namespace,
+            plural=plural,
+            name=name,
+            body={"status": status},
+            # The client would otherwise send a dict body as a JSON patch.
+            _content_type="application/merge-patch+json",
+        )
+        try:
+            patched = await custom_objects_api.patch_namespaced_custom_object(**params)
+            if _contains(patched.get("status") or {}, status):
+                return patched
+            return await custom_objects_api.patch_namespaced_custom_object_status(**params)
         except ApiException as ex:
             if ex.status == 404:
                 return None

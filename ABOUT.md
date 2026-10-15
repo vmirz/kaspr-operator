@@ -48,7 +48,7 @@ Kaspr is a Kubernetes operator that manages stream processing applications built
 ### 2. Operator Architecture Patterns
 
 #### **Handler-Resource Split**
-- **Handlers** (`kaspr/handlers/`): Kopf event handlers for CRD lifecycle (create, update, delete, field watches, timers, daemons)
+- **Handlers** (`kaspr/handlers/`): Kopf event handlers for CRD lifecycle (create, update, delete, field watches, raw events, and one timer per KasprApp)
 - **Resources** (`kaspr/resources/`): Kubernetes resource generation (StatefulSet, Service, ConfigMap, HPA, PVC)
 - **Base classes**: All resources inherit from `BaseResource` with common K8s operations
 
@@ -58,10 +58,11 @@ Kaspr is a Kubernetes operator that manages stream processing applications built
 - Split allows clean validation → internal model conversion
 
 #### **Async Reconciliation Queue**
-- Per-resource queues prevent duplicate concurrent reconciliations
-- `request_reconciliation()` enqueues work
-- `names_in_queue` set prevents duplicates
-- Timer handler processes queue with 1.5s interval
+- Per-app queues, keyed by `(namespace, name)`, prevent duplicate concurrent reconciliations
+- `request_reconciliation(name, namespace)` enqueues work
+- `names_in_queue` set prevents duplicates; a burst of requests is reconciled once
+  (a request waits until requests stop arriving for 1s, at most 10s)
+- The KasprApp timer (1.5s tick) processes the queue; a tick with nothing due makes no API calls
 
 ---
 
@@ -70,8 +71,8 @@ Kaspr is a Kubernetes operator that manages stream processing applications built
 #### **Subscription-Aware Auto-Rebalancing**
 - Tracks linked resources (agents, tables) in `status.linkedResources`
 - Detects subscription-affecting changes (topic names, patterns, table changelog topics)
-- Sets `status.rebalanceRequired` flag when subscriptions change
-- Automatically triggers rebalance when conditions met (no rollout, all members ready)
+- Sets `status.rebalanceRequired` flag when subscriptions change; the flag stays set until a rebalance is requested successfully
+- Automatically triggers rebalance when conditions met (rollout of the new subscriptions finished, all members ready)
 - Configurable via `kaspr.io/auto-rebalance` annotation or global config
 
 #### **Hung Member Detection & Recovery**
@@ -92,8 +93,11 @@ Kaspr is a Kubernetes operator that manages stream processing applications built
 
 #### **Resource Ownership & Label Selectors**
 - Child resources (agents, tables, etc.) linked via `kaspr.io/app: <app-name>` label
-- Operator watches label selectors to find related resources
-- Daemon handlers monitor child resources and trigger parent reconciliation
+- Operator lists child resources by label selector when reconciling an app
+- Raw-event handlers on child resources request reconciliation of the parent app when a
+  child is added, deleted, moved to another app, or its spec or labels change
+- An app tells its children when it is created or deleted (`status.app.status`), so children
+  do not poll for their app
 
 #### **Volume-Mounted Resource Patterns**
 - Agent/table/webview Python code stored in ConfigMaps
@@ -111,6 +115,9 @@ Kaspr is a Kubernetes operator that manages stream processing applications built
 - `AUTO_REBALANCE_ENABLED`: Global auto-rebalance toggle
 - `HUNG_MEMBER_DETECTION_ENABLED`: Global hung detection toggle
 - `HUNG_REBALANCING_THRESHOLD_SECONDS`: Default hung threshold (300s)
+- `STATUS_UPDATE_INTERVAL_SECONDS`: Interval between app status refreshes (30s)
+- `RECONCILE_INTERVAL_SECONDS`: Interval between periodic full reconciliations that repair drift
+  producing no event, e.g. a deleted Service or component ConfigMap (300s; 0 disables)
 
 #### **Per-App Annotation Overrides**
 - `kaspr.io/pause-reconciliation`: Pause reconciliation loop
@@ -123,19 +130,29 @@ Kaspr is a Kubernetes operator that manages stream processing applications built
 
 ### 5. Reconciliation Lifecycle
 
-1. **Trigger**: Field change, timer (30s), daemon monitoring, or queue request
+Reconciliation is event-driven. All work for one app runs in its timer, one piece at a time:
+
+1. **Trigger**: a change to the app (create/resume/update handlers) or to one of its child
+   resources (raw-event handlers) enqueues a reconciliation. Reconciliations also run as a
+   retry 30s after a failure, as a periodic drift check (`RECONCILE_INTERVAL_SECONDS`), and
+   when a status refresh finds the StatefulSet missing or changed.
 2. **Queue**: Request enqueued if not already queued
-3. **Dequeue**: Timer handler picks up work
+3. **Dequeue**: The app's timer picks up work
 4. **Reconcile**: 
-   - Synchronize desired state (StatefulSet, Service, ConfigMap, etc.)
+   - List the app's child resources (one request per kind)
+   - Sync their ConfigMaps (one list request; patch only what differs), before the
+     StatefulSet whose pods mount them
+   - Synchronize desired state (StatefulSet, Service, ConfigMap, etc.); the StatefulSet's
+     `kaspr.io/resource-hash` annotation makes any change to its rendering visible as drift
    - Patch resources if needed
-5. **Status Update**: 
-   - Fetch app status from web client
-   - Fetch related resources (agents, tables, etc.)
-   - Detect subscription changes
+5. **Status Update** (after each reconciliation, and every `STATUS_UPDATE_INTERVAL_SECONDS`): 
+   - Read the StatefulSet and fetch member status from the app's web API
+   - List pods only if the StatefulSet changed since the last refresh
+   - Detect subscription changes (after reconciliations, from the listed child resources)
    - Detect hung members
    - Update conditions (`Progressing`, `Ready`)
    - Attempt auto-rebalance if required
+   - Patch only the status fields that changed
 6. **Cleanup**: Mark work done, allow re-queuing
 
 ---

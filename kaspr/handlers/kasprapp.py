@@ -1,11 +1,14 @@
 import asyncio
+import hashlib
 import kopf
+import random
 import time
 import json
 import base64
+from dataclasses import dataclass, field
 from logging import Logger
 from collections import defaultdict
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Mapping, Optional, Tuple
 from datetime import datetime, timezone, timedelta
 from kubernetes_asyncio.client import ApiException
 from kubernetes_asyncio.stream import WsApiClient
@@ -21,6 +24,8 @@ from kaspr.types.schemas import (
     KasprTableSpecSchema,
 )
 from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable, KasprTask
+from kaspr.resources.kasprapp import PodMetadataCache
+from kaspr.types.settings import Settings
 from kaspr.utils.helpers import upsert_condition, deep_compare_dict, now
 from kaspr.utils.errors import convert_api_exception
 from kaspr.utils.python_packages import compute_packages_hash
@@ -31,19 +36,80 @@ AGENTS_UPDATED = "AgentsUpdated"
 WEBVIEWS_UPDATED = "WebviewsUpdated"
 TABLES_UPDATED = "TablesUpdated"
 
-# Queue of requests to patch KasprApps
-patch_request_queues: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
+# Status values a component reports for its KasprApp (see the component handlers).
+APP_NOT_FOUND = "AppNotFound"
+APP_FOUND = "AppFound"
 
-# Use a set to track which names are already queued
+# KasprApps are identified by (namespace, name) in all per-app structures below.
+AppKey = Tuple[Optional[str], str]
+
+# Use a set to track which apps are already queued
 names_in_queue = set()
 # The actual queue for ordered processing
-reconciliation_queue: Dict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
+reconciliation_queue: Dict[AppKey, asyncio.Queue] = defaultdict(asyncio.Queue)
 # Locks to prevent race conditions when enqueueing reconciliation requests
-reconciliation_locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+reconciliation_locks: Dict[AppKey, asyncio.Lock] = defaultdict(asyncio.Lock)
+# Loop times of the first and the latest request for each queued reconciliation
+reconciliation_requested_at: Dict[AppKey, Tuple[float, float]] = {}
+
+# A queued reconciliation waits until requests stop arriving for this long (but no
+# longer than the maximum), so a burst of changes is reconciled once, e.g. when many
+# components are applied together or seen at operator startup.
+RECONCILE_DEBOUNCE_SECONDS = 1.0
+RECONCILE_DEBOUNCE_MAX_SECONDS = 10.0
 # Track consecutive hung member detections: (app_name, member_id) -> consecutive_count
 hung_member_tracking: Dict[tuple[str, int], int] = {}
 
 TRUTHY = ("true", "1", "yes", "True", "Yes", "YES")
+
+
+def _loop_time() -> float:
+    return asyncio.get_running_loop().time()
+
+
+@dataclass
+class AppRuntimeState:
+    """What the operator remembers about one KasprApp between handler runs.
+
+    Reconciliation is driven by events (KasprApp and component changes). This state
+    schedules the work that has no event: status refreshes, retries of failed
+    reconciliations, and the periodic drift check.
+    """
+
+    # Loop time at which the next full reconciliation is due, and why.
+    next_reconcile_at: Optional[float] = None
+    next_reconcile_reason: str = "resync"
+    last_status_update_at: Optional[float] = None
+    # True while the last full reconciliation did not complete; the status of a
+    # failing app is left to the retries so their error conditions stay visible.
+    reconcile_failed: bool = False
+    # Fingerprint of the StatefulSet as rendered by the last full reconciliation.
+    desired_statefulset_fingerprint: Optional[str] = None
+    pod_cache: PodMetadataCache = field(default_factory=PodMetadataCache)
+    # (StatefulSet resourceVersion, packages hash, generation) of the last packages
+    # evaluation, with what it found.
+    packages_key: Optional[Tuple] = None
+    packages_state: Optional[str] = None
+    packages_had_pods: bool = False
+    last_rebalance_deferral: Optional[str] = None
+
+    def schedule_reconcile(self, delay: float, reason: str):
+        """Schedule a full reconciliation, keeping an earlier one if already due sooner."""
+        when = _loop_time() + delay
+        if self.next_reconcile_at is None or when < self.next_reconcile_at:
+            self.next_reconcile_at = when
+            self.next_reconcile_reason = reason
+
+
+app_states: Dict[AppKey, AppRuntimeState] = {}
+
+
+def get_app_state(namespace: Optional[str], name: str) -> AppRuntimeState:
+    """Return the runtime state of a KasprApp, creating it on first use."""
+    state = app_states.get((namespace, name))
+    if state is None:
+        state = app_states[(namespace, name)] = AppRuntimeState()
+    return state
 
 
 def get_sensor():
@@ -96,61 +162,57 @@ async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, an
     }
 
 
+def _component_from_item(resource_cls, schema_cls, item: Dict, namespace: str):
+    """Build a component resource from its custom resource as listed from the API."""
+    component = resource_cls.from_spec(
+        item["metadata"]["name"],
+        resource_cls.KIND,
+        namespace,
+        schema_cls().load(item["spec"]),
+        dict(item["metadata"]["labels"]),
+    )
+    # The app may (re)create the component's config map, which must still be
+    # owned by the component rather than by the app being handled.
+    component.owner = item
+    return component
+
+
 async def attach_app_related_resources(
-    app: KasprApp, name: str, namespace: str
+    app: KasprApp, name: str, namespace: str, related: Optional[Dict] = None
 ) -> bool:
     """Attach the app's agents, webviews, tables, and tasks to the app model.
+
+    Args:
+        related: Components as returned by fetch_app_related_resources; fetched
+            when omitted.
 
     Returns False when any component fetch failed, in which case the attached
     collections are incomplete and must not be used to render the pod template.
     """
-    related = await fetch_app_related_resources(name, namespace)
+    if related is None:
+        related = await fetch_app_related_resources(name, namespace)
 
     app.with_agents(
         [
-            KasprAgent.from_spec(
-                item["metadata"]["name"],
-                KasprAgent.KIND,
-                namespace,
-                KasprAgentSpecSchema().load(item["spec"]),
-                dict(item["metadata"]["labels"]),
-            )
+            _component_from_item(KasprAgent, KasprAgentSpecSchema, item, namespace)
             for item in related["agents"]
         ]
     )
     app.with_webviews(
         [
-            KasprWebView.from_spec(
-                item["metadata"]["name"],
-                KasprWebView.KIND,
-                namespace,
-                KasprWebViewSpecSchema().load(item["spec"]),
-                dict(item["metadata"]["labels"]),
-            )
+            _component_from_item(KasprWebView, KasprWebViewSpecSchema, item, namespace)
             for item in related["webviews"]
         ]
     )
     app.with_tables(
         [
-            KasprTable.from_spec(
-                item["metadata"]["name"],
-                KasprTable.KIND,
-                namespace,
-                KasprTableSpecSchema().load(item["spec"]),
-                dict(item["metadata"]["labels"]),
-            )
+            _component_from_item(KasprTable, KasprTableSpecSchema, item, namespace)
             for item in related["tables"]
         ]
     )
     app.with_tasks(
         [
-            KasprTask.from_spec(
-                item["metadata"]["name"],
-                KasprTask.KIND,
-                namespace,
-                KasprTaskSpecSchema().load(item["spec"]),
-                dict(item["metadata"]["labels"]),
-            )
+            _component_from_item(KasprTask, KasprTaskSpecSchema, item, namespace)
             for item in related["tasks"]
         ]
     )
@@ -164,15 +226,19 @@ async def request_reconciliation(name, namespace: str = None, **kwargs):
     This prevents duplicate processing while preserving order.
     Uses a lock to ensure atomicity of the check-and-add operation.
     """
-    async with reconciliation_locks[name]:
-        if name not in names_in_queue:
-            names_in_queue.add(name)
-            await reconciliation_queue[name].put(name)
+    key = (namespace, name)
+    async with reconciliation_locks[key]:
+        current_time = _loop_time()
+        first_requested_at, _ = reconciliation_requested_at.get(key, (current_time, None))
+        reconciliation_requested_at[key] = (first_requested_at, current_time)
+        if key not in names_in_queue:
+            names_in_queue.add(key)
+            await reconciliation_queue[key].put(name)
             
             # Instrument queue operation
             sensor = get_sensor()
             if sensor and namespace:
-                queue_depth = reconciliation_queue[name].qsize()
+                queue_depth = reconciliation_queue[key].qsize()
                 sensor.on_reconcile_queued(name, name, namespace, queue_depth)
 
 
@@ -224,11 +290,26 @@ def _stringify_error(error) -> str:
     return str(error)
 
 
-def _extract_agent_info(resources: List) -> List[Dict]:
+def _resource_hash(resource: Dict, hashes: Optional[Mapping[str, str]]) -> str:
+    """Return a component's hash, preferring one computed from its current spec.
+
+    A component reports its hash in its status only after its own handler ran, which
+    can be later than the reconciliation its change triggered.
+    """
+    name = resource["metadata"]["name"]
+    if hashes and name in hashes:
+        return hashes[name]
+    return resource.get("status", {}).get("hash", "")
+
+
+def _extract_agent_info(
+    resources: List, hashes: Optional[Mapping[str, str]] = None
+) -> List[Dict]:
     """Extract agent info including subscription-relevant fields.
     
     Args:
         resources: List of agent resource dictionaries
+        hashes: Hashes computed from the agents' specs, by agent name
         
     Returns:
         List of agent info dicts with name, hash, topicName, and topicPattern
@@ -237,7 +318,7 @@ def _extract_agent_info(resources: List) -> List[Dict]:
     for resource in resources:
         info = {
             "name": resource["metadata"]["name"],
-            "hash": resource.get("status", {}).get("hash", ""),
+            "hash": _resource_hash(resource, hashes),
         }
         # Extract subscription-affecting fields from input.topic
         input_spec = resource.get("spec", {}).get("input", {})
@@ -252,11 +333,14 @@ def _extract_agent_info(resources: List) -> List[Dict]:
     return result
 
 
-def _extract_table_info(resources: List) -> List[Dict]:
+def _extract_table_info(
+    resources: List, hashes: Optional[Mapping[str, str]] = None
+) -> List[Dict]:
     """Extract table info including subscription-relevant fields.
     
     Args:
         resources: List of table resource dictionaries
+        hashes: Hashes computed from the tables' specs, by table name
         
     Returns:
         List of table info dicts with name, hash, and tableName
@@ -265,7 +349,7 @@ def _extract_table_info(resources: List) -> List[Dict]:
     for resource in resources:
         info = {
             "name": resource["metadata"]["name"],
-            "hash": resource.get("status", {}).get("hash", ""),
+            "hash": _resource_hash(resource, hashes),
         }
         # Extract table name which determines the changelog topic
         table_name = resource.get("spec", {}).get("name")
@@ -275,11 +359,14 @@ def _extract_table_info(resources: List) -> List[Dict]:
     return result
 
 
-def _extract_basic_info(resources: List) -> List[Dict]:
+def _extract_basic_info(
+    resources: List, hashes: Optional[Mapping[str, str]] = None
+) -> List[Dict]:
     """Extract name and hash for resources without subscription impact.
     
     Args:
         resources: List of resource dictionaries
+        hashes: Hashes computed from the resources' specs, by resource name
         
     Returns:
         List of basic info dicts with name and hash
@@ -287,7 +374,7 @@ def _extract_basic_info(resources: List) -> List[Dict]:
     return [
         {
             "name": resource["metadata"]["name"],
-            "hash": resource.get("status", {}).get("hash", ""),
+            "hash": _resource_hash(resource, hashes),
         }
         for resource in resources
     ]
@@ -758,10 +845,13 @@ def _update_linked_resources_status(
     Returns:
         True if subscription-affecting changes detected
     """
-
-    status_update["rebalanceRequired"] = False
-
+    # A required rebalance stays pending until a rebalance is requested
+    # successfully (see _attempt_auto_rebalance), which usually has to wait for
+    # the rollout carrying the new subscriptions to finish.
     if not app.static_group_membership_enabled:
+        # Dynamic group membership rebalances on its own.
+        if _status.get("rebalanceRequired"):
+            status_update["rebalanceRequired"] = False
         return False
 
     # Only evaluate subscription changes if fetch was fully successful
@@ -771,10 +861,11 @@ def _update_linked_resources_status(
         logger.warning(f"Skipping subscription change detection for {name} - resource fetch failed")
         return False
 
-    agents_info = _extract_agent_info(related_resources["agents"])
-    webviews_info = _extract_basic_info(related_resources["webviews"])
-    tables_info = _extract_table_info(related_resources["tables"])
-    tasks_info = _extract_basic_info(related_resources["tasks"])
+    hashes = related_resources.get("hashes") or {}
+    agents_info = _extract_agent_info(related_resources["agents"], hashes.get("agents"))
+    webviews_info = _extract_basic_info(related_resources["webviews"], hashes.get("webviews"))
+    tables_info = _extract_table_info(related_resources["tables"], hashes.get("tables"))
+    tasks_info = _extract_basic_info(related_resources["tasks"], hashes.get("tasks"))
 
     # Get current resources from status
     current_resources = _status.get("linkedResources", {})
@@ -975,7 +1066,8 @@ async def _attempt_auto_rebalance(
     app: KasprApp,
     name: str,
     namespace: str,
-    logger: Logger
+    logger: Logger,
+    state: Optional[AppRuntimeState] = None,
 ):
     """Attempt automatic rebalance if required and conditions are met.
     
@@ -1031,10 +1123,12 @@ async def _attempt_auto_rebalance(
         
         rebalance_start_time = time.time()
         success = False
+        if state is not None:
+            state.last_rebalance_deferral = None
         
         try:
             logger.info(f"Attempting automatic rebalance for {name} due to subscription changes")
-            requested, reason = await app.request_rebalance()
+            requested, reason = await app.request_rebalance(status=_actual_status)
 
             if requested:
                 # Clear the flag on successful rebalance
@@ -1066,10 +1160,18 @@ async def _attempt_auto_rebalance(
         if not app.conf.client_status_check_enabled:
             reasons.append("client status check disabled")
 
-        logger.info(f"Automatic rebalance deferred for {name}: {', '.join(reasons)}")
+        deferral = ", ".join(reasons)
+        if state is None or state.last_rebalance_deferral != deferral:
+            logger.info(f"Automatic rebalance deferred for {name}: {deferral}")
+        else:
+            logger.debug(f"Automatic rebalance deferred for {name}: {deferral}")
+        if state is not None:
+            state.last_rebalance_deferral = deferral
 
 
-async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[Optional[Dict], Optional[Dict]]:
+async def fetch_python_packages_status(
+    app: KasprApp, logger: Logger, pods=None
+) -> tuple[Optional[Dict], Optional[Dict]]:
     """Fetch Python packages installation status from pods.
     
     Supports two modes:
@@ -1079,6 +1181,7 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
     Args:
         app: KasprApp instance
         logger: Logger instance
+        pods: The app's pods (V1PodList) if already listed; listed when omitted
         
     Returns:
         Tuple of (metadata_dict, state_dict):
@@ -1104,7 +1207,8 @@ async def fetch_python_packages_status(app: KasprApp, logger: Logger) -> tuple[O
     
     try:
         # List pods for this app
-        pods = await app.list_pods(app.core_v1_api, app.namespace, app.labels.kasper_label_selectors().as_dict())
+        if pods is None:
+            pods = await app.list_pods(app.core_v1_api, app.namespace, app.labels.kasper_label_selectors().as_dict())
         
         if not pods or not pods.items:
             # No pods yet
@@ -1527,19 +1631,87 @@ def create_python_packages_condition(state_info: Optional[Dict], gen: int) -> Op
     }
 
 
+def _status_changes(current: Mapping[str, Any], update: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return the entries of a status update whose values differ from the current status."""
+    changes = {}
+    for key, value in update.items():
+        current_value = current.get(key)
+        if value is None:
+            if current_value is not None:
+                changes[key] = None
+        elif current_value is None or not deep_compare_dict(current_value, value):
+            changes[key] = value
+    return changes
+
+
+def _packages_evaluation_due(state: AppRuntimeState, packages_key: Tuple) -> bool:
+    """Whether the Python packages status must be read from the app's pods again.
+
+    Packages are installed while pods start, which also changes the StatefulSet.
+    An installation that has not reached Ready is followed on every refresh for as
+    long as there are pods to report on.
+    """
+    if state.packages_key != packages_key:
+        return True
+    return state.packages_state != "Ready" and state.packages_had_pods
+
+
+def _check_statefulset_drift(
+    state: AppRuntimeState, app: KasprApp, stateful_set, logger: Logger
+):
+    """Schedule a reconciliation if the StatefulSet no longer matches the desired state.
+
+    Compares the StatefulSet read for the status against the one rendered by the
+    last reconciliation, so a deleted or modified StatefulSet is repaired at the
+    next status refresh without reading anything more from the API.
+    """
+    if state.desired_statefulset_fingerprint is None or state.reconcile_failed:
+        return
+    if stateful_set is None:
+        reason = f"StatefulSet {app.stateful_set_name} is missing"
+    elif (
+        app.prepare_statefulset_fingerprint(stateful_set)
+        != state.desired_statefulset_fingerprint
+    ):
+        reason = f"StatefulSet {app.stateful_set_name} differs from the desired state"
+    else:
+        return
+    logger.info(f"{reason}; scheduling reconciliation.")
+    state.schedule_reconcile(0, "drift")
+
+
 async def update_status(
-    name, spec, meta, status, patch, namespace, annotations, logger: Logger, **kwargs
+    name,
+    spec,
+    meta,
+    status,
+    patch,
+    namespace,
+    annotations,
+    logger: Logger,
+    related_resources: Optional[Dict] = None,
+    state: Optional[AppRuntimeState] = None,
+    **kwargs,
 ):
     """Update KasprApp status based on the actual state of the app.
     
     Batches all status updates into a single atomic patch operation to prevent
-    conflicts and improve consistency.
+    conflicts and improve consistency. Only fields whose values changed are
+    patched, so refreshing the status of an unchanged app writes nothing.
+
+    Args:
+        related_resources: The app's components as fetched by the reconciliation
+            calling this. Linked resources are only re-evaluated when given. Without
+            them this is a status refresh, which also checks the StatefulSet for drift.
+        state: What the operator remembers about this app between refreshes.
     """
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(
         name, APP_KIND, namespace, spec_model, annotations, logger=logger
     )
     _status = status or {}
+    if state is None:
+        state = AppRuntimeState()
     try:
         gen = meta.get("generation", 0)
         cur_gen = _status.get("observedGeneration")
@@ -1550,40 +1722,55 @@ async def update_status(
         # Always update observedGeneration to match the current generation
         status_update["observedGeneration"] = gen
 
-        # Fetch app status and related resources in parallel
-        app_status_task = app.fetch_app_status()
-        related_resources_task = fetch_app_related_resources(name, namespace)
+        # Pods are listed again only when the StatefulSet changed since the last refresh.
+        state.pod_cache.listed_pods = None
+        try:
+            _actual_status = await app.fetch_app_status(pod_cache=state.pod_cache)
+        except Exception as e:
+            logger.error(f"Failed to fetch app status: {e}")
+            return
 
-        _actual_status, related_resources = await asyncio.gather(
-            app_status_task, related_resources_task, return_exceptions=True
-        )
-
-        # Handle potential errors from fetch_app_status
-        if isinstance(_actual_status, Exception):
-            logger.error(f"Failed to fetch app status: {_actual_status}")
-            _actual_status = None
-
-        # Handle potential errors from fetch_app_related_resources
-        if isinstance(related_resources, Exception):
-            logger.error(f"Failed to fetch related resources: {related_resources}")
-            related_resources = {
-                "agents": [],
-                "webviews": [],
-                "tables": [],
-                "tasks": [],
-                "success": False,
-            }
+        if related_resources is None:
+            _check_statefulset_drift(state, app, app.observed_stateful_set, logger)
 
         if not _actual_status:
             return
 
         # Build all status updates atomically before patching
         _update_basic_status_fields(status_update, _status, _actual_status, app, logger)
-        _update_linked_resources_status(status_update, _status, app, related_resources, name, logger)
+        if related_resources is not None:
+            _update_linked_resources_status(status_update, _status, app, related_resources, name, logger)
+        if "rebalanceRequired" not in status_update and "rebalanceRequired" not in _status:
+            status_update["rebalanceRequired"] = False
         
         # Update Python packages status if configured
         if app.python_packages:
-            packages_metadata, packages_state_info = await fetch_python_packages_status(app, logger)
+            packages_key = (
+                app.observed_stateful_set.metadata.resource_version,
+                app.packages_hash,
+                gen,
+            )
+            pods = None
+            if _packages_evaluation_due(state, packages_key):
+                pods = state.pod_cache.listed_pods
+                if pods is None:
+                    try:
+                        pods = await app.list_pods(
+                            app.core_v1_api,
+                            app.namespace,
+                            app.labels.kasper_label_selectors().as_dict(),
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to list pods for Python packages status: {e}")
+            if pods is not None:
+                packages_metadata, packages_state_info = await fetch_python_packages_status(
+                    app, logger, pods=pods
+                )
+                state.packages_key = packages_key
+                state.packages_state = (packages_state_info or {}).get("state")
+                state.packages_had_pods = bool(pods.items)
+            else:
+                packages_metadata = packages_state_info = None
             if packages_metadata and packages_state_info:
                 current_packages_status = _status.get("pythonPackages", {})
                 current_conds = _status.get("conditions", [])
@@ -1645,8 +1832,10 @@ async def update_status(
                     conds = status_update.get("conditions", _status.get("conditions", []))
                     conds = upsert_condition(conds, pkg_condition)
                     status_update["conditions"] = conds
-                    logger.info(f"PythonPackagesReady condition: status={pkg_condition['status']}, reason={pkg_condition['reason']}")
+                    if prev_pkg_state != pkg_condition["reason"]:
+                        logger.info(f"PythonPackagesReady condition: status={pkg_condition['status']}, reason={pkg_condition['reason']}")
         else:
+            state.packages_key = None
             # Python packages spec was removed - clear status and condition if they exist
             if "pythonPackages" in _status:
                 status_update["pythonPackages"] = None
@@ -1666,15 +1855,18 @@ async def update_status(
         hung_member_ids = await _detect_hung_members(effective_status, app, name, namespace, logger)
         
         _update_conditions(status_update, _status, _actual_status, gen, cur_gen, app, hung_member_ids)
-        await _attempt_auto_rebalance(status_update, _status, _actual_status, annotations, app, name, namespace, logger)
+        await _attempt_auto_rebalance(
+            status_update, _status, _actual_status, annotations, app, name, namespace, logger, state=state
+        )
 
-        # Apply all status updates in a single atomic operation
-        patch.status.update(status_update)
+        # Apply the changed status fields in a single atomic operation
+        changes = _status_changes(_status, status_update)
+        patch.status.update(changes)
         
         # Instrument status update
         sensor = get_sensor()
-        if sensor:
-            update_fields = list(status_update.keys())
+        if sensor and changes:
+            update_fields = list(changes.keys())
             sensor.on_status_update(name, namespace, update_fields)
 
         # Terminate hung members after status update
@@ -1682,12 +1874,76 @@ async def update_status(
 
     except Exception as e:
         logger.exception(e)
+    finally:
+        # Only the pod metadata is kept between refreshes.
+        state.pod_cache.listed_pods = None
+
+
+async def _report_app_status_to_components(
+    components: List, app_status: str, logger: Logger
+):
+    """Record in each component's status whether its KasprApp exists.
+
+    Components only report on their KasprApp when they are reconciled themselves,
+    so the app tells them when it appears or goes away. Components that have not
+    reported yet are left to their own handler.
+    """
+    for component in components:
+        owner = component.owner or {}
+        if (owner.get("metadata") or {}).get("deletionTimestamp"):
+            continue
+        reported = (owner.get("status") or {}).get("app") or {}
+        desired = {"name": component.app_name, "status": app_status}
+        if not reported or reported == desired:
+            continue
+        try:
+            if await component.patch_app_status(app_status) is None:
+                continue  # the component is gone
+        except Exception as e:
+            logger.warning(
+                f"Failed to update the app status of {component.KIND} {component.cluster}: {e}"
+            )
+            continue
+        location = f"`{component.namespace or 'default'}` namespace"
+        if app_status == APP_FOUND:
+            kopf.event(
+                owner,
+                type="Normal",
+                reason=APP_FOUND,
+                message=f"KasprApp `{component.app_name}` found in {location}.",
+            )
+        else:
+            kopf.warn(
+                owner,
+                reason=APP_NOT_FOUND,
+                message=f"KasprApp `{component.app_name}` does not exist in {location}.",
+            )
+
+
+RECONCILED = "reconciled"
+RETRY = "retry"
+FAILED_PERMANENTLY = "failed-permanently"
+PAUSED = "paused"
 
 
 async def reconcile(
-    name, namespace, spec, meta, status, patch, annotations, logger: Logger, trigger_source: str = "manual", **kwargs
-):
-    """Reconcile the KasprApp."""
+    name,
+    namespace,
+    spec,
+    meta,
+    status,
+    patch,
+    annotations,
+    logger: Logger,
+    trigger_source: str = "manual",
+    state: Optional[AppRuntimeState] = None,
+    **kwargs,
+) -> str:
+    """Reconcile the KasprApp, its components' config maps, and its status.
+
+    Returns the outcome: RECONCILED, PAUSED, RETRY when it failed and should be
+    retried soon, or FAILED_PERMANENTLY when only a change can fix it.
+    """
     # Instrument reconciliation start
     sensor = get_sensor()
     generation = meta.get('generation', 0)
@@ -1697,6 +1953,8 @@ async def reconcile(
     
     success = True
     error = None
+    if state is None:
+        state = AppRuntimeState()
     
     spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
     app = KasprApp.from_spec(
@@ -1706,35 +1964,71 @@ async def reconcile(
         logger.info("Reconciliation is paused.")
         if sensor:
             sensor.on_reconcile_complete(name, name, namespace, sensor_state, True)
-        return
+        return PAUSED
     try:
         # The pod template mounts one definition volume per related component, so the
         # components must be attached before the StatefulSet is rendered or compared.
-        if not await attach_app_related_resources(app, name, namespace):
+        related = await fetch_app_related_resources(name, namespace)
+        if not await attach_app_related_resources(app, name, namespace, related=related):
             logger.warning(
                 "Skipping reconciliation for %s because one or more component "
                 "fetches failed; retrying on the next cycle.",
                 name,
             )
-            if sensor:
-                sensor.on_reconcile_complete(name, name, namespace, sensor_state, True)
-            return
+            return RETRY
+        _record_component_observations(related, namespace, name)
+        related["hashes"] = {
+            "agents": {agent.cluster: agent.hash for agent in app.agents},
+            "webviews": {webview.cluster: webview.hash for webview in app.webviews},
+            "tables": {table.cluster: table.hash for table in app.tables},
+            "tasks": {task.cluster: task.hash for task in app.tasks},
+        }
         logger.debug(f"Reconciling {APP_KIND}/{name} in {namespace} namespace.")
+        # Definitions must be current before the StatefulSet rolls pods that mount them.
+        await app.sync_component_config_maps()
         await app.synchronize()
-        logger.debug(f"Reconciled {APP_KIND}/{name} in {namespace} namespace.")
-        await update_status(
-            name, spec, meta, status, patch, namespace, annotations, logger
+        state.desired_statefulset_fingerprint = app.prepare_statefulset_fingerprint(
+            app.stateful_set
         )
+        logger.debug(f"Reconciled {APP_KIND}/{name} in {namespace} namespace.")
+        await _report_app_status_to_components(
+            [*app.agents, *app.webviews, *app.tables, *app.tasks], APP_FOUND, logger
+        )
+        await update_status(
+            name,
+            spec,
+            meta,
+            status,
+            patch,
+            namespace,
+            annotations,
+            logger,
+            related_resources=related,
+            state=state,
+        )
+        return RECONCILED
     except Exception as e:
         success = False
         error = e
         logger.error(f"Unexpected error during reconcilation: {e}")
         logger.exception(e)
-        on_error(e, spec, meta, status, patch, **kwargs)
+        error_patch = _StatusPatch()
+        on_error(e, spec, meta, status, error_patch, **kwargs)
+        patch.status.update(_status_changes(status or {}, error_patch.status))
+        if isinstance(e, kopf.PermanentError):
+            return FAILED_PERMANENTLY
+        return RETRY
     finally:
         # Instrument reconciliation complete
         if sensor:
             sensor.on_reconcile_complete(name, name, namespace, sensor_state, success, error)
+
+
+class _StatusPatch:
+    """Collects the status written by on_error so only changed fields get patched."""
+
+    def __init__(self):
+        self.status = {}
 
 
 @kopf.on.resume(kind=APP_KIND)
@@ -2147,76 +2441,70 @@ async def on_python_packages_update(
 #             raise kopf.AdmissionError("Changing the storage.class field is not allowed.")
 
 
+def _only_annotations_changed(diff, annotation_keys) -> bool:
+    """Whether a kopf diff changes nothing but the given annotations."""
+    for _op, path, old, new in diff or ():
+        path = tuple(path)
+        if path[:2] != ("metadata", "annotations"):
+            return False
+        if len(path) == 3 and path[2] in annotation_keys:
+            continue
+        if len(path) == 2:
+            old_annotations = {k: v for k, v in (old or {}).items() if k not in annotation_keys}
+            new_annotations = {k: v for k, v in (new or {}).items() if k not in annotation_keys}
+            if old_annotations == new_annotations:
+                continue
+        return False
+    return True
+
+
+@kopf.on.update(kind=APP_KIND)
+async def on_update_reconcile(name, namespace, diff, logger: Logger, **kwargs):
+    """Reconcile the KasprApp after a change to its spec, labels or annotations.
+
+    The field handlers above apply their targeted changes right away; this brings
+    the rest of the desired state and the status up to date with the change.
+    """
+    # Rebalance requests are handled (and the annotation removed) by on_rebalance_requested.
+    if _only_annotations_changed(diff, {"kaspr.io/rebalance"}):
+        return
+    await request_reconciliation(name, namespace)
+
+
 @kopf.on.delete(kind=APP_KIND)
-async def on_delete(name, **kwargs):
+async def on_delete(name, namespace=None, logger: Logger = None, **kwargs):
     """Handle deletion of KasprApp resources."""
     # Clean up all global state for this resource
-    reconciliation_queue.pop(name, None)
-    patch_request_queues.pop(name, None)
-    reconciliation_locks.pop(name, None)
-    names_in_queue.discard(name)
+    key = (namespace, name)
+    reconciliation_queue.pop(key, None)
+    reconciliation_locks.pop(key, None)
+    reconciliation_requested_at.pop(key, None)
+    names_in_queue.discard(key)
+    app_states.pop(key, None)
     
     # Clean up hung member tracking
     keys_to_remove = [key for key in hung_member_tracking.keys() if key[0] == name]
     for key in keys_to_remove:
         del hung_member_tracking[key]
-    names_in_queue.discard(name)
 
-
-@kopf.timer(APP_KIND, interval=1)
-async def patch_resource(name, patch, **kwargs):
-    """Update KasprApp status.
-
-    Example usage:
-    ```
-        # Request to patch annotations
-        await patch_request_queues[resource_name].put(
-            {
-                "field": "metadata.annotations",
-                "value": {"kaspr.io/last-applied-agents-hash": "xyz"},
-            }
-        )
-    ```
-
-    Update multiple fields in one pass:
-    ```
-        # Request to patch annotations
-        await patch_request_queues[resource_name].put(
-            [
-                {
-                    "field": "metadata.annotations",
-                    "value": {
-                        "kaspr.io/last-applied-agents-hash": "xyz"
-                    },
-                },
-                {
-                    "field": "status",
-                    "value": {
-                        "agents": [{"name": "agent-1", "status": "running"}],
-                    },
-                },
-            ]
-        )
-    ```
-    """
-    queue = patch_request_queues.get(name)
-    if queue is None:
+    # Let the app's remaining components report that their app is gone.
+    if namespace is None or logger is None:
         return
+    try:
+        related = await fetch_app_related_resources(name, namespace)
+        app = KasprApp.default()
+        await attach_app_related_resources(app, name, namespace, related=related)
+        await _report_app_status_to_components(
+            [*app.agents, *app.webviews, *app.tables, *app.tasks], APP_NOT_FOUND, logger
+        )
+    except Exception as e:
+        logger.warning(f"Failed to update the components of deleted KasprApp {name}: {e}")
 
-    def set_patch(request):
-        fields = request["field"].split(".")
-        _patch = patch
-        for field in fields:
-            _patch = getattr(_patch, field)
-        _patch.update(request["value"])
 
-    while not queue.empty():
-        request = queue.get_nowait()
-        if isinstance(request, list):
-            for req in request:
-                set_patch(req)
-        else:
-            set_patch(request)
+def _get_settings():
+    """Operator settings (set on KasprApp at startup)."""
+    conf = getattr(KasprApp, "conf", None)
+    return conf if conf is not None else Settings()
 
 
 @kopf.timer(APP_KIND, initial_delay=3.0, interval=1.5)
@@ -2232,32 +2520,56 @@ async def process_reconciliation_requests(
     stopped,
     **kwargs,
 ):
-    """Process reconciliation requests from the queue.
+    """Run the work that is due for this KasprApp, one piece at a time.
 
-    Processes each request exactly once, even if it was
-    requested multiple times while processing another request.
+    Reconciles the app when a reconciliation was requested (by a change to the app
+    or one of its components) or is due for a retry or the periodic drift check.
+    Otherwise refreshes the app's status once the status interval has passed. A
+    tick with nothing due makes no API calls.
     """
     if stopped:
         return
+    key = (namespace, name)
+    state = get_app_state(namespace, name)
+    conf = _get_settings()
     try:
-        queue = reconciliation_queue.get(name)
-        if queue is None:
-            names_in_queue.discard(name)
-            return
+        current_time = _loop_time()
+        if state.next_reconcile_at is None and state.desired_statefulset_fingerprint is None:
+            # Fallback in case the request from the resume/create handler never came.
+            state.schedule_reconcile(conf.status_update_interval_seconds, "resync")
 
-        queue_is_empty = queue.empty()
-        if not queue_is_empty:
+        trigger_source = None
+        queue = reconciliation_queue.get(key)
+        if queue is not None and not queue.empty():
+            first_requested_at, last_requested_at = reconciliation_requested_at.get(
+                key, (current_time, current_time)
+            )
+            if (
+                current_time - last_requested_at < RECONCILE_DEBOUNCE_SECONDS
+                and current_time - first_requested_at < RECONCILE_DEBOUNCE_MAX_SECONDS
+            ):
+                return  # more requests may follow; reconcile them all at once
             queue_start_time = time.time()
             queue.get_nowait()
+            # Requests arriving from now on must queue another reconciliation, since
+            # this one may already have read the state they are about.
+            names_in_queue.discard(key)
+            reconciliation_requested_at.pop(key, None)
+            queue.task_done()
+            trigger_source = "queue"
             
             # Instrument dequeue with wait time
             sensor = get_sensor()
             if sensor:
                 wait_time = time.time() - queue_start_time
                 sensor.on_reconcile_dequeued(name, name, namespace, wait_time)
+        elif state.next_reconcile_at is not None and current_time >= state.next_reconcile_at:
+            trigger_source = state.next_reconcile_reason
             
+        if trigger_source is not None:
+            state.next_reconcile_at = None
             start_time = time.time()
-            await reconcile(
+            outcome = await reconcile(
                 name,
                 namespace,
                 spec,
@@ -2266,84 +2578,122 @@ async def process_reconciliation_requests(
                 patch,
                 annotations,
                 logger,
-                trigger_source="queue",
+                trigger_source=trigger_source,
+                state=state,
                 **kwargs,
             )
             execution_time = time.time() - start_time
             logger.info(
                 f"Reconciliation for {name} completed in {execution_time:.2f} seconds"
             )
-            # Allow this name to be requeued after processing
-            names_in_queue.discard(name)
-            queue.task_done()
+            state.reconcile_failed = outcome in (RETRY, FAILED_PERMANENTLY)
+            if outcome == RECONCILED:
+                state.last_status_update_at = _loop_time()
+            if outcome == RETRY:
+                state.schedule_reconcile(conf.status_update_interval_seconds, "retry")
+            elif outcome != PAUSED and conf.reconcile_interval_seconds > 0:
+                interval = conf.reconcile_interval_seconds
+                state.schedule_reconcile(interval * random.uniform(1.0, 1.1), "resync")
+            return
+
+        # Status refreshes follow successful reconciliations; while reconciliation
+        # is paused or failing, the app's status is left as it is.
+        if (
+            state.desired_statefulset_fingerprint is None
+            or state.reconcile_failed
+            or (annotations or {}).get("kaspr.io/pause-reconciliation", "").lower() == "true"
+        ):
+            return
+        if (
+            state.last_status_update_at is not None
+            and current_time - state.last_status_update_at < conf.status_update_interval_seconds
+        ):
+            return
+        state.last_status_update_at = current_time
+        await update_status(
+            name, spec, meta, status, patch, namespace, annotations, logger, state=state
+        )
     except asyncio.QueueEmpty:
         pass
     except Exception as e:
         logger.error(f"Error processing reconciliation request: {e}")
         # Ensure we don't get stuck on failed requests
-        names_in_queue.discard(name)
+        names_in_queue.discard(key)
+        state.schedule_reconcile(conf.status_update_interval_seconds, "retry")
 
 
-@kopf.daemon(
-    kind=APP_KIND,
-    cancellation_backoff=2.0,
-    cancellation_timeout=5.0,
-    initial_delay=5.0,
-)
-async def monitor_related_resources(
-    stopped,
-    name,
-    body,
-    spec,
-    meta,
-    labels,
-    annotations,
-    status,
-    namespace,
-    patch,
-    logger: Logger,
-    **kwargs,
-):
-    """Monitor app's agents, webviews, and tables.
+# What the operator last saw of each component (by uid): the KasprApp it belongs to
+# and the parts of it that the app renders into its pod template.
+component_observations: Dict[str, Tuple] = {}
 
-    On every iteration, the handler:
-    1. Finds all agents, webviews, etc. related to the app.
-    2. Determines if the app needs to be patched with updates to any resource.
-    3. (Maybe) Patches the app with updated resources.
-    4. Update app annotations & status with changes.
+
+def _observe_component(body: Mapping) -> Tuple[str, Tuple]:
+    """Return a component's uid and what its KasprApp depends on.
+
+    That is the component's spec and labels, which make up its definition. Its
+    generation does not do: component resources have no status subresource, so
+    their generation also moves with every status update.
     """
-
-    while not stopped:
-        try:
-            spec_model: KasprAppSpec = KasprAppSpecSchema().load(spec)
-            app = KasprApp.from_spec(
-                name, APP_KIND, namespace, spec_model, annotations, logger=logger
-            )
-            # A partial fetch would render an incomplete volume list and unmount live
-            # components, so leave the StatefulSet untouched until the next cycle.
-            if await attach_app_related_resources(app, name, namespace):
-                await app.patch_volume_mounted_resources()
-            else:
-                logger.warning(
-                    "Skipping volume-mounted resource patch for %s because one or more "
-                    "component fetches failed.",
-                    name,
-                )
-            await stopped.wait(10)  # Avoid tight loop and exit promptly on deletion
-
-        except asyncio.CancelledError:
-            logger.info("Stopping monitoring...")
-            break
-        except Exception as e:
-            logger.error(f"Unexpected error during monitoring: {e}")
-            logger.exception(e)
-            await stopped.wait(10)  # Avoid tight loop on error and exit promptly on deletion
+    metadata = body.get("metadata") or {}
+    namespace = metadata.get("namespace")
+    labels = dict(metadata.get("labels") or {})
+    uid = metadata.get("uid") or f"{body.get('kind')}/{namespace}/{metadata.get('name')}"
+    spec = json.dumps(body.get("spec"), sort_keys=True, separators=(",", ":"), default=str)
+    observation = (
+        namespace,
+        labels.get(KasprApp.KASPR_APP_NAME_LABEL),
+        hashlib.sha256(spec.encode()).hexdigest(),
+        tuple(sorted(labels.items())),
+    )
+    return uid, observation
 
 
-@kopf.timer(APP_KIND, initial_delay=5.0, interval=30.0, backoff=10.0)
-async def periodic_reconciliation(name, namespace, **kwargs):
-    """Reconcile KasprApp resources."""
-    await request_reconciliation(name, namespace, **kwargs)
+def _record_component_observations(related: Dict, namespace: str, app_name: str):
+    """Remember the components a reconciliation of an app read.
+
+    Events about components the app was reconciled with, or reconciled without
+    (deleted or moved away), then trigger no repeat reconciliation.
+    """
+    listed = set()
+    for kind in ("agents", "webviews", "tables", "tasks"):
+        for item in related.get(kind, []):
+            uid, observation = _observe_component(item)
+            component_observations[uid] = observation
+            listed.add(uid)
+    for uid, observation in list(component_observations.items()):
+        if observation[:2] == (namespace, app_name) and uid not in listed:
+            del component_observations[uid]
+
+
+async def notify_component_event(event_type: Optional[str], body: Mapping, logger: Logger):
+    """Request reconciliation of the KasprApps affected by a component event.
+
+    Components (agents, webviews, tables and tasks) are mounted into their app's
+    pods, so the app is reconciled when a component is added, deleted, moved to
+    another app, or has its spec or labels changed. Other events, such as status
+    updates, and components the app has already reconciled are ignored.
+    """
+    uid, current = _observe_component(body)
+    namespace, app_name = current[0], current[1]
+
+    previous = component_observations.get(uid)
+    if event_type == "DELETED":
+        component_observations.pop(uid, None)
+        if previous is None:
+            return  # its app has been reconciled without it already
+        affected = set()
+    else:
+        component_observations[uid] = current
+        if current == previous:
+            return
+        affected = {(namespace, app_name)} if app_name else set()
+    if previous and previous[1]:
+        # The app it belonged to before (it was deleted or moved away).
+        affected.add((previous[0], previous[1]))
+
+    for app_namespace, affected_app in affected:
+        logger.debug(f"Requesting reconciliation of KasprApp {affected_app} after a component change.")
+        await request_reconciliation(affected_app, namespace=app_namespace)
 
 
 @kopf.on.field(
@@ -2376,7 +2726,7 @@ async def on_reconciliation_resumed(
     annotations={"kaspr.io/rebalance": kopf.PRESENT},
 )
 async def on_rebalance_requested(
-    name, body, spec, namespace, annotations, patch, logger: Logger, **kwargs
+    name, body, spec, namespace, annotations, patch, logger: Logger, status=None, **kwargs
 ):
     """Handle user-initiated rebalance request via annotation.
     
@@ -2406,6 +2756,10 @@ async def on_rebalance_requested(
         requested, reason = await app.request_rebalance()
         if not requested:
             raise kopf.TemporaryError(reason, delay=30)
+
+        # This rebalance also covers one pending from a subscription change.
+        if (status or {}).get("rebalanceRequired"):
+            patch.status["rebalanceRequired"] = False
 
     except Exception as e:
         # Post failure event
