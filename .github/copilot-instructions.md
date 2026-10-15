@@ -60,7 +60,9 @@ CRDs in `crds/` use `x-kubernetes-preserve-unknown-fields: true` for flexible sc
 The operator uses a custom queuing system in `kaspr/handlers/kasprapp.py` to prevent duplicate processing:
 - `reconciliation_queue` - Per-resource async queues
 - `names_in_queue` - Set tracking to prevent duplicates
-- Always use `request_reconciliation(name)` to enqueue work
+- Always use `request_reconciliation(name, namespace)` to enqueue work
+- Do not add polling timers or daemons: reconcile in response to events, and leave
+  periodic work to the KasprApp timer (status refresh and drift check)
 
 ### Status Condition Management
 Use `upsert_condition()` from `kaspr/utils/helpers.py` for consistent status updates:

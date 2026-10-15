@@ -89,6 +89,21 @@ HUNG_REBALANCING_THRESHOLD_SECONDS = int(
     _getenv("HUNG_REBALANCING_THRESHOLD_SECONDS", 300)
 )
 
+#: Seconds between KasprApp status refreshes (member health, rollout progress,
+#: hung member detection, automatic rebalance). Each refresh reads the app's
+#: StatefulSet; member state is read from the app's own web API.
+STATUS_UPDATE_INTERVAL_SECONDS = float(
+    _getenv("STATUS_UPDATE_INTERVAL_SECONDS", 30.0)
+)
+
+#: Seconds between periodic full reconciliations of a KasprApp and its components.
+#: Changes to KasprApps and their components are reconciled as soon as they happen;
+#: the periodic pass only repairs drift in owned resources that produce no event.
+#: Set to 0 to disable the periodic pass.
+RECONCILE_INTERVAL_SECONDS = float(
+    _getenv("RECONCILE_INTERVAL_SECONDS", 300.0)
+)
+
 class Settings:
     """Operator settings"""
 
@@ -101,6 +116,8 @@ class Settings:
     auto_rebalance_enabled: bool = AUTO_REBALANCE_ENABLED
     hung_member_detection_enabled: bool = HUNG_MEMBER_DETECTION_ENABLED
     hung_rebalancing_threshold_seconds: int = HUNG_REBALANCING_THRESHOLD_SECONDS
+    status_update_interval_seconds: float = STATUS_UPDATE_INTERVAL_SECONDS
+    reconcile_interval_seconds: float = RECONCILE_INTERVAL_SECONDS
     kaspr_image_registry: str = KASPR_IMAGE_REGISTRY
     python_packages_init_image: str = PYTHON_PACKAGES_INIT_IMAGE
 
@@ -116,6 +133,8 @@ class Settings:
         auto_rebalance_enabled: bool = None,
         hung_member_detection_enabled: bool = None,
         hung_rebalancing_threshold_seconds: int = None,
+        status_update_interval_seconds: float = None,
+        reconcile_interval_seconds: float = None,
         **kwargs,
     ):
         if initial_max_replicas is not None:
@@ -145,4 +164,10 @@ class Settings:
 
         if hung_rebalancing_threshold_seconds is not None:
             self.hung_rebalancing_threshold_seconds = hung_rebalancing_threshold_seconds
+
+        if status_update_interval_seconds is not None:
+            self.status_update_interval_seconds = status_update_interval_seconds
+
+        if reconcile_interval_seconds is not None:
+            self.reconcile_interval_seconds = reconcile_interval_seconds
             
