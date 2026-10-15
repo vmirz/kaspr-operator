@@ -3,6 +3,7 @@ import os
 import kopf
 import time
 import logging
+from dataclasses import dataclass, field
 from logging import Logger
 from typing import List, Dict, Optional
 from kaspr.utils.objects import cached_property
@@ -74,6 +75,7 @@ from kubernetes_asyncio.client import (
     V2HorizontalPodAutoscalerBehavior,
     V2HPAScalingRules,
     V2HPAScalingPolicy,
+    V1PodList,
 )
 from kubernetes_asyncio.client.api_client import ApiClient
 
@@ -82,6 +84,20 @@ from kaspr.resources import KasprAgent, KasprWebView, KasprTable, KasprTask
 from kaspr.common.models.labels import Labels
 from kaspr.web import KasprWebClient
 from kaspr.sensors import SensorDelegate
+
+
+@dataclass
+class PodMetadataCache:
+    """Pod listing kept between status refreshes of one KasprApp.
+
+    The StatefulSet's resourceVersion changes whenever one of its pods is added,
+    removed or changes readiness, so pods only need to be listed again once it moves.
+    """
+
+    stateful_set_version: Optional[str] = None
+    metadata_by_ordinal: Dict[int, Dict[str, str]] = field(default_factory=dict)
+    # Pods listed during the current refresh, for reuse by other status checks.
+    listed_pods: Optional[V1PodList] = None
 
 
 class KasprApp(BaseResource):
@@ -138,6 +154,9 @@ class KasprApp(BaseResource):
     hpa_name: str
 
     annotations: Dict[str, str] = None
+
+    # StatefulSet as read by the last fetch_app_status call (None if missing)
+    observed_stateful_set: Optional[V1StatefulSet] = None
 
     # CRD spec models
     tls: Optional[ClientTls]
@@ -667,16 +686,20 @@ class KasprApp(BaseResource):
                 
                 success = True
                 try:
+                    patch = self.prepare_statefulset_patch(
+                        self.stateful_set,
+                        replicas_override=self.prepare_statefulset_desired_replicas(
+                            actual
+                        ),
+                    )
+                    patch.extend(
+                        self.prepare_statefulset_hash_annotation_patch(stateful_set)
+                    )
                     await self.patch_stateful_set(
                         self.apps_v1_api,
                         self.stateful_set_name,
                         self.namespace,
-                        stateful_set=self.prepare_statefulset_patch(
-                            self.stateful_set,
-                            replicas_override=self.prepare_statefulset_desired_replicas(
-                                actual
-                            ),
-                        ),
+                        stateful_set=patch,
                     )
                 except Exception:
                     success = False
@@ -825,6 +848,37 @@ class KasprApp(BaseResource):
         """Apply task resources to the app."""
         self.tasks = tasks
         self._tasks_hash = None  # reset hash
+
+    async def sync_component_config_maps(self):
+        """Create or patch the config maps of the attached components as needed.
+
+        The pod template carries a hash of every component definition, so a changed
+        definition rolls the pods. Syncing the definitions first ensures the new pods
+        mount the definitions they were rolled for. All config maps are read with one
+        request: they carry the app's label like their components do.
+        """
+        components = [
+            *(self.agents or []),
+            *(self.webviews or []),
+            *(self.tables or []),
+            *(self.tasks or []),
+        ]
+        if not components:
+            return
+        config_maps = await self.list_config_maps(
+            self.core_v1_api,
+            self.namespace,
+            label_selector=f"{self.KASPR_APP_NAME_LABEL}={self.cluster}",
+        )
+        config_maps_by_name = {
+            config_map.metadata.name: config_map for config_map in config_maps
+        }
+        for component in components:
+            # A config map that is not listed (e.g. its component moved here from
+            # another app) is created, which replaces it if it exists.
+            await component.sync_config_map(
+                actual=config_maps_by_name.get(component.config_map_name)
+            )
 
     async def fetch(self, name: str, namespace: str):
         """Fetch actual KasprApp in kubernetes."""
@@ -2262,6 +2316,31 @@ class KasprApp(BaseResource):
 
         return patch
 
+    def prepare_statefulset_hash_annotation_patch(
+        self, actual: V1StatefulSet
+    ) -> List[Dict]:
+        """Prepare JSON patch operations that record the desired StatefulSet hash.
+
+        The recorded hash makes any change to the rendered StatefulSet visible as
+        drift, including fields outside the watch fields such as the component and
+        config hashes in the container environment.
+        """
+        desired_hash = self.stateful_set.metadata.annotations[
+            self.RESOURCE_HASH_ANNOTATION
+        ]
+        ops = []
+        if not (actual.metadata and actual.metadata.annotations):
+            ops.append({"op": "add", "path": "/metadata/annotations", "value": {}})
+        ops.append(
+            {
+                "op": "add",
+                "path": "/metadata/annotations/"
+                + self.RESOURCE_HASH_ANNOTATION.replace("~", "~0").replace("/", "~1"),
+                "value": desired_hash,
+            }
+        )
+        return ops
+
     def prepare_statefulset_watch_fields(self, stateful_set: V1StatefulSet) -> Dict:
         """
         Prepare fields of interest when comparing actual vs desired state.
@@ -2292,7 +2371,17 @@ class KasprApp(BaseResource):
                     main_packages_hash_env = env_var.value
                     break
         
+        annotations = (
+            stateful_set.metadata.annotations if stateful_set.metadata else None
+        ) or {}
         watch_fields = {
+            "metadata": {
+                "annotations": {
+                    self.RESOURCE_HASH_ANNOTATION: annotations.get(
+                        self.RESOURCE_HASH_ANNOTATION
+                    ),
+                },
+            },
             "spec": {
                 "replicas": stateful_set.spec.replicas,
                 "template": {
@@ -2343,6 +2432,18 @@ class KasprApp(BaseResource):
             ]
         
         return watch_fields
+
+    def prepare_statefulset_fingerprint(self, stateful_set: V1StatefulSet) -> str:
+        """Hash of the StatefulSet fields that must match the desired state.
+
+        Equal fingerprints for the desired and the stored StatefulSet mean no patch
+        is needed. Replica counts are reduced to zero or non-zero, since the HPA owns
+        the exact count of a scaled-up StatefulSet.
+        """
+        watch_fields = self.prepare_statefulset_watch_fields(stateful_set)
+        replicas = watch_fields["spec"]["replicas"]
+        watch_fields["spec"]["replicas"] = 0 if replicas == 0 else "scaled"
+        return self.compute_hash(watch_fields)
 
     def prepare_statefulset_desired_replicas(self, actual: Dict) -> Dict:
         """Prepare desired replicas for stateful set.
@@ -2866,11 +2967,17 @@ class KasprApp(BaseResource):
         """Return status of all tasks."""
         return [task.info() for task in self.tasks]
 
-    async def fetch_app_status(self) -> Dict:
-        """Fetch status of application's statefulset/pods"""
+    async def fetch_app_status(self, pod_cache: Optional[PodMetadataCache] = None) -> Dict:
+        """Fetch status of application's statefulset/pods
+
+        Args:
+            pod_cache: Pod metadata kept from a previous call. When given, pods are
+                only listed again if the StatefulSet changed since that call.
+        """
         stateful_set = await self.fetch_stateful_set(
             self.apps_v1_api, self.stateful_set_name, self.namespace
         )
+        self.observed_stateful_set = stateful_set
         if not stateful_set:
             return
 
@@ -2887,7 +2994,9 @@ class KasprApp(BaseResource):
         if stateful_set.status.available_replicas > 0 and kaspr_container:
             # Fetch status from all members using dedicated method
             member_statuses = await self.fetch_all_member_statuses(
-                stateful_set.status.available_replicas
+                stateful_set.status.available_replicas,
+                pod_cache=pod_cache,
+                stateful_set_version=stateful_set.metadata.resource_version,
             )
 
         kaspr_ver = kaspr_container.image.split(":")[-1] if kaspr_container else None
@@ -2902,6 +3011,23 @@ class KasprApp(BaseResource):
             if stateful_set.status and hasattr(stateful_set.status, "updated_replicas")
             else False
         )
+        if stateful_set.status:
+            # A spec change the StatefulSet controller has not observed yet is a
+            # rollout that has not started.
+            observed_generation = stateful_set.status.observed_generation
+            if (
+                observed_generation is not None
+                and stateful_set.metadata.generation is not None
+                and observed_generation < stateful_set.metadata.generation
+            ):
+                rollout_in_progress = True
+            # Pods run the update revision only once the controller makes it the
+            # current one. Replica counts do not show this: while the first old pod
+            # is replaced, both current and updated replicas are reported as zero.
+            current_revision = stateful_set.status.current_revision
+            update_revision = stateful_set.status.update_revision
+            if current_revision and update_revision and current_revision != update_revision:
+                rollout_in_progress = True
 
         return {
             "kasprVersion": kaspr_ver,
@@ -2911,11 +3037,19 @@ class KasprApp(BaseResource):
             "members": member_statuses if available_replicas > 0 else [],
         }
 
-    async def fetch_all_member_statuses(self, available_replicas: int) -> List[Dict]:
+    async def fetch_all_member_statuses(
+        self,
+        available_replicas: int,
+        pod_cache: Optional[PodMetadataCache] = None,
+        stateful_set_version: Optional[str] = None,
+    ) -> List[Dict]:
         """Fetch status from all available worker instances concurrently.
 
         Args:
             available_replicas: Number of available replicas to check
+            pod_cache: Pod metadata from a previous call, reused while the
+                StatefulSet is unchanged and refreshed otherwise.
+            stateful_set_version: resourceVersion of the StatefulSet just read.
 
         Returns:
             Dictionary mapping worker index to status data for successful calls
@@ -2926,36 +3060,47 @@ class KasprApp(BaseResource):
         # Map StatefulSet ordinals to pod incarnation metadata so callers can
         # distinguish a fresh pod from a previous incarnation of the same member id.
         pod_metadata_by_idx: Dict[int, Dict[str, str]] = {}
-        try:
-            pods = await self.list_pods(
-                self.core_v1_api,
-                self.namespace,
-                self.labels.kasper_label_selectors().as_dict(),
-            )
-            if pods and pods.items:
-                for pod in pods.items:
-                    pod_name = getattr(pod.metadata, "name", "") if pod.metadata else ""
-                    if not pod_name or not pod_name.startswith(f"{self.component_name}-"):
-                        continue
-                    try:
-                        idx = int(pod_name.rsplit("-", 1)[-1])
-                    except (ValueError, IndexError):
-                        continue
-                    metadata: Dict[str, str] = {}
-                    pod_uid = getattr(pod.metadata, "uid", None) if pod.metadata else None
-                    if pod_uid:
-                        metadata["podUID"] = pod_uid
-                    creation_ts = (
-                        getattr(pod.metadata, "creation_timestamp", None)
-                        if pod.metadata
-                        else None
-                    )
-                    if creation_ts:
-                        metadata["podCreationTime"] = creation_ts.isoformat()
-                    if metadata:
-                        pod_metadata_by_idx[idx] = metadata
-        except Exception as e:
-            self.logger.warning(f"Failed to fetch pod metadata for member statuses: {e}")
+        if (
+            pod_cache is not None
+            and stateful_set_version is not None
+            and pod_cache.stateful_set_version == stateful_set_version
+        ):
+            pod_metadata_by_idx = pod_cache.metadata_by_ordinal
+        else:
+            try:
+                pods = await self.list_pods(
+                    self.core_v1_api,
+                    self.namespace,
+                    self.labels.kasper_label_selectors().as_dict(),
+                )
+                if pods and pods.items:
+                    for pod in pods.items:
+                        pod_name = getattr(pod.metadata, "name", "") if pod.metadata else ""
+                        if not pod_name or not pod_name.startswith(f"{self.component_name}-"):
+                            continue
+                        try:
+                            idx = int(pod_name.rsplit("-", 1)[-1])
+                        except (ValueError, IndexError):
+                            continue
+                        metadata: Dict[str, str] = {}
+                        pod_uid = getattr(pod.metadata, "uid", None) if pod.metadata else None
+                        if pod_uid:
+                            metadata["podUID"] = pod_uid
+                        creation_ts = (
+                            getattr(pod.metadata, "creation_timestamp", None)
+                            if pod.metadata
+                            else None
+                        )
+                        if creation_ts:
+                            metadata["podCreationTime"] = creation_ts.isoformat()
+                        if metadata:
+                            pod_metadata_by_idx[idx] = metadata
+                if pod_cache is not None:
+                    pod_cache.stateful_set_version = stateful_set_version
+                    pod_cache.metadata_by_ordinal = pod_metadata_by_idx
+                    pod_cache.listed_pods = pods
+            except Exception as e:
+                self.logger.warning(f"Failed to fetch pod metadata for member statuses: {e}")
 
         async def fetch_member_status(idx: int):
             """Fetch status from a single member."""
@@ -3019,17 +3164,21 @@ class KasprApp(BaseResource):
             return True
         return False
 
-    async def request_rebalance(self) -> bool:
+    async def request_rebalance(self, status: Optional[Dict] = None) -> bool:
         """Request a cluster rebalance when the app cluster is in ready state.
 
         Ready state is defined as:
         - availableReplicas equals desiredReplicas
         - At least one member is a leader
 
+        Args:
+            status: App status as returned by fetch_app_status; fetched when omitted.
+
         Raises:
             Exception: If cluster is not in ready state or rebalance fails
         """
-        status = await self.fetch_app_status()
+        if status is None:
+            status = await self.fetch_app_status()
 
         if not status:
             return False, "App status not available"

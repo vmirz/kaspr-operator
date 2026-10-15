@@ -12,43 +12,6 @@ from kaspr.handlers import kasprapp as handler
 from kaspr.resources.appcomponent import BaseAppComponent
 
 
-class _StopFlag:
-    def __init__(self):
-        self.stopped = False
-        self.wait_calls = []
-
-    def __bool__(self):
-        return self.stopped
-
-    async def wait(self, seconds=None):
-        self.wait_calls.append(seconds)
-        self.stopped = True
-        return True
-
-
-class _FakeApp:
-    def __init__(self, stop_flag):
-        self.stop_flag = stop_flag
-        self.tasks = None
-        self.patched = False
-
-    def with_agents(self, agents):
-        self.agents = agents
-
-    def with_webviews(self, webviews):
-        self.webviews = webviews
-
-    def with_tables(self, tables):
-        self.tables = tables
-
-    def with_tasks(self, tasks):
-        self.tasks = tasks
-
-    async def patch_volume_mounted_resources(self):
-        self.patched = True
-        self.stop_flag.stopped = True
-
-
 class _DummyComponent(BaseAppComponent):
     KIND = "KasprAgent"
     COMPONENT_TYPE = "KasprAgent"
@@ -69,106 +32,96 @@ class _DummyComponent(BaseAppComponent):
         self.app_components = None
 
 
-def test_monitor_related_resources_uses_task_schema(monkeypatch):
-    stop_flag = _StopFlag()
-    fake_app = _FakeApp(stop_flag)
+def test_attach_app_related_resources_uses_task_schema(monkeypatch):
     seen = {}
     task_spec = {
         "name": "develop-sweep-observations",
         "schedule": {"interval": "5m"},
         "processors": {"pipeline": [], "operations": []},
     }
+    task_item = {
+        "metadata": {
+            "name": "develop-sweep-observations",
+            "labels": {"kaspr.io/app": "develop-materializer-control-plane"},
+        },
+        "spec": task_spec,
+    }
 
-    async def fake_fetch_related_resources(name, namespace):
-        return {
-            "agents": [],
-            "webviews": [],
-            "tables": [],
-            "tasks": [
-                {
-                    "metadata": {
-                        "name": "develop-sweep-observations",
-                        "labels": {"kaspr.io/app": name},
-                    },
-                    "spec": task_spec,
-                }
-            ],
-            "success": True,
-        }
+    class FakeApp:
+        def with_agents(self, agents):
+            self.agents = agents
+
+        def with_webviews(self, webviews):
+            self.webviews = webviews
+
+        def with_tables(self, tables):
+            self.tables = tables
+
+        def with_tasks(self, tasks):
+            self.tasks = tasks
 
     class FakeTaskSchema:
         def load(self, value):
             seen["task_spec"] = value
             return {"parsed": True, "name": value["name"]}
 
-    monkeypatch.setattr(handler, "fetch_app_related_resources", fake_fetch_related_resources)
-    monkeypatch.setattr(handler.KasprAppSpecSchema, "load", lambda self, value: object())
-    monkeypatch.setattr(
-        handler.KasprApp,
-        "from_spec",
-        classmethod(lambda cls, *args, **kwargs: fake_app),
-    )
-    monkeypatch.setattr(handler, "KasprTaskSpecSchema", FakeTaskSchema)
-    monkeypatch.setattr(
-        handler.KasprTask,
-        "from_spec",
-        staticmethod(
-            lambda name, kind, namespace, spec_model, labels: {
-                "name": name,
-                "spec_model": spec_model,
-                "labels": labels,
-            }
-        ),
-    )
+    class FakeTask:
+        KIND = "KasprTask"
 
-    asyncio.run(
-        handler.monitor_related_resources(
-            stopped=stop_flag,
-            name="develop-materializer-control-plane",
-            body={},
-            spec={},
-            meta={},
-            labels={},
-            annotations={},
-            status={},
-            namespace="kafka-sql",
-            patch={},
-            logger=Mock(),
+        @staticmethod
+        def from_spec(name, kind, namespace, spec_model, labels):
+            return SimpleNamespace(name=name, spec_model=spec_model, labels=labels)
+
+    monkeypatch.setattr(handler, "KasprTaskSpecSchema", FakeTaskSchema)
+    monkeypatch.setattr(handler, "KasprTask", FakeTask)
+    fake_app = FakeApp()
+
+    success = asyncio.run(
+        handler.attach_app_related_resources(
+            fake_app,
+            "develop-materializer-control-plane",
+            "kafka-sql",
+            related={
+                "agents": [],
+                "webviews": [],
+                "tables": [],
+                "tasks": [task_item],
+                "success": True,
+            },
         )
     )
 
+    assert success is True
     assert seen["task_spec"] == task_spec
-    assert fake_app.patched is True
-    assert fake_app.tasks == [
-        {
-            "name": "develop-sweep-observations",
-            "spec_model": {"parsed": True, "name": "develop-sweep-observations"},
-            "labels": {"kaspr.io/app": "develop-materializer-control-plane"},
-        }
-    ]
-    assert stop_flag.wait_calls == [10]
+    assert len(fake_app.tasks) == 1
+    task = fake_app.tasks[0]
+    assert task.spec_model == {"parsed": True, "name": "develop-sweep-observations"}
+    assert task.labels == {"kaspr.io/app": "develop-materializer-control-plane"}
+    # The app may create the task's config map, which must stay owned by the task.
+    assert task.owner is task_item
 
 
-def test_patch_resource_skips_missing_queue():
-    patch = SimpleNamespace(status={})
-
-    asyncio.run(handler.patch_resource(name="missing-app", patch=patch))
-
-    assert patch.status == {}
-
-
-def test_process_reconciliation_requests_skips_missing_queue(monkeypatch):
-    handler.names_in_queue.add("missing-app")
-    reconcile_calls = []
+def test_process_reconciliation_requests_does_nothing_when_nothing_is_due(monkeypatch):
+    calls = []
 
     async def fake_reconcile(*args, **kwargs):
-        reconcile_calls.append(True)
+        calls.append("reconcile")
+
+    async def fake_update_status(*args, **kwargs):
+        calls.append("update_status")
 
     monkeypatch.setattr(handler, "reconcile", fake_reconcile)
+    monkeypatch.setattr(handler, "update_status", fake_update_status)
+    handler.app_states.clear()
 
-    asyncio.run(
-        handler.process_reconciliation_requests(
-            name="missing-app",
+    async def run():
+        state = handler.get_app_state("test-namespace", "idle-app")
+        loop_now = asyncio.get_running_loop().time()
+        state.desired_statefulset_fingerprint = "fingerprint"
+        state.next_reconcile_at = loop_now + 300
+        state.last_status_update_at = loop_now
+        await handler.process_reconciliation_requests(
+            name="idle-app",
             namespace="test-namespace",
             spec={},
             meta={},
@@ -178,26 +131,33 @@ def test_process_reconciliation_requests_skips_missing_queue(monkeypatch):
             logger=Mock(),
             stopped=False,
         )
-    )
 
-    assert reconcile_calls == []
-    assert "missing-app" not in handler.names_in_queue
+    asyncio.run(run())
+
+    assert calls == []
+    handler.app_states.clear()
 
 
 def test_on_delete_cleans_up_global_state(monkeypatch):
     app_name = "delete-me"
-    handler.reconciliation_queue[app_name].put_nowait(app_name)
-    handler.patch_request_queues[app_name].put_nowait({"field": "status", "value": {}})
-    _ = handler.reconciliation_locks[app_name]
-    handler.names_in_queue.add(app_name)
+    key = ("test-namespace", app_name)
+    handler.reconciliation_queue[key].put_nowait(app_name)
+    _ = handler.reconciliation_locks[key]
+    handler.names_in_queue.add(key)
+    handler.app_states[key] = handler.AppRuntimeState()
     handler.hung_member_tracking[(app_name, 0)] = 1
 
-    asyncio.run(handler.on_delete(app_name))
+    async def fake_fetch_related_resources(name, namespace):
+        return {"agents": [], "webviews": [], "tables": [], "tasks": [], "success": True}
 
-    assert app_name not in handler.reconciliation_queue
-    assert app_name not in handler.patch_request_queues
-    assert app_name not in handler.reconciliation_locks
-    assert app_name not in handler.names_in_queue
+    monkeypatch.setattr(handler, "fetch_app_related_resources", fake_fetch_related_resources)
+
+    asyncio.run(handler.on_delete(app_name, namespace="test-namespace", logger=Mock()))
+
+    assert key not in handler.reconciliation_queue
+    assert key not in handler.reconciliation_locks
+    assert key not in handler.names_in_queue
+    assert key not in handler.app_states
     assert (app_name, 0) not in handler.hung_member_tracking
 
 
@@ -268,7 +228,10 @@ def test_update_status_does_not_terminate_fresh_member_with_stale_transition(mon
                 client_status_check_enabled=True,
             )
 
-        async def fetch_app_status(self):
+        async def fetch_app_status(self, **kwargs):
+            self.observed_stateful_set = SimpleNamespace(
+                metadata=SimpleNamespace(resource_version="1")
+            )
             return {
                 "kasprVersion": "0.11.18",
                 "availableMembers": 1,
@@ -490,7 +453,7 @@ def test_on_create_requests_reconciliation(monkeypatch):
         async def create(self):
             calls.append("create")
 
-    async def fake_attach(app, name, namespace):
+    async def fake_attach(app, name, namespace, related=None):
         calls.append(("attach", name, namespace))
         return True
 
@@ -527,67 +490,34 @@ def test_on_create_requests_reconciliation(monkeypatch):
     ]
 
 
-def test_monitor_related_resources_skips_patch_on_partial_fetch(monkeypatch):
-    stop_flag = _StopFlag()
-    fake_app = _FakeApp(stop_flag)
-
-    async def fake_fetch_related_resources(name, namespace):
-        return {
-            "agents": [],
-            "webviews": [],
-            "tables": [],
-            "tasks": [],
-            "success": False,
-        }
-
-    monkeypatch.setattr(handler, "fetch_app_related_resources", fake_fetch_related_resources)
-    monkeypatch.setattr(handler.KasprAppSpecSchema, "load", lambda self, value: object())
-    monkeypatch.setattr(
-        handler.KasprApp,
-        "from_spec",
-        classmethod(lambda cls, *args, **kwargs: fake_app),
-    )
-
-    async def run():
-        task = asyncio.ensure_future(
-            handler.monitor_related_resources(
-                stopped=stop_flag,
-                name="develop-materializer-control-plane",
-                body={},
-                spec={},
-                meta={},
-                labels={},
-                annotations={},
-                status={},
-                namespace="kafka-sql",
-                patch={},
-                logger=Mock(),
-            )
-        )
-        await asyncio.sleep(0)
-        stop_flag.stopped = True
-        await task
-
-    asyncio.run(run())
-
-    # An incomplete component list would unmount live definitions.
-    assert fake_app.patched is False
-
-
 def test_reconcile_attaches_components_before_synchronize(monkeypatch):
     calls = []
 
     class FakeApp:
         reconciliation_paused = False
+        agents, webviews, tables, tasks = [], [], [], []
+        stateful_set = object()
+
+        async def sync_component_config_maps(self):
+            calls.append("sync_component_config_maps")
 
         async def synchronize(self):
             calls.append("synchronize")
 
-    async def fake_attach(app, name, namespace):
+        def prepare_statefulset_fingerprint(self, stateful_set):
+            return "fingerprint"
+
+    async def fake_fetch_related_resources(name, namespace):
+        calls.append("fetch")
+        return {"agents": [], "webviews": [], "tables": [], "tasks": [], "success": True}
+
+    async def fake_attach(app, name, namespace, related=None):
+        assert related is not None
         calls.append("attach")
         return True
 
     async def fake_update_status(*args, **kwargs):
+        assert kwargs["related_resources"]["success"] is True
         calls.append("update_status")
 
     monkeypatch.setattr(handler.KasprAppSpecSchema, "load", lambda self, value: object())
@@ -596,10 +526,12 @@ def test_reconcile_attaches_components_before_synchronize(monkeypatch):
         "from_spec",
         classmethod(lambda cls, *args, **kwargs: FakeApp()),
     )
+    monkeypatch.setattr(handler, "fetch_app_related_resources", fake_fetch_related_resources)
     monkeypatch.setattr(handler, "attach_app_related_resources", fake_attach)
     monkeypatch.setattr(handler, "update_status", fake_update_status)
 
-    asyncio.run(
+    state = handler.AppRuntimeState()
+    outcome = asyncio.run(
         handler.reconcile(
             name="test-app",
             namespace="test-namespace",
@@ -609,10 +541,20 @@ def test_reconcile_attaches_components_before_synchronize(monkeypatch):
             patch=SimpleNamespace(status={}),
             annotations={},
             logger=Mock(),
+            state=state,
         )
     )
 
-    assert calls == ["attach", "synchronize", "update_status"]
+    # Definitions are synced before the StatefulSet that rolls pods mounting them.
+    assert calls == [
+        "fetch",
+        "attach",
+        "sync_component_config_maps",
+        "synchronize",
+        "update_status",
+    ]
+    assert outcome == handler.RECONCILED
+    assert state.desired_statefulset_fingerprint == "fingerprint"
 
 
 def test_reconcile_skips_synchronize_when_components_are_incomplete(monkeypatch):
@@ -624,9 +566,13 @@ def test_reconcile_skips_synchronize_when_components_are_incomplete(monkeypatch)
         async def synchronize(self):
             calls.append("synchronize")
 
-    async def fake_attach(app, name, namespace):
+    async def fake_fetch_related_resources(name, namespace):
+        return {"agents": [], "webviews": [], "tables": [], "tasks": [], "success": False}
+
+    async def fake_attach(app, name, namespace, related=None):
         return False
 
+    monkeypatch.setattr(handler, "fetch_app_related_resources", fake_fetch_related_resources)
     monkeypatch.setattr(handler.KasprAppSpecSchema, "load", lambda self, value: object())
     monkeypatch.setattr(
         handler.KasprApp,
