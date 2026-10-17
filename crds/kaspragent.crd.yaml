@@ -31,6 +31,10 @@ spec:
                   type: boolean
                   description: Isolate processing by input topic partitions
                   default: false
+                noack:
+                  type: boolean
+                  description: If true, disables automatic event acknowledgments after processing. For kafka events, this means offsets will not be commited until events are manually acknowledged.
+                  default: false
                 input:
                   description: Input to stream processing.
                   type: object

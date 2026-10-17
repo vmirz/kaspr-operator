@@ -56,6 +56,7 @@ class KasprAgentSpec(BaseModel):
     name: str
     description: Optional[str]
     isolated_partitions: Optional[bool]
+    noack: Optional[bool]
     input: KasprAgentInput
     output: KasprAgentOutput
     processors: KasprAgentProcessors
