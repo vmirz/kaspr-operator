@@ -213,6 +213,9 @@ class KasprAgentSpecSchema(BaseSchema):
     isolated_partitions = fields.Bool(
         data_key="isolatedPartitions", allow_none=True, load_default=None
     )
+    noack = fields.Bool(
+        data_key="noack", allow_none=True, load_default=None
+    )
     input = fields.Nested(KasprAgentInputSchema(), data_key="input", allow_none=True)
     output = fields.Nested(KasprAgentOutputSchema(), data_key="output", allow_none=True)
     processors = fields.Nested(
