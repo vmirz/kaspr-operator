@@ -73,7 +73,7 @@ Kaspr is a Kubernetes operator that manages stream processing applications built
 - Tracks linked resources (agents, tables) in `status.linkedResources`
 - Detects subscription-affecting changes (topic names, patterns, table changelog topics), and records the topics a change removes in `status.rebalance`
 - Sets `status.rebalanceRequired` when subscriptions change; it stays set until the rebalance has taken effect
-- Once the rollout of the new subscriptions has finished and every member is ready, asks every member to rejoin its group (the broker's group leader is always among them)
+- Once the rollout of the new subscriptions has finished and every member is ready, asks every member to rejoin its group (the broker's group leader is always among them), unless their assignments already match the change
 - Checks the assignments members report: every topic the app consumes by name must be assigned, and no removed topic still assigned; requests again if not, then gives up and reports the unassigned topics (`RebalanceNotEffective` event)
 - Refreshes the app's status every `REBALANCE_CHECK_INTERVAL_SECONDS` while a rebalance is pending
 - Members still rebalancing past the group's session timeout after a requested rebalance are restarted as hung

@@ -328,6 +328,42 @@ def test_the_rebalance_is_requested_once_the_rollout_is_over_and_stays_pending(m
     assert after["rebalance"]["requestedAt"] == after["rebalance"]["lastRequestedAt"]
 
 
+def test_members_that_rebalanced_on_their_own_need_no_request(monkeypatch):
+    # A member handed back a topic it stopped consuming leaves its group and rejoins
+    # (Kaspr's coordinator patch), so the group may match the change by the time the
+    # rollout is over.
+    fake_app = FakeApp(app_status(STALE))
+    use_fake_app(monkeypatch, fake_app)
+
+    _, changes = refresh(pending_status(removed=["returns"], topics=("orders",)), handler.AppRuntimeState())
+
+    assert fake_app.rebalance_calls == []
+    assert changes["rebalanceRequired"] is False
+    assert changes["rebalance"] is None
+
+
+def test_an_app_subscribing_by_pattern_always_gets_a_request(monkeypatch):
+    fake_app = FakeApp(app_status(STALE))
+    use_fake_app(monkeypatch, fake_app)
+    status = pending_status(topics=("orders",))
+    status["linkedResources"]["agents"].append({"name": "audit", "hash": "p", "topicPattern": "audit-.*"})
+
+    after, _ = refresh(status, handler.AppRuntimeState())
+
+    assert len(fake_app.rebalance_calls) == 1
+    assert after["rebalance"]["attempts"] == 1
+
+
+def test_members_still_rebalancing_after_the_rollout_get_a_request(monkeypatch):
+    members = [member(0, actives={"orders": [0], "refunds": [0]}, rebalancing=True), member(1)]
+    fake_app = FakeApp(app_status(members))
+    use_fake_app(monkeypatch, fake_app)
+
+    refresh(pending_status(), handler.AppRuntimeState())
+
+    assert len(fake_app.rebalance_calls) == 1
+
+
 def test_nothing_is_checked_before_the_rebalance_had_time(monkeypatch):
     fake_app = FakeApp(app_status(STALE))
     use_fake_app(monkeypatch, fake_app)

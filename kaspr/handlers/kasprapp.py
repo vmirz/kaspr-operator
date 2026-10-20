@@ -31,6 +31,7 @@ from kaspr.utils.errors import convert_api_exception
 from kaspr.utils.python_packages import compute_packages_hash
 from kaspr.utils.subscriptions import (
     SubscriptionChange,
+    agent_patterns,
     check_assignment,
     subscribed_topics,
     subscription_change,
@@ -1268,12 +1269,30 @@ async def _attempt_auto_rebalance(
         )
         logger.warning(f"Rebalance of {name} has not taken effect ({details}); requesting it again")
 
-    if not attempts and state is not None:
-        sensor = get_sensor()
-        if sensor:
-            state.rebalance_sensor_state = sensor.on_rebalance_triggered(
-                name, namespace, "subscription_change"
-            )
+    if not attempts:
+        # Members can rebalance on their own once they run the new subscriptions (a
+        # Kaspr member handed back topics it no longer subscribes to leaves its group
+        # and rejoins). If their settled assignment matches already, no request is
+        # needed. Patterns cannot be checked, so an app subscribing by pattern always
+        # gets one.
+        linked = status_update.get("linkedResources", _status.get("linkedResources"))
+        members = _actual_status.get("members") or []
+        if not agent_patterns((linked or {}).get("agents")) and len(members) >= _actual_status["desiredMembers"]:
+            check = check_assignment(members, subscribed_topics(linked, name), pending.get("removedTopics"))
+            if check.satisfied:
+                status_update["rebalanceRequired"] = False
+                status_update["rebalance"] = None
+                logger.info(
+                    f"No rebalance needed for {name}: its members are already assigned every "
+                    "topic it consumes, and none it stopped consuming"
+                )
+                return
+        if state is not None:
+            sensor = get_sensor()
+            if sensor:
+                state.rebalance_sensor_state = sensor.on_rebalance_triggered(
+                    name, namespace, "subscription_change"
+                )
 
     try:
         logger.info(f"Attempting automatic rebalance for {name} due to subscription changes")

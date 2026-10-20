@@ -10,7 +10,7 @@ cheap. It also means a rollout that changes what an app consumes is not picked u
 | Change | Without a rebalance |
 |---|---|
 | An agent subscribes to another topic, an agent or table is added | The new topic is assigned to nobody and is never read |
-| An agent stops subscribing to a topic, an agent or table is removed | Members get back partitions of a topic they no longer subscribe to. aiokafka refuses such an assignment (`AssertionError: Received an assignment for unsubscribed topic`): the member stops coordinating and heartbeating, and reports itself rebalancing until it is restarted after the broker has dropped it |
+| An agent stops subscribing to a topic, an agent or table is removed | Members get back partitions of a topic they no longer subscribe to. aiokafka refuses such an assignment (`AssertionError: Received an assignment for unsubscribed topic`): the member stops coordinating and heartbeating, and reports itself rebalancing until it is restarted after the broker has dropped it. A Kaspr version whose coordinator patch handles stale assignments (`kaspr/core/coordinator_patch.py`) makes such a member leave its group and rejoin instead |
 
 Apps that disable static membership (`kaspr.io/disable-static-group-membership: "true"`)
 rebalance on their own and are left alone.
@@ -26,21 +26,26 @@ rebalance on their own and are left alone.
    in progress, members are not ready, or the app is scaled to zero, the rebalance stays pending.
    Meanwhile the app's status is refreshed every `REBALANCE_CHECK_INTERVAL_SECONDS` (5 s) rather
    than every `STATUS_UPDATE_INTERVAL_SECONDS` (30 s).
-3. **Requests the rebalance from every member.** `POST /signal/rebalance/` makes a member rejoin
+3. **Skips it if the group already matches.** Members can rebalance on their own once they run
+   the new subscriptions: with Kaspr's stale-assignment fix, a member handed back a topic it no
+   longer subscribes to leaves its group and rejoins. If every member reports, none is
+   rebalancing, and their assignments already match the change (step 5), nothing is requested. An
+   app whose agents subscribe by pattern always gets a request, since patterns cannot be checked.
+4. **Requests the rebalance from every member.** `POST /signal/rebalance/` makes a member rejoin
    its group. A rejoin rebalances a stable group when it comes from the member the broker made the
    group's leader, or from a member whose metadata changed. A member's `leader` flag in its status
    is Kaspr's own (it owns the leader topic), not the broker's choice, so every member is asked.
-4. **Checks that it took.** After `REBALANCE_VERIFY_DELAY_SECONDS` (15 s), once every member
+5. **Checks that it took.** After `REBALANCE_VERIFY_DELAY_SECONDS` (15 s), once every member
    reports and none is rebalancing, the operator compares their reported assignments with the app's
    subscriptions: every topic its agents subscribe to by name, and every table's changelog
    (`<app>-app-<table>-changelog`), must be actively assigned to some member, and no removed topic
    may be assigned to any. If so, `rebalanceRequired` and `rebalance` are cleared.
-5. **Requests again, then gives up.** A settled assignment that still misses topics is requested
+6. **Requests again, then gives up.** A settled assignment that still misses topics is requested
    again, up to `REBALANCE_MAX_ATTEMPTS` (3) times. If the rebalance has not taken effect
    `REBALANCE_VERIFY_TIMEOUT_SECONDS` (600 s) after the first request, the operator stops, clears
    `rebalanceRequired`, keeps the findings in `status.rebalance`, and posts a
    `RebalanceNotEffective` warning event. A topic that does not exist is a common cause.
-6. **Restarts wedged members sooner.** While a requested rebalance is pending, a member that is
+7. **Restarts wedged members sooner.** While a requested rebalance is pending, a member that is
    still rebalancing (and not recovering) past the group's session timeout plus 30 s is treated as
    hung and restarted, instead of after `HUNG_REBALANCING_THRESHOLD_SECONDS` (300 s). By then the
    broker has dropped it, so it joins the group afresh. The session timeout is the app's
