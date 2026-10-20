@@ -69,10 +69,14 @@ Kaspr is a Kubernetes operator that manages stream processing applications built
 ### 3. Key Operator Features
 
 #### **Subscription-Aware Auto-Rebalancing**
+- With static group membership a restarted member gets its old partitions back, so a rollout that changes what an app consumes needs a rebalance (see `docs/user-guide/rebalancing.md`)
 - Tracks linked resources (agents, tables) in `status.linkedResources`
-- Detects subscription-affecting changes (topic names, patterns, table changelog topics)
-- Sets `status.rebalanceRequired` flag when subscriptions change; the flag stays set until a rebalance is requested successfully
-- Automatically triggers rebalance when conditions met (rollout of the new subscriptions finished, all members ready)
+- Detects subscription-affecting changes (topic names, patterns, table changelog topics), and records the topics a change removes in `status.rebalance`
+- Sets `status.rebalanceRequired` when subscriptions change; it stays set until the rebalance has taken effect
+- Once the rollout of the new subscriptions has finished and every member is ready, asks every member to rejoin its group (the broker's group leader is always among them)
+- Checks the assignments members report: every topic the app consumes by name must be assigned, and no removed topic still assigned; requests again if not, then gives up and reports the unassigned topics (`RebalanceNotEffective` event)
+- Refreshes the app's status every `REBALANCE_CHECK_INTERVAL_SECONDS` while a rebalance is pending
+- Members still rebalancing past the group's session timeout after a requested rebalance are restarted as hung
 - Configurable via `kaspr.io/auto-rebalance` annotation or global config
 
 #### **Hung Member Detection & Recovery**
@@ -113,6 +117,10 @@ Kaspr is a Kubernetes operator that manages stream processing applications built
 - `HPA_SCALE_UP_POLICY_*`: Horizontal pod autoscaler policies
 - `CLIENT_STATUS_CHECK_ENABLED`: Web client health checking
 - `AUTO_REBALANCE_ENABLED`: Global auto-rebalance toggle
+- `REBALANCE_CHECK_INTERVAL_SECONDS`: Status refresh interval while a rebalance is pending (5s)
+- `REBALANCE_VERIFY_DELAY_SECONDS`: Time a requested rebalance is given before assignments are checked (15s)
+- `REBALANCE_MAX_ATTEMPTS`: Requests per subscription change while the assignment does not match it (3)
+- `REBALANCE_VERIFY_TIMEOUT_SECONDS`: Time after the first request after which the operator gives up (600s)
 - `HUNG_MEMBER_DETECTION_ENABLED`: Global hung detection toggle
 - `HUNG_REBALANCING_THRESHOLD_SECONDS`: Default hung threshold (300s)
 - `STATUS_UPDATE_INTERVAL_SECONDS`: Interval between app status refreshes (30s)
@@ -151,7 +159,7 @@ Reconciliation is event-driven. All work for one app runs in its timer, one piec
    - Detect subscription changes (after reconciliations, from the listed child resources)
    - Detect hung members
    - Update conditions (`Progressing`, `Ready`)
-   - Attempt auto-rebalance if required
+   - Attempt auto-rebalance if required, or check that a requested one took effect
    - Patch only the status fields that changed
 6. **Cleanup**: Mark work done, allow re-queuing
 
@@ -162,7 +170,7 @@ Reconciliation is event-driven. All work for one app runs in its timer, one piec
 - KasprApp pods expose HTTP API for cluster operations
 - Operator uses `kaspr/web/client.py` to interact:
   - `GET /status/`: Fetch member health, rebalancing state, version
-  - `POST /signal/rebalance/`: Trigger cluster rebalance
+  - `POST /signal/rebalance/`: Ask a member to rejoin its consumer group (sent to every member)
 - Status checks configurable via `CLIENT_STATUS_CHECK_ENABLED`
 - Timeout configurable via `CLIENT_STATUS_CHECK_TIMEOUT_SECONDS`
 

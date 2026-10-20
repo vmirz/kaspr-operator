@@ -1411,7 +1411,50 @@ spec:
                             description: Hash of the webview resource for change detection
                 rebalanceRequired:
                   type: boolean
-                  description: Indicates that a rebalance is required due to subscription changes
+                  description: Indicates that a rebalance is required due to subscription changes, until the members' assignments show it took effect
+                rebalance:
+                  type: object
+                  nullable: true
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: The rebalance a subscription change requires, while it is pending, or why the operator gave up on it
+                  properties:
+                    reason:
+                      type: string
+                      description: Why the rebalance is required (SubscriptionChanged)
+                    removedTopics:
+                      type: array
+                      items:
+                        type: string
+                      description: Topics the change removed, which no member may be assigned afterwards
+                    attempts:
+                      type: integer
+                      description: Rebalance requests made for the change
+                    requestedAt:
+                      type: string
+                      format: date-time
+                      nullable: true
+                      description: When the rebalance was first requested
+                    lastRequestedAt:
+                      type: string
+                      format: date-time
+                      nullable: true
+                      description: When the rebalance was last requested
+                    unassignedTopics:
+                      type: array
+                      nullable: true
+                      items:
+                        type: string
+                      description: Topics the app consumes that no member was assigned at the last check
+                    staleTopics:
+                      type: array
+                      nullable: true
+                      items:
+                        type: string
+                      description: Removed topics some member was still assigned at the last check
+                    message:
+                      type: string
+                      nullable: true
+                      description: What the last check found
                 rebalancingMembers:
                   type: string
                   description: Count of members currently rebalancing

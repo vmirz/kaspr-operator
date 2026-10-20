@@ -29,6 +29,12 @@ from kaspr.types.settings import Settings
 from kaspr.utils.helpers import upsert_condition, deep_compare_dict, now
 from kaspr.utils.errors import convert_api_exception
 from kaspr.utils.python_packages import compute_packages_hash
+from kaspr.utils.subscriptions import (
+    SubscriptionChange,
+    check_assignment,
+    subscribed_topics,
+    subscription_change,
+)
 
 APP_KIND = "KasprApp"
 
@@ -62,6 +68,12 @@ hung_member_tracking: Dict[tuple[str, int], int] = {}
 
 TRUTHY = ("true", "1", "yes", "True", "Yes", "YES")
 
+# Kaspr's default consumer group session timeout (K_BROKER_SESSION_TIMEOUT), in seconds:
+# how long the broker keeps a member that stopped heartbeating.
+KASPR_DEFAULT_SESSION_TIMEOUT_SECONDS = 120
+# Added to it before a member still rebalancing after a requested rebalance is hung.
+HUNG_AFTER_REBALANCE_MARGIN_SECONDS = 30
+
 
 def _loop_time() -> float:
     return asyncio.get_running_loop().time()
@@ -92,6 +104,8 @@ class AppRuntimeState:
     packages_state: Optional[str] = None
     packages_had_pods: bool = False
     last_rebalance_deferral: Optional[str] = None
+    # What the sensor recorded when the pending rebalance was first requested.
+    rebalance_sensor_state: Optional[Dict] = None
 
     def schedule_reconcile(self, delay: float, reason: str):
         """Schedule a full reconciliation, keeping an earlier one if already due sooner."""
@@ -628,6 +642,12 @@ def _is_rollout_complete(conds: List[Dict]) -> bool:
     return False
 
 
+def _session_timeout_seconds(app) -> int:
+    """The consumer group session timeout the app's members run with."""
+    configured = getattr(getattr(app, "config", None), "broker_session_timeout", None)
+    return int(configured) if configured else KASPR_DEFAULT_SESSION_TIMEOUT_SECONDS
+
+
 async def _detect_hung_members(
     _status: Dict,
     app: KasprApp,
@@ -689,6 +709,21 @@ async def _detect_hung_members(
                     f"Invalid hung-rebalancing-threshold-seconds annotation value: {annotation_threshold}, using default: {threshold_seconds}s"
                 )
     
+    # After a subscription change the operator rebalances the group. A member still
+    # rebalancing once its group's session timeout has passed is wedged rather than
+    # slow: a member restarted onto an assignment that includes a topic it no longer
+    # subscribes to stops coordinating (aiokafka refuses the assignment) and stops
+    # heartbeating, so the broker drops it after the session timeout. Restarted from
+    # then on, it joins the group afresh.
+    pending = _status.get("rebalance") or {}
+    if _status.get("rebalanceRequired") and pending.get("attempts"):
+        wedged_after = _session_timeout_seconds(app) + HUNG_AFTER_REBALANCE_MARGIN_SECONDS
+        if wedged_after < threshold_seconds:
+            logger.debug(
+                f"Rebalance pending: members rebalancing for {wedged_after}s are considered hung"
+            )
+            threshold_seconds = wedged_after
+
     threshold_time = datetime.now(timezone.utc) - timedelta(seconds=threshold_seconds)
     members = _status.get("members", [])
     
@@ -852,6 +887,8 @@ def _update_linked_resources_status(
         # Dynamic group membership rebalances on its own.
         if _status.get("rebalanceRequired"):
             status_update["rebalanceRequired"] = False
+        if _status.get("rebalance"):
+            status_update["rebalance"] = None
         return False
 
     # Only evaluate subscription changes if fetch was fully successful
@@ -868,13 +905,13 @@ def _update_linked_resources_status(
     tasks_info = _extract_basic_info(related_resources["tasks"], hashes.get("tasks"))
 
     # Get current resources from status
-    current_resources = _status.get("linkedResources", {})
-    
-    # Check if this is the first time tracking resources (migration safety)
-    # If linkedResources doesn't exist or is empty, initialize without triggering rebalance
-    is_first_tracking = not current_resources or not any(
-        current_resources.get(key) for key in ["agents", "tables", "webviews", "tasks"]
-    )
+    current_resources = _status.get("linkedResources") or {}
+
+    # The first time an app's resources are tracked (a new app, or a status from before
+    # tracking) there is nothing to compare them with, so no rebalance is triggered. An
+    # app tracked with no resources at all is tracked nonetheless: its first agent or
+    # table changes what its members consume.
+    is_first_tracking = not current_resources
 
     if is_first_tracking:
         # First time tracking - initialize status without triggering rebalance
@@ -930,11 +967,36 @@ def _update_linked_resources_status(
         # Mark rebalance required if subscriptions changed
         if subscription_changed:
             status_update["rebalanceRequired"] = True
+            status_update["rebalance"] = _pending_rebalance(
+                _status.get("rebalance"),
+                subscription_change(current_resources, status_update["linkedResources"], name),
+            )
             logger.info(
                 f"Subscription change detected for {name}: {', '.join(change_details)} - marking rebalance required"
             )
-    
+
     return subscription_changed
+
+
+def _pending_rebalance(previous: Optional[Mapping], change: SubscriptionChange) -> Dict:
+    """The rebalance a subscription change requires, folding in one still pending.
+
+    Topics an earlier change removed must still leave the assignment, unless this
+    change adds them back. Requests start over: the rollout carrying this change
+    restarts the members.
+    """
+    removed = set((previous or {}).get("removedTopics") or ())
+    removed = (removed | change.removed) - change.added
+    return {
+        "reason": "SubscriptionChanged",
+        "removedTopics": sorted(removed),
+        "attempts": 0,
+        "requestedAt": None,
+        "lastRequestedAt": None,
+        "unassignedTopics": None,
+        "staleTopics": None,
+        "message": None,
+    }
 
 
 def _update_conditions(
@@ -1068,19 +1130,28 @@ async def _attempt_auto_rebalance(
     namespace: str,
     logger: Logger,
     state: Optional[AppRuntimeState] = None,
+    meta: Optional[Mapping] = None,
 ):
-    """Attempt automatic rebalance if required and conditions are met.
-    
-    This function calls app.request_rebalance() directly rather than using the
-    kaspr.io/rebalance annotation mechanism for performance and simplicity:
-    - Half the API calls (no annotation patch operations)
-    - No race conditions between handlers
-    - Simpler control flow within single status update
-    - rebalanceRequired flag provides natural retry mechanism
-    
-    Does not raise errors to avoid rolling back status patches. The rebalanceRequired
-    flag will persist and trigger retry on next status update cycle.
-    
+    """Rebalance the app's consumer group when its subscriptions changed, until it takes.
+
+    With static group membership, members restarted by the rollout that carries a
+    subscription change get their old partitions back, so the group must rebalance
+    once every member runs the new subscriptions. The operator then asks the members
+    to rejoin (`KasprApp.request_rebalance`) and checks, from the assignments they
+    report, that the rebalance took: every topic the app consumes by name is assigned,
+    and none it stopped consuming still is (`kaspr.utils.subscriptions`). Until then
+    `rebalanceRequired` stays set, and `rebalance` says how far it got. A rebalance
+    that does not take is requested again, up to `rebalance_max_attempts` times, and
+    the operator gives up after `rebalance_verify_timeout_seconds`, reporting the
+    topics no member is assigned. Members that cannot report an assignment (older
+    Kaspr versions) are trusted with the first request.
+
+    The request is a direct call rather than the kaspr.io/rebalance annotation, so
+    the whole step happens within one status update.
+
+    Does not raise errors to avoid rolling back status patches; whatever fails is
+    tried again at a later status update.
+
     Args:
         status_update: Dictionary to accumulate status updates
         _status: Current status from CRD
@@ -1090,7 +1161,8 @@ async def _attempt_auto_rebalance(
         name: KasprApp name
         namespace: Kubernetes namespace
         logger: Logger instance
-        memo: Kopf memo containing sensor
+        state: What the operator remembers about this app between refreshes.
+        meta: The app's metadata, for the events this posts.
     """
     if not status_update.get("rebalanceRequired", _status.get("rebalanceRequired")):
         return
@@ -1108,58 +1180,19 @@ async def _attempt_auto_rebalance(
         return
 
     # Check prerequisites for rebalance
-    can_rebalance = (
-        not _actual_status.get("rolloutInProgress")
-        and _actual_status.get("availableMembers") == _actual_status.get("desiredMembers")
-        and app.conf.client_status_check_enabled
-    )
-
-    if can_rebalance:
-        # Instrument rebalance start
-        sensor = get_sensor()
-        sensor_state = None
-        if sensor:
-            sensor_state = sensor.on_rebalance_triggered(name, namespace, "subscription_change")
-        
-        rebalance_start_time = time.time()
-        success = False
-        if state is not None:
-            state.last_rebalance_deferral = None
-        
-        try:
-            logger.info(f"Attempting automatic rebalance for {name} due to subscription changes")
-            requested, reason = await app.request_rebalance(status=_actual_status)
-
-            if requested:
-                # Clear the flag on successful rebalance
-                status_update["rebalanceRequired"] = False
-                success = True
-                logger.info(f"Automatic rebalance completed successfully for {name}")
-            else:
-                # Rebalance not ready, keep flag set for retry on next status update
-                logger.warning(f"Automatic rebalance not ready for {name}: {reason}")
-
-        except Exception as e:
-            # Log error but don't raise to avoid rolling back status patches
-            # The rebalanceRequired flag remains set and will trigger retry
-            logger.error(f"Automatic rebalance failed for {name}: {e}")
-            logger.exception(e)
-        finally:
-            # Instrument rebalance complete
-            if sensor and sensor_state is not None:
-                duration = time.time() - rebalance_start_time
-                sensor.on_rebalance_complete(name, namespace, sensor_state, success, duration)
-    else:
-        # Prerequisites not met, log details
+    reasons = []
+    if _actual_status.get("rolloutInProgress"):
+        reasons.append("rollout in progress")
+    if not _actual_status.get("desiredMembers"):
+        # Nothing to rebalance. Members started within the session timeout come back
+        # to their old assignment, so the rebalance stays pending until then.
+        reasons.append("scaled to zero")
+    elif _actual_status.get("availableMembers") != _actual_status.get("desiredMembers"):
+        reasons.append(f"members not ready ({_actual_status.get('availableMembers')}/{_actual_status.get('desiredMembers')})")
+    if not app.conf.client_status_check_enabled:
+        reasons.append("client status check disabled")
+    if reasons:
         # Flag remains set and will retry when conditions improve
-        reasons = []
-        if _actual_status.get("rolloutInProgress"):
-            reasons.append("rollout in progress")
-        if _actual_status.get("availableMembers") != _actual_status.get("desiredMembers"):
-            reasons.append(f"members not ready ({_actual_status.get('availableMembers')}/{_actual_status.get('desiredMembers')})")
-        if not app.conf.client_status_check_enabled:
-            reasons.append("client status check disabled")
-
         deferral = ", ".join(reasons)
         if state is None or state.last_rebalance_deferral != deferral:
             logger.info(f"Automatic rebalance deferred for {name}: {deferral}")
@@ -1167,6 +1200,152 @@ async def _attempt_auto_rebalance(
             logger.debug(f"Automatic rebalance deferred for {name}: {deferral}")
         if state is not None:
             state.last_rebalance_deferral = deferral
+        return
+    if state is not None:
+        state.last_rebalance_deferral = None
+
+    conf = app.conf
+    pending = dict(status_update.get("rebalance") or _status.get("rebalance") or {})
+    attempts = int(pending.get("attempts") or 0)
+    current = datetime.now(timezone.utc)
+
+    if attempts:
+        last_requested_at = _parse_time(pending.get("lastRequestedAt")) or current
+        first_requested_at = _parse_time(pending.get("requestedAt")) or last_requested_at
+        if (current - last_requested_at).total_seconds() < conf.rebalance_verify_delay_seconds:
+            return  # give the rebalance time to happen
+        if len(_actual_status.get("members") or ()) < _actual_status["desiredMembers"]:
+            return  # some member did not report; check at a later refresh
+        linked = status_update.get("linkedResources", _status.get("linkedResources"))
+        check = check_assignment(
+            _actual_status.get("members"),
+            subscribed_topics(linked, name),
+            pending.get("removedTopics"),
+        )
+        if not check.reported or check.satisfied:
+            # Without reported assignments there is nothing to check: the first request
+            # is trusted, as before members reported them.
+            status_update["rebalanceRequired"] = False
+            status_update["rebalance"] = None
+            took = (current - first_requested_at).total_seconds()
+            if check.reported:
+                logger.info(
+                    f"Rebalance of {name} took effect {took:.0f}s after it was first requested: "
+                    "its members are assigned every topic it consumes"
+                )
+            else:
+                logger.info(f"Rebalance of {name} requested; its members do not report assignments to check")
+            _rebalance_finished(state, name, namespace, success=True)
+            return
+        details = _assignment_gap_details(check)
+        if (current - first_requested_at).total_seconds() >= conf.rebalance_verify_timeout_seconds:
+            message = (
+                f"Gave up rebalancing after {attempts} requests: {details}. "
+                "A topic may not exist, or a member may be unable to rejoin its group."
+            )
+            status_update["rebalanceRequired"] = False
+            status_update["rebalance"] = {
+                **pending,
+                "unassignedTopics": check.unassigned,
+                "staleTopics": check.stale,
+                "message": message,
+            }
+            logger.warning(f"Automatic rebalance of {name} did not take effect: {message}")
+            _post_rebalance_warning(name, namespace, meta, message, logger)
+            _rebalance_finished(state, name, namespace, success=False)
+            return
+        if not check.settled or attempts >= conf.rebalance_max_attempts:
+            # Still rebalancing, or out of requests: wait. A member stuck rebalancing is
+            # restarted by hung member detection.
+            gaps = {"unassignedTopics": check.unassigned, "staleTopics": check.stale}
+            if check.settled and any(pending.get(key) != value for key, value in gaps.items()):
+                status_update["rebalance"] = {**pending, **gaps, "message": f"Waiting: {details}"}
+            return
+        pending.update(
+            unassignedTopics=check.unassigned,
+            staleTopics=check.stale,
+            message=f"Requesting again: {details}",
+        )
+        logger.warning(f"Rebalance of {name} has not taken effect ({details}); requesting it again")
+
+    if not attempts and state is not None:
+        sensor = get_sensor()
+        if sensor:
+            state.rebalance_sensor_state = sensor.on_rebalance_triggered(
+                name, namespace, "subscription_change"
+            )
+
+    try:
+        logger.info(f"Attempting automatic rebalance for {name} due to subscription changes")
+        requested, reason = await app.request_rebalance(status=_actual_status)
+    except Exception as e:
+        # Log error but don't raise to avoid rolling back status patches
+        # The rebalanceRequired flag remains set and will trigger retry
+        logger.error(f"Automatic rebalance failed for {name}: {e}")
+        logger.exception(e)
+        return
+    if not requested:
+        # Rebalance not ready, keep flag set for retry on next status update
+        logger.warning(f"Automatic rebalance not ready for {name}: {reason}")
+        return
+    requested_at = current.isoformat()
+    status_update["rebalance"] = {
+        "reason": pending.get("reason") or "SubscriptionChanged",
+        "removedTopics": pending.get("removedTopics") or [],
+        "unassignedTopics": pending.get("unassignedTopics"),
+        "staleTopics": pending.get("staleTopics"),
+        "message": pending.get("message"),
+        "attempts": attempts + 1,
+        "requestedAt": pending.get("requestedAt") or requested_at,
+        "lastRequestedAt": requested_at,
+    }
+    logger.info(f"Automatic rebalance requested for {name}: {reason}")
+
+
+def _parse_time(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _assignment_gap_details(check) -> str:
+    parts = []
+    if not check.settled:
+        parts.append("members are still rebalancing")
+    if check.unassigned:
+        parts.append(f"no member is assigned {', '.join(check.unassigned)}")
+    if check.stale:
+        parts.append(f"members are still assigned {', '.join(check.stale)}, which the app no longer consumes")
+    return "; ".join(parts) or "the assignment does not match"
+
+
+def _rebalance_finished(state: Optional[AppRuntimeState], name: str, namespace: str, success: bool):
+    """Record the outcome of a rebalance with the sensor that saw it requested."""
+    if state is None or state.rebalance_sensor_state is None:
+        return
+    sensor = get_sensor()
+    if sensor:
+        sensor.on_rebalance_complete(name, namespace, state.rebalance_sensor_state, success)
+    state.rebalance_sensor_state = None
+
+
+def _post_rebalance_warning(
+    name: str, namespace: str, meta: Optional[Mapping], message: str, logger: Logger
+):
+    """Post a Warning event on the app, where `kubectl describe` shows it."""
+    reference = {
+        "apiVersion": "kaspr.io/v1alpha1",
+        "kind": APP_KIND,
+        "metadata": {"name": name, "namespace": namespace, "uid": (meta or {}).get("uid")},
+    }
+    try:
+        kopf.warn(reference, reason="RebalanceNotEffective", message=message)
+    except Exception as e:
+        logger.debug(f"Could not post the rebalance event for {name}: {e}")
 
 
 async def fetch_python_packages_status(
@@ -1856,7 +2035,8 @@ async def update_status(
         
         _update_conditions(status_update, _status, _actual_status, gen, cur_gen, app, hung_member_ids)
         await _attempt_auto_rebalance(
-            status_update, _status, _actual_status, annotations, app, name, namespace, logger, state=state
+            status_update, _status, _actual_status, annotations, app, name, namespace, logger,
+            state=state, meta=meta,
         )
 
         # Apply the changed status fields in a single atomic operation
@@ -2501,6 +2681,18 @@ async def on_delete(name, namespace=None, logger: Logger = None, **kwargs):
         logger.warning(f"Failed to update the components of deleted KasprApp {name}: {e}")
 
 
+def _status_refresh_interval(spec: Optional[Mapping], status: Optional[Mapping], conf) -> float:
+    """Seconds between status refreshes of an app.
+
+    Shorter while a rebalance is pending on an app that runs members: the rebalance is
+    requested as soon as the rollout that requires it ends, and checked soon after.
+    """
+    interval = conf.status_update_interval_seconds
+    if (status or {}).get("rebalanceRequired") and (spec or {}).get("replicas", 1) != 0:
+        interval = min(interval, conf.rebalance_check_interval_seconds)
+    return interval
+
+
 def _get_settings():
     """Operator settings (set on KasprApp at startup)."""
     conf = getattr(KasprApp, "conf", None)
@@ -2606,7 +2798,7 @@ async def process_reconciliation_requests(
             return
         if (
             state.last_status_update_at is not None
-            and current_time - state.last_status_update_at < conf.status_update_interval_seconds
+            and current_time - state.last_status_update_at < _status_refresh_interval(spec, status, conf)
         ):
             return
         state.last_status_update_at = current_time
@@ -2760,6 +2952,8 @@ async def on_rebalance_requested(
         # This rebalance also covers one pending from a subscription change.
         if (status or {}).get("rebalanceRequired"):
             patch.status["rebalanceRequired"] = False
+        if (status or {}).get("rebalance"):
+            patch.status["rebalance"] = None
 
     except Exception as e:
         # Post failure event
