@@ -1283,18 +1283,19 @@ async def _attempt_auto_rebalance(
         # gets one.
         linked = status_update.get("linkedResources", _status.get("linkedResources"))
         members = _actual_status.get("members") or []
-        if not agent_patterns((linked or {}).get("agents")) and len(members) >= _actual_status["desiredMembers"]:
+        if not agent_patterns((linked or {}).get("agents")):
             check = check_assignment(members, subscribed_topics(linked, name), pending.get("removedTopics"))
+            every_member_reported = len(members) >= _actual_status["desiredMembers"]
             if (
-                check.reported
-                and not check.settled
+                (not every_member_reported or (check.reported and not check.settled))
                 and state is not None
                 and _loop_time() - state.rebalance_ready_since < conf.rebalance_verify_delay_seconds
             ):
-                # The group is rebalancing already: see where it settles before asking
-                # for another, for no longer than a requested rebalance is given.
+                # A member that just started may not answer yet, and the group may be
+                # rebalancing already: see where it settles before asking for another,
+                # for no longer than a requested rebalance is given.
                 return
-            if check.satisfied:
+            if every_member_reported and check.satisfied:
                 status_update["rebalanceRequired"] = False
                 status_update["rebalance"] = None
                 logger.info(

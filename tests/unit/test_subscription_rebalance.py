@@ -370,6 +370,21 @@ def test_a_group_rebalancing_after_the_rollout_is_given_time_to_settle(monkeypat
     assert len(fake_app.rebalance_calls) == 1
 
 
+def test_a_member_that_does_not_answer_yet_is_waited_for_before_the_first_request(monkeypatch):
+    # The member that answers already matches the change; the other just started.
+    fake_app = FakeApp(app_status(REBALANCED[:1], availableMembers=2, desiredMembers=2))
+    use_fake_app(monkeypatch, fake_app)
+    state = handler.AppRuntimeState()
+
+    refresh(pending_status(), state)
+    assert fake_app.rebalance_calls == []
+
+    fake_app.actual_status = app_status(REBALANCED)
+    _, changes = refresh(pending_status(), state)
+    assert fake_app.rebalance_calls == []
+    assert changes["rebalanceRequired"] is False
+
+
 def test_the_settling_time_starts_over_when_members_are_not_ready(monkeypatch):
     rebalancing = [member(0, rebalancing=True), member(1, rebalancing=True)]
     fake_app = FakeApp(app_status(rebalancing))
