@@ -260,10 +260,13 @@ def test_rebalance_required_persists_until_rebalance_succeeds(monkeypatch):
     assert "rebalanceRequired" not in run_update_status(status, state)
     assert fake_app.rebalance_calls == []
 
-    # ...and then request the rebalance with the status they already fetched.
+    # ...and then request the rebalance with the status they already fetched. It stays
+    # pending until the members' assignments show it took (test_subscription_rebalance.py).
     fake_app.actual_status = healthy_status(rolloutInProgress=False)
     changes = run_update_status(status, state)
-    assert changes["rebalanceRequired"] is False
+    assert "rebalanceRequired" not in changes
+    assert changes["rebalance"]["attempts"] == 1
+    assert changes["rebalance"]["removedTopics"] == []
     assert len(fake_app.rebalance_calls) == 1
     assert fake_app.rebalance_calls[0]["availableMembers"] == 1
 

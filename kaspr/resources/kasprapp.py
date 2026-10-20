@@ -5,7 +5,7 @@ import time
 import logging
 from dataclasses import dataclass, field
 from logging import Logger
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from kaspr.utils.objects import cached_property
 from kaspr.utils.helpers import now
 from kaspr.types.settings import Settings
@@ -3164,18 +3164,22 @@ class KasprApp(BaseResource):
             return True
         return False
 
-    async def request_rebalance(self, status: Optional[Dict] = None) -> bool:
-        """Request a cluster rebalance when the app cluster is in ready state.
+    async def request_rebalance(self, status: Optional[Dict] = None) -> Tuple[bool, str]:
+        """Ask every member of the app to rejoin its consumer group, which rebalances it.
 
-        Ready state is defined as:
-        - availableReplicas equals desiredReplicas
-        - At least one member is a leader
+        A rejoin rebalances a stable group only when it comes from the member the broker
+        made the group's leader, or from a member whose metadata changed. A member's
+        ``leader`` flag is Kaspr's own (it owns the leader topic's partition), not the
+        broker's choice, and a member may be unable to act on the request, so every
+        member is asked: the broker's leader is always among them.
+
+        Requested only when every desired member is available.
 
         Args:
             status: App status as returned by fetch_app_status; fetched when omitted.
 
-        Raises:
-            Exception: If cluster is not in ready state or rebalance fails
+        Returns:
+            Whether any member accepted the request, and why not otherwise.
         """
         if status is None:
             status = await self.fetch_app_status()
@@ -3183,15 +3187,17 @@ class KasprApp(BaseResource):
         if not status:
             return False, "App status not available"
 
-        # Check if cluster is in ready state
-        available_replicas = status.get("availableReplicas", 0)
-        desired_replicas = status.get("desiredReplicas", 0)
-        members = status.get("members", [])
+        available = status.get("availableMembers", 0)
+        desired = status.get("desiredMembers", 0)
+        members = status.get("members") or []
 
-        if available_replicas != desired_replicas:
+        if not desired:
+            return False, "App is scaled to zero"
+
+        if available != desired:
             self.logger.warning(
                 f"Cannot request rebalance: cluster not ready "
-                f"(available={available_replicas}, desired={desired_replicas})"
+                f"(available={available}, desired={desired})"
             )
             return False, "Cluster not ready"
 
@@ -3199,32 +3205,24 @@ class KasprApp(BaseResource):
             self.logger.warning("Cannot request rebalance: no member status available")
             return False, "No member status available"
 
-        # Find the leader member
-        leader_idx = None
-        for member_status in members:
-            if member_status.get("leader"):
-                leader_idx = member_status["id"]
-                break
+        member_ids = [int(member["id"]) for member in members]
 
-        if leader_idx is None:
-            self.logger.warning("Cannot request rebalance: leader member not found")
-            return False, "Leader member not found"
+        async def signal(member_id: int):
+            await self.web_client.rebalance(self.prepare_member_url(member_id))
 
-        # Request rebalance on the leader member
-        try:
-            # Convert string index to int for prepare_member_url
-            leader_url = self.prepare_member_url(int(leader_idx))
-            self.logger.info(
-                f"Requesting rebalance on leader member {leader_idx} at {leader_url}"
-            )
-            await self.web_client.rebalance(leader_url)
-            self.logger.info(f"Rebalance successfully requested on member {leader_idx}")
-            return True, "Rebalance requested successfully"
-        except Exception as e:
-            self.logger.error(
-                f"Failed to request rebalance on member {leader_idx}: {e}"
-            )
-            raise
+        results = await asyncio.gather(
+            *(signal(member_id) for member_id in member_ids), return_exceptions=True
+        )
+        accepted = [m for m, result in zip(member_ids, results) if not isinstance(result, BaseException)]
+        for member_id, result in zip(member_ids, results):
+            if isinstance(result, BaseException):
+                self.logger.warning(f"Failed to request rebalance on member {member_id}: {result}")
+        if not accepted:
+            return False, "No member accepted the rebalance request"
+        self.logger.info(
+            f"Rebalance requested on members {accepted} of {len(member_ids)}"
+        )
+        return True, f"Rebalance requested on {len(accepted)} of {len(member_ids)} members"
 
     @cached_property
     def static_group_membership_enabled(self) -> bool:
