@@ -354,14 +354,37 @@ def test_an_app_subscribing_by_pattern_always_gets_a_request(monkeypatch):
     assert after["rebalance"]["attempts"] == 1
 
 
-def test_members_still_rebalancing_after_the_rollout_get_a_request(monkeypatch):
+def test_a_group_rebalancing_after_the_rollout_is_given_time_to_settle(monkeypatch):
     members = [member(0, actives={"orders": [0], "refunds": [0]}, rebalancing=True), member(1)]
     fake_app = FakeApp(app_status(members))
     use_fake_app(monkeypatch, fake_app)
+    state = handler.AppRuntimeState()
 
-    refresh(pending_status(), handler.AppRuntimeState())
+    # It may settle on an assignment that matches already.
+    refresh(pending_status(), state)
+    assert fake_app.rebalance_calls == []
 
+    # Unsettled for as long as a requested rebalance is given: requested anyway.
+    state.rebalance_ready_since -= 20
+    refresh(pending_status(), state)
     assert len(fake_app.rebalance_calls) == 1
+
+
+def test_the_settling_time_starts_over_when_members_are_not_ready(monkeypatch):
+    rebalancing = [member(0, rebalancing=True), member(1, rebalancing=True)]
+    fake_app = FakeApp(app_status(rebalancing))
+    use_fake_app(monkeypatch, fake_app)
+    state = handler.AppRuntimeState()
+
+    refresh(pending_status(), state)
+    state.rebalance_ready_since -= 20
+    fake_app.actual_status = app_status(rebalancing, availableMembers=1)
+    refresh(pending_status(), state)
+    assert state.rebalance_ready_since is None
+
+    fake_app.actual_status = app_status(rebalancing)
+    refresh(pending_status(), state)
+    assert fake_app.rebalance_calls == []
 
 
 def test_nothing_is_checked_before_the_rebalance_had_time(monkeypatch):

@@ -107,6 +107,9 @@ class AppRuntimeState:
     last_rebalance_deferral: Optional[str] = None
     # What the sensor recorded when the pending rebalance was first requested.
     rebalance_sensor_state: Optional[Dict] = None
+    # Loop time since which a pending rebalance could be requested (rollout over,
+    # every member ready).
+    rebalance_ready_since: Optional[float] = None
 
     def schedule_reconcile(self, delay: float, reason: str):
         """Schedule a full reconciliation, keeping an earlier one if already due sooner."""
@@ -1201,9 +1204,12 @@ async def _attempt_auto_rebalance(
             logger.debug(f"Automatic rebalance deferred for {name}: {deferral}")
         if state is not None:
             state.last_rebalance_deferral = deferral
+            state.rebalance_ready_since = None
         return
     if state is not None:
         state.last_rebalance_deferral = None
+        if state.rebalance_ready_since is None:
+            state.rebalance_ready_since = _loop_time()
 
     conf = app.conf
     pending = dict(status_update.get("rebalance") or _status.get("rebalance") or {})
@@ -1279,6 +1285,15 @@ async def _attempt_auto_rebalance(
         members = _actual_status.get("members") or []
         if not agent_patterns((linked or {}).get("agents")) and len(members) >= _actual_status["desiredMembers"]:
             check = check_assignment(members, subscribed_topics(linked, name), pending.get("removedTopics"))
+            if (
+                check.reported
+                and not check.settled
+                and state is not None
+                and _loop_time() - state.rebalance_ready_since < conf.rebalance_verify_delay_seconds
+            ):
+                # The group is rebalancing already: see where it settles before asking
+                # for another, for no longer than a requested rebalance is given.
+                return
             if check.satisfied:
                 status_update["rebalanceRequired"] = False
                 status_update["rebalance"] = None
@@ -1286,6 +1301,7 @@ async def _attempt_auto_rebalance(
                     f"No rebalance needed for {name}: its members are already assigned every "
                     "topic it consumes, and none it stopped consuming"
                 )
+                _rebalance_finished(state, name, namespace, success=True)
                 return
         if state is not None:
             sensor = get_sensor()
@@ -1343,8 +1359,12 @@ def _assignment_gap_details(check) -> str:
 
 
 def _rebalance_finished(state: Optional[AppRuntimeState], name: str, namespace: str, success: bool):
-    """Record the outcome of a rebalance with the sensor that saw it requested."""
-    if state is None or state.rebalance_sensor_state is None:
+    """Forget a rebalance that is no longer pending, and record its outcome with the
+    sensor that saw it requested."""
+    if state is None:
+        return
+    state.rebalance_ready_since = None
+    if state.rebalance_sensor_state is None:
         return
     sensor = get_sensor()
     if sensor:

@@ -28,9 +28,10 @@ rebalance on their own and are left alone.
    than every `STATUS_UPDATE_INTERVAL_SECONDS` (30 s).
 3. **Skips it if the group already matches.** Members can rebalance on their own once they run
    the new subscriptions: with Kaspr's stale-assignment fix, a member handed back a topic it no
-   longer subscribes to leaves its group and rejoins. If every member reports, none is
-   rebalancing, and their assignments already match the change (step 5), nothing is requested. An
-   app whose agents subscribe by pattern always gets a request, since patterns cannot be checked.
+   longer subscribes to leaves its group and rejoins. A group that is rebalancing when the rollout
+   ends is given up to `REBALANCE_VERIFY_DELAY_SECONDS` to settle; if every member then reports
+   and their assignments already match the change (step 5), nothing is requested. An app whose
+   agents subscribe by pattern always gets a request, since patterns cannot be checked.
 4. **Requests the rebalance from every member.** `POST /signal/rebalance/` makes a member rejoin
    its group. A rejoin rebalances a stable group when it comes from the member the broker made the
    group's leader, or from a member whose metadata changed. A member's `leader` flag in its status
