@@ -76,7 +76,7 @@ conds = upsert_condition(conds, {
 
 ### Web Client Integration
 The operator includes a web client (`kaspr/web/`) for triggering Kaspr cluster operations:
-- Rebalancing: `POST /signal/rebalance/`
+- Rebalancing: `POST /signal/rebalance/` (the operator asks every member; see `docs/user-guide/rebalancing.md`)
 - Status checks: `GET /status/`
 - Configured per KasprApp instance
 

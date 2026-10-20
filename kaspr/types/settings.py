@@ -96,6 +96,28 @@ STATUS_UPDATE_INTERVAL_SECONDS = float(
     _getenv("STATUS_UPDATE_INTERVAL_SECONDS", 30.0)
 )
 
+#: Seconds between status refreshes of a KasprApp while a rebalance is pending, so the
+#: rebalance follows closely on the rollout that requires it, and its effect is checked soon.
+REBALANCE_CHECK_INTERVAL_SECONDS = float(
+    _getenv("REBALANCE_CHECK_INTERVAL_SECONDS", 5.0)
+)
+
+#: Seconds a requested rebalance is given before the members' assignments are checked
+#: against the app's subscriptions.
+REBALANCE_VERIFY_DELAY_SECONDS = float(
+    _getenv("REBALANCE_VERIFY_DELAY_SECONDS", 15.0)
+)
+
+#: Rebalance requests made for one subscription change while the members' settled
+#: assignments still do not match it.
+REBALANCE_MAX_ATTEMPTS = int(_getenv("REBALANCE_MAX_ATTEMPTS", 3))
+
+#: Seconds after the first request within which a rebalance must take effect. Past them
+#: the operator stops requesting and reports the topics no member is assigned.
+REBALANCE_VERIFY_TIMEOUT_SECONDS = float(
+    _getenv("REBALANCE_VERIFY_TIMEOUT_SECONDS", 600.0)
+)
+
 #: Seconds between periodic full reconciliations of a KasprApp and its components.
 #: Changes to KasprApps and their components are reconciled as soon as they happen;
 #: the periodic pass only repairs drift in owned resources that produce no event.
@@ -118,6 +140,10 @@ class Settings:
     hung_rebalancing_threshold_seconds: int = HUNG_REBALANCING_THRESHOLD_SECONDS
     status_update_interval_seconds: float = STATUS_UPDATE_INTERVAL_SECONDS
     reconcile_interval_seconds: float = RECONCILE_INTERVAL_SECONDS
+    rebalance_check_interval_seconds: float = REBALANCE_CHECK_INTERVAL_SECONDS
+    rebalance_verify_delay_seconds: float = REBALANCE_VERIFY_DELAY_SECONDS
+    rebalance_max_attempts: int = REBALANCE_MAX_ATTEMPTS
+    rebalance_verify_timeout_seconds: float = REBALANCE_VERIFY_TIMEOUT_SECONDS
     kaspr_image_registry: str = KASPR_IMAGE_REGISTRY
     python_packages_init_image: str = PYTHON_PACKAGES_INIT_IMAGE
 
@@ -135,6 +161,10 @@ class Settings:
         hung_rebalancing_threshold_seconds: int = None,
         status_update_interval_seconds: float = None,
         reconcile_interval_seconds: float = None,
+        rebalance_check_interval_seconds: float = None,
+        rebalance_verify_delay_seconds: float = None,
+        rebalance_max_attempts: int = None,
+        rebalance_verify_timeout_seconds: float = None,
         **kwargs,
     ):
         if initial_max_replicas is not None:
@@ -170,4 +200,16 @@ class Settings:
 
         if reconcile_interval_seconds is not None:
             self.reconcile_interval_seconds = reconcile_interval_seconds
+
+        if rebalance_check_interval_seconds is not None:
+            self.rebalance_check_interval_seconds = rebalance_check_interval_seconds
+
+        if rebalance_verify_delay_seconds is not None:
+            self.rebalance_verify_delay_seconds = rebalance_verify_delay_seconds
+
+        if rebalance_max_attempts is not None:
+            self.rebalance_max_attempts = rebalance_max_attempts
+
+        if rebalance_verify_timeout_seconds is not None:
+            self.rebalance_verify_timeout_seconds = rebalance_verify_timeout_seconds
             
