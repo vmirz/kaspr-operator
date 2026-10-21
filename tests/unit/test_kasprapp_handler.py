@@ -449,6 +449,7 @@ def test_on_create_requests_reconciliation(monkeypatch):
 
     class FakeApp:
         reconciliation_paused = False
+        pod_selector = "kaspr.io/cluster=test-app"
 
         async def create(self):
             calls.append("create")

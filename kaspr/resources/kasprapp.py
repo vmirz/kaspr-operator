@@ -3049,6 +3049,8 @@ class KasprApp(BaseResource):
             "desiredMembers": self.replicas,
             "rolloutInProgress": rollout_in_progress,
             "members": member_statuses if available_replicas > 0 else [],
+            "replicas": (stateful_set.status.replicas or 0) if stateful_set.status else 0,
+            "selector": self.pod_selector,
         }
 
     async def fetch_all_member_statuses(
@@ -3237,6 +3239,15 @@ class KasprApp(BaseResource):
             f"Rebalance requested on members {accepted} of {len(member_ids)}"
         )
         return True, f"Rebalance requested on {len(accepted)} of {len(member_ids)} members"
+
+    @property
+    def pod_selector(self) -> str:
+        """Label selector of the app's pods in string form, as the scale subresource reports it.
+
+        The same labels select the pods for the StatefulSet and the services.
+        """
+        selector = self.labels.kasper_label_selectors().as_dict()
+        return ",".join(f"{key}={value}" for key, value in sorted(selector.items()))
 
     @cached_property
     def static_group_membership_enabled(self) -> bool:

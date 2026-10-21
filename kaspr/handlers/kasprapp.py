@@ -623,6 +623,12 @@ def _update_basic_status_fields(
     ) != _status.get("rolloutInProgress"):
         status_update["rolloutInProgress"] = _actual_status["rolloutInProgress"]
 
+    # Read through the scale subresource: autoscalers find the app's pods by the
+    # selector, and take the replica count as the app's current size.
+    for key in ("replicas", "selector"):
+        if _actual_status.get(key) is not None and _actual_status[key] != _status.get(key):
+            status_update[key] = _actual_status[key]
+
     # Aggregate rebalancing status from members
     # Format: "<count of rebalancing members>/<available members>"
     if _actual_status.get("members") is not None:
@@ -2278,6 +2284,10 @@ async def on_create(
         # attached, so the first pod does not start without them.
         await attach_app_related_resources(app, name, namespace)
         await app.create()
+        # Autoscalers find the app's pods by this selector (scale subresource), so it
+        # is reported before the first status refresh.
+        if (status or {}).get("selector") != app.pod_selector:
+            patch.status["selector"] = app.pod_selector
         await request_reconciliation(name, namespace=namespace, logger=logger)
     except Exception as e:
         logger.error(f"Failed to create KasprApp: {e}")

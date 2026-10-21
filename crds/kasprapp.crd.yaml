@@ -30,7 +30,8 @@ spec:
                 replicas:
                   type: integer
                   minimum: 0
-                  description: The number of desired replicas. Defaults to 1. 
+                  default: 1
+                  description: The number of desired replicas. Defaults to 1. Also read and written through the scale subresource (`kubectl scale`, autoscalers).
                 image:
                   type: string
                   description: The container kaspr image to use. If no image name is explicitly specified, it is determined based on the spec.version configuration.
@@ -1458,6 +1459,12 @@ spec:
                 rebalancingMembers:
                   type: string
                   description: Count of members currently rebalancing
+                replicas:
+                  type: integer
+                  description: Number of pods the app's StatefulSet runs. Reported as the scale subresource's status.replicas.
+                selector:
+                  type: string
+                  description: Label selector of the app's pods, in string form. Reported as the scale subresource's status.selector, by which autoscalers such as a VerticalPodAutoscaler find the app's pods.
                 pythonPackages:
                   type: object
                   description: |-
@@ -1491,7 +1498,11 @@ spec:
                         type: string
                       description: Non-fatal warnings during installation
       subresources:
-        status: {}      
+        status: {}
+        scale:
+          specReplicasPath: .spec.replicas
+          statusReplicasPath: .status.replicas
+          labelSelectorPath: .status.selector
       additionalPrinterColumns:
       - name: Version
         jsonPath: .status.kasprVersion
