@@ -1373,6 +1373,7 @@ spec:
                     - Ready: Overall app readiness
                     - Progressing: Whether reconciliation is in progress
                     - PythonPackagesReady: Python packages installation state (when spec.pythonPackages is configured)
+                    - VerticalPodAutoscalerReady: Whether the app's VerticalPodAutoscaler is in place, or why not (while spec.verticalPodAutoscaler.enabled is true)
                   x-kubernetes-list-type: map
                   x-kubernetes-list-map-keys:
                     - type
