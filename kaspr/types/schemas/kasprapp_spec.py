@@ -57,7 +57,7 @@ class KasprAppSpecSchema(BaseSchema):
     __model__ = KasprAppSpec
 
     version = fields.Str(data_key="version", allow_none=True, load_default=None)
-    replicas = fields.Int(data_key="replicas", allow_none=True)
+    replicas = fields.Int(data_key="replicas", allow_none=True, load_default=None)
     image = fields.Str(data_key="image", allow_none=True, load_default=None)
     bootstrap_servers = fields.Str(data_key="bootstrapServers", required=True)
     tls = fields.Nested(

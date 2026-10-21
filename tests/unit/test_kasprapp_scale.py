@@ -75,6 +75,14 @@ def test_crd_defaults_replicas(crd_version):
     assert replicas["default"] == KasprApp.DEFAULT_REPLICAS
 
 
+def test_app_without_replicas_runs_one_replica():
+    """The default the CRD now applies, also where the CRD in the cluster predates it."""
+    spec = {key: value for key, value in APP_SPEC.items() if key != "replicas"}
+    app = KasprApp.from_spec("test-app", "KasprApp", "test-ns", KasprAppSpecSchema().load(spec), {})
+
+    assert app.replicas == KasprApp.DEFAULT_REPLICAS == 1
+
+
 def test_pod_selector_matches_the_statefulset_selector():
     app = make_app()
 
