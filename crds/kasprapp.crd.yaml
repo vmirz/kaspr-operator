@@ -293,6 +293,80 @@ spec:
                           description: Resource limits (cpu, memory).
                   required:
                   - packages
+                verticalPodAutoscaler:
+                  type: object
+                  description: |-
+                    A VerticalPodAutoscaler the operator creates and manages for the app, to set the resources of its kaspr container from their observed usage. Opt-in: nothing is created unless `enabled` is true. Requires the Vertical Pod Autoscaler (autoscaling.k8s.io/v1) in the cluster; without it the app runs as usual and the VerticalPodAutoscalerReady condition says why there is none.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                      description: Create and manage a VerticalPodAutoscaler for the app. Defaults to false.
+                    updateMode:
+                      type: string
+                      enum:
+                      - "Off"
+                      - Initial
+                      - Recreate
+                      - InPlaceOrRecreate
+                      - InPlace
+                      - Auto
+                      description: |-
+                        How the VerticalPodAutoscaler applies its recommendations. Defaults to InPlaceOrRecreate: running pods are resized in place, and recreated only when that is impossible (Kubernetes 1.33+ and VPA 1.4+). `Off` only computes recommendations, `Initial` applies them to new pods only, and `Recreate` evicts pods to apply them. `InPlace` never evicts but needs the VPA's InPlace feature gate; `Auto` is a deprecated alias of `Recreate`.
+                    minReplicas:
+                      type: integer
+                      minimum: 1
+                      description: Fewest running pods that allow the VerticalPodAutoscaler to evict one. Defaults to the VPA updater's --min-replicas (2), so single-replica apps are only resized in place, never evicted.
+                    controlledResources:
+                      type: array
+                      minItems: 1
+                      items:
+                        type: string
+                        enum:
+                        - cpu
+                        - memory
+                      description: |-
+                        Resources the VerticalPodAutoscaler sets. Defaults to [cpu]. Kaspr sizes its RocksDB block cache from the memory limit when it starts, so including memory makes the operator set the kaspr container's resizePolicy to restart the container on a memory resize; adding or removing memory restarts the app's pods once.
+                    controlledValues:
+                      type: string
+                      enum:
+                      - RequestsOnly
+                      - RequestsAndLimits
+                      description: Whether the VerticalPodAutoscaler sets requests only, keeping the limits in spec.resources as ceilings, or requests and limits, keeping their ratio. Defaults to RequestsOnly.
+                    minAllowed:
+                      type: object
+                      description: |-
+                        Lowest requests the VerticalPodAutoscaler may set, e.g. `{cpu: 100m, memory: 256Mi}`.
+                      properties:
+                        cpu:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        memory:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                    maxAllowed:
+                      type: object
+                      description: |-
+                        Highest requests the VerticalPodAutoscaler may set, e.g. `{cpu: "2"}`. A Kaspr worker runs its event loop on one core, so CPU beyond what its other threads and processes can use buys nothing.
+                      properties:
+                        cpu:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        memory:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
                 template:
                   type: object
                   properties:

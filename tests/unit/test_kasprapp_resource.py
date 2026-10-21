@@ -359,6 +359,7 @@ def test_synchronize_unites_before_syncing_children(monkeypatch, kasprapp_withou
     monkeypatch.setattr(
         kasprapp_without_packages, "sync_stateful_set", lambda: record("stateful_set")
     )
+    monkeypatch.setattr(kasprapp_without_packages, "sync_vpa", lambda: record("vpa"))
 
     import asyncio
 
@@ -374,6 +375,8 @@ def test_synchronize_unites_before_syncing_children(monkeypatch, kasprapp_withou
         "python_packages_pvc",
         "hpa",
         "stateful_set",
+        # The optional add-on comes last, after everything the app needs to run.
+        "vpa",
     ]
 
 

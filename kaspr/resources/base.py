@@ -504,6 +504,66 @@ class BaseResource:
                 return None
             raise
 
+    async def create_custom_object(
+        self,
+        custom_objects_api: CustomObjectsApi,
+        namespace: str,
+        group: str,
+        version: str,
+        plural: str,
+        body: Dict[str, Any],
+    ):
+        return await custom_objects_api.create_namespaced_custom_object(
+            group=group,
+            version=version,
+            namespace=namespace,
+            plural=plural,
+            body=body,
+        )
+
+    async def patch_custom_object(
+        self,
+        custom_objects_api: CustomObjectsApi,
+        namespace: str,
+        group: str,
+        version: str,
+        plural: str,
+        name: str,
+        patch: List[Dict[str, Any]],
+    ):
+        """Apply JSON patch operations to a custom object."""
+        return await custom_objects_api.patch_namespaced_custom_object(
+            group=group,
+            version=version,
+            namespace=namespace,
+            plural=plural,
+            name=name,
+            body=patch,
+            _content_type="application/json-patch+json",
+        )
+
+    async def delete_custom_object(
+        self,
+        custom_objects_api: CustomObjectsApi,
+        namespace: str,
+        group: str,
+        version: str,
+        plural: str,
+        name: str,
+    ):
+        try:
+            await custom_objects_api.delete_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                name=name,
+            )
+        except ApiException as ex:
+            if ex.status == 404:
+                return
+            raise
+
     async def patch_custom_object_status(
         self,
         custom_objects_api: CustomObjectsApi,

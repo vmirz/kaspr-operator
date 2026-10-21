@@ -498,6 +498,7 @@ def test_reconcile_attaches_components_before_synchronize(monkeypatch):
         reconciliation_paused = False
         agents, webviews, tables, tasks = [], [], [], []
         stateful_set = object()
+        vpa_condition = None
 
         async def sync_component_config_maps(self):
             calls.append("sync_component_config_maps")

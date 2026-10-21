@@ -11,6 +11,7 @@ from kaspr.types.models.pod_template import PodTemplate
 from kaspr.types.models.service_template import ServiceTemplate
 from kaspr.types.models.container_template import ContainerTemplate
 from kaspr.types.models.python_packages import PythonPackagesSpec
+from kaspr.types.models.vertical_pod_autoscaler import VerticalPodAutoscalerSpec
 
 class KasprAppTemplate(BaseModel):
     """KasprApp template"""
@@ -36,3 +37,4 @@ class KasprAppSpec(BaseModel):
     storage: KasprAppStorage
     template: Optional[KasprAppTemplate]
     python_packages: Optional[PythonPackagesSpec]
+    vertical_pod_autoscaler: Optional[VerticalPodAutoscalerSpec]

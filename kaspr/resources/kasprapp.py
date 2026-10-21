@@ -1,11 +1,12 @@
 import asyncio
+import json
 import os
 import kopf
 import time
 import logging
 from dataclasses import dataclass, field
 from logging import Logger
-from typing import List, Dict, Optional, Tuple
+from typing import Any, List, Dict, Optional, Tuple
 from kaspr.utils.objects import cached_property
 from kaspr.utils.helpers import now
 from kaspr.types.settings import Settings
@@ -28,7 +29,10 @@ from kaspr.types.models.pod_template import PodTemplate
 from kaspr.types.models.service_template import ServiceTemplate
 from kaspr.types.models.container_template import ContainerTemplate
 from kaspr.types.models.python_packages import PythonPackagesSpec
+from kaspr.types.models.vertical_pod_autoscaler import VerticalPodAutoscalerSpec
+from kaspr.types.schemas.vertical_pod_autoscaler import VerticalPodAutoscalerSpecSchema
 from kubernetes_asyncio.client import (
+    ApiException,
     AppsV1Api,
     CoreV1Api,
     CustomObjectsApi,
@@ -45,6 +49,7 @@ from kubernetes_asyncio.client import (
     V1PodSpec,
     V1Container,
     V1ContainerPort,
+    V1ContainerResizePolicy,
     V1VolumeMount,
     V1Volume,
     V1EmptyDirVolumeSource,
@@ -84,6 +89,30 @@ from kaspr.resources import KasprAgent, KasprWebView, KasprTable, KasprTask
 from kaspr.common.models.labels import Labels
 from kaspr.web import KasprWebClient
 from kaspr.sensors import SensorDelegate
+
+
+def _includes(actual: Any, expected: Any) -> bool:
+    """Whether `actual` has every value of `expected`, comparing lists item by item."""
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            _includes(actual.get(key), value) for key, value in expected.items()
+        )
+    if isinstance(expected, list):
+        return (
+            isinstance(actual, list)
+            and len(actual) == len(expected)
+            and all(_includes(a, e) for a, e in zip(actual, expected))
+        )
+    return actual == expected
+
+
+def _api_error_detail(ex: ApiException) -> str:
+    """The API server's message for a failed request, or its status."""
+    try:
+        message = json.loads(ex.body).get("message")
+    except (TypeError, ValueError, AttributeError):
+        message = None
+    return message or f"{ex.status} {ex.reason}"
 
 
 @dataclass
@@ -142,6 +171,19 @@ class KasprApp(BaseResource):
     DEFAULT_GCS_MAX_ARCHIVE_SIZE = "1Gi"
     DEFAULT_GCS_SA_MOUNT_PATH = "/var/run/secrets/gcs"
 
+    # Vertical Pod Autoscaler: a cluster add-on, whose API may not be installed.
+    VPA_GROUP = "autoscaling.k8s.io"
+    VPA_VERSION = "v1"
+    VPA_PLURAL = "verticalpodautoscalers"
+    VPA_KIND = "VerticalPodAutoscaler"
+    VPA_CONDITION = "VerticalPodAutoscalerReady"
+    # How long API discovery results are kept before the cluster is asked again.
+    API_DISCOVERY_TTL_SECONDS = 60.0
+
+    # Resources served per API group version, as (expiry, names) by (group, version),
+    # shared by all apps. Names are None for a group version the cluster does not serve.
+    _api_resources: Dict[Tuple[str, str], Tuple[float, Optional[frozenset]]] = {}
+
     replicas: int
     image: str
     service_name: str
@@ -152,6 +194,7 @@ class KasprApp(BaseResource):
     stateful_set_name: str
     bootstrap_servers: str
     hpa_name: str
+    vpa_name: str
 
     annotations: Dict[str, str] = None
 
@@ -167,6 +210,11 @@ class KasprApp(BaseResource):
     readiness_probe: Probe
     storage: KasprAppStorage
     python_packages: Optional[PythonPackagesSpec]
+    vertical_pod_autoscaler: Optional[VerticalPodAutoscalerSpec] = None
+
+    # Outcome of the last sync_vpa(), for the app's status: a condition, or None when
+    # vertical autoscaling is not enabled.
+    vpa_condition: Optional[Dict[str, str]] = None
 
     # derived from spec
     _env_dict: Dict[str, str] = None
@@ -285,6 +333,7 @@ class KasprApp(BaseResource):
             KasprAppResources.persistent_volume_claim_name(name)
         )
         app.hpa_name = KasprAppResources.hpa_name(name)
+        app.vpa_name = KasprAppResources.vpa_name(name)
         app._version = spec.version
         app._image = spec.image
         app.replicas = (
@@ -299,6 +348,7 @@ class KasprApp(BaseResource):
         app.readiness_probe = spec.readiness_probe
         app.storage = spec.storage
         app.python_packages = spec.python_packages if hasattr(spec, 'python_packages') else None
+        app.vertical_pod_autoscaler = getattr(spec, "vertical_pod_autoscaler", None)
         app.template_service_account = spec.template.service_account
         app.template_pod = spec.template.pod
         app.template_service = spec.template.service
@@ -329,6 +379,8 @@ class KasprApp(BaseResource):
         await self.sync_python_packages_pvc()
         await self.sync_hpa()
         await self.sync_stateful_set()
+        # Last, so that the optional add-on can never hold up the app's own resources.
+        await self.sync_vpa()
 
     async def sync_service(self):
         """Check current state of service and create/patch if needed."""
@@ -826,6 +878,152 @@ class KasprApp(BaseResource):
                         self.sensor.on_resource_sync_complete(
                             self.cluster, self.cluster, self.hpa.metadata.name, self.namespace, "hpa", sensor_state, "patch", success
                         )
+
+    async def sync_vpa(self):
+        """Create, update or delete the VerticalPodAutoscaler the app asks for.
+
+        Vertical autoscaling is opt-in (spec.verticalPodAutoscaler.enabled), and the
+        Vertical Pod Autoscaler is a cluster add-on that may be missing, or that the
+        operator may not be allowed to manage. None of that keeps the app from being
+        reconciled: the outcome goes to vpa_condition, for the app's status.
+        """
+        if not self.vertical_pod_autoscaler_enabled:
+            self.vpa_condition = None
+            await self.remove_vpa()
+            return
+        try:
+            self.vpa_condition = await self.apply_vpa()
+        except ApiException as ex:
+            self.vpa_condition = self.prepare_vpa_error_condition(ex)
+        except Exception as ex:
+            self.vpa_condition = self.prepare_vpa_condition(
+                False,
+                "Error",
+                f"Failed to synchronize VerticalPodAutoscaler {self.vpa_name}: {ex}",
+            )
+
+    async def apply_vpa(self) -> Dict[str, str]:
+        """Create or update the app's VerticalPodAutoscaler, returning the condition to report."""
+        if not await self.vpa_api_available():
+            return self.prepare_vpa_not_installed_condition()
+        desired = self.prepare_vpa(await self.prepare_vpa_target_ref())
+        kopf.adopt(desired)
+        live = await self.fetch_vpa()
+        if live is None:
+            live = await self.create_custom_object(
+                self.custom_objects_api,
+                self.namespace,
+                self.VPA_GROUP,
+                self.VPA_VERSION,
+                self.VPA_PLURAL,
+                desired,
+            )
+            self.logger.info(f"Created VerticalPodAutoscaler {self.vpa_name}.")
+        elif not self.owns(live):
+            return self.prepare_vpa_condition(
+                False,
+                "Conflict",
+                f"VerticalPodAutoscaler {self.vpa_name} exists but does not belong to this "
+                "KasprApp, so it is left alone. Delete it to let the operator manage one.",
+            )
+        else:
+            patch = self.prepare_vpa_patch(live, desired)
+            if patch:
+                live = await self.patch_custom_object(
+                    self.custom_objects_api,
+                    self.namespace,
+                    self.VPA_GROUP,
+                    self.VPA_VERSION,
+                    self.VPA_PLURAL,
+                    self.vpa_name,
+                    patch,
+                )
+                self.logger.info(f"Updated VerticalPodAutoscaler {self.vpa_name}.")
+        return self.prepare_vpa_ready_condition(live or desired, desired)
+
+    async def remove_vpa(self):
+        """Delete the app's VerticalPodAutoscaler, if the operator made one.
+
+        Runs for every app that does not enable vertical autoscaling, so it stays
+        quiet: without the API, or without permission to read it, there is no
+        VerticalPodAutoscaler the operator could have made.
+        """
+        try:
+            if not await self.vpa_api_available():
+                return
+            live = await self.fetch_vpa()
+            if live is None or not self.owns(live):
+                return
+            await self.delete_custom_object(
+                self.custom_objects_api,
+                self.namespace,
+                self.VPA_GROUP,
+                self.VPA_VERSION,
+                self.VPA_PLURAL,
+                self.vpa_name,
+            )
+            self.logger.info(
+                f"Deleted VerticalPodAutoscaler {self.vpa_name}: vertical autoscaling is not enabled."
+            )
+        except Exception as ex:
+            self.logger.debug(f"Skipped removing VerticalPodAutoscaler {self.vpa_name}: {ex}")
+
+    async def fetch_vpa(self) -> Optional[Dict[str, Any]]:
+        return await self.get_custom_object(
+            self.custom_objects_api,
+            self.namespace,
+            self.VPA_GROUP,
+            self.VPA_VERSION,
+            self.VPA_PLURAL,
+            self.vpa_name,
+        )
+
+    async def fetch_api_resources(self, group: str, version: str) -> Optional[frozenset]:
+        """Names of the resources an API group version serves, or None if it is not served.
+
+        Subresources are named `<plural>/<subresource>`. Results are shared by all apps
+        and kept for API_DISCOVERY_TTL_SECONDS, so an add-on installed or removed while
+        the operator runs is noticed within a minute.
+        """
+        key = (group, version)
+        current = time.monotonic()
+        cached = KasprApp._api_resources.get(key)
+        if cached is not None and cached[0] > current:
+            return cached[1]
+        try:
+            resource_list = await self.custom_objects_api.get_api_resources(group, version)
+            resources = frozenset(resource.name for resource in resource_list.resources or ())
+        except ApiException as ex:
+            if ex.status != 404:
+                raise
+            resources = None
+        KasprApp._api_resources[key] = (current + self.API_DISCOVERY_TTL_SECONDS, resources)
+        return resources
+
+    @classmethod
+    def forget_api_resources(cls, group: str, version: str):
+        """Drop what discovery found for an API group version, so it is asked again."""
+        cls._api_resources.pop((group, version), None)
+
+    async def vpa_api_available(self) -> bool:
+        resources = await self.fetch_api_resources(self.VPA_GROUP, self.VPA_VERSION)
+        return bool(resources) and self.VPA_PLURAL in resources
+
+    async def prepare_vpa_target_ref(self) -> Dict[str, str]:
+        """The resource the VerticalPodAutoscaler targets.
+
+        A VPA only accepts the top-most owner of the pods that is either a well-known
+        controller or has a scale subresource. That is the KasprApp, unless the CRD in
+        the cluster predates its scale subresource: then it is the StatefulSet.
+        """
+        resources = await self.fetch_api_resources(self.GROUP_NAME, self.GROUP_VERSION)
+        if resources and f"{self.PLURAL_NAME}/scale" in resources:
+            return {
+                "apiVersion": f"{self.GROUP_NAME}/{self.GROUP_VERSION}",
+                "kind": self.KIND,
+                "name": self.cluster,
+            }
+        return {"apiVersion": "apps/v1", "kind": "StatefulSet", "name": self.stateful_set_name}
 
     async def recreate_statefulset(self, stateful_set: V1StatefulSet):
         """Check if statefulset needs migrations and perform them."""
@@ -2172,6 +2370,7 @@ class KasprApp(BaseResource):
             env=self.env_vars,
             **self.prepare_container_probes(),
             **self.prepare_container_resource_requirements(),
+            resize_policy=self.prepare_container_resize_policy(),
             volume_mounts=self.volume_mounts,
         )
 
@@ -2621,6 +2820,175 @@ class KasprApp(BaseResource):
                 },
             }
         }
+
+    def prepare_vpa(self, target_ref: Dict[str, str]) -> Dict[str, Any]:
+        """Build the app's VerticalPodAutoscaler (a custom resource, so a plain dict).
+
+        Only the kaspr container is autoscaled; any other container keeps the
+        resources it is given.
+        """
+        conf = self.vertical_pod_autoscaler
+        defaults = VerticalPodAutoscalerSpecSchema
+        container_policy = {
+            "containerName": self.KASPR_CONTAINER_NAME,
+            "mode": "Auto",
+            "controlledResources": list(
+                conf.controlled_resources or defaults.DEFAULT_CONTROLLED_RESOURCES
+            ),
+            "controlledValues": conf.controlled_values or defaults.DEFAULT_CONTROLLED_VALUES,
+        }
+        if conf.min_allowed:
+            container_policy["minAllowed"] = dict(conf.min_allowed)
+        if conf.max_allowed:
+            container_policy["maxAllowed"] = dict(conf.max_allowed)
+        update_policy = {"updateMode": conf.update_mode or defaults.DEFAULT_UPDATE_MODE}
+        if conf.min_replicas is not None:
+            update_policy["minReplicas"] = conf.min_replicas
+        vpa = {
+            "apiVersion": f"{self.VPA_GROUP}/{self.VPA_VERSION}",
+            "kind": self.VPA_KIND,
+            "metadata": {
+                "name": self.vpa_name,
+                "namespace": self.namespace,
+                "labels": self.labels.as_dict(),
+                "annotations": {},
+            },
+            "spec": {
+                "targetRef": target_ref,
+                "updatePolicy": update_policy,
+                "resourcePolicy": {
+                    "containerPolicies": [
+                        container_policy,
+                        {"containerName": "*", "mode": "Off"},
+                    ]
+                },
+            },
+        }
+        vpa["metadata"]["annotations"].update(
+            self.prepare_hash_annotation(self.compute_resource_hash(vpa))
+        )
+        return vpa
+
+    def prepare_vpa_patch(self, live: Dict[str, Any], desired: Dict[str, Any]) -> List[Dict]:
+        """JSON patch operations restoring the desired VerticalPodAutoscaler, if it drifted.
+
+        The live spec may have more than the operator sets (e.g. fields the API server
+        defaults), so it only has to contain the desired one.
+        """
+        desired_hash = desired["metadata"]["annotations"][self.RESOURCE_HASH_ANNOTATION]
+        annotations = (live.get("metadata") or {}).get("annotations")
+        if (annotations or {}).get(self.RESOURCE_HASH_ANNOTATION) == desired_hash and _includes(
+            live.get("spec"), desired["spec"]
+        ):
+            return []
+        ops = [{"op": "replace", "path": "/spec", "value": desired["spec"]}]
+        if annotations is None:
+            ops.append({"op": "add", "path": "/metadata/annotations", "value": {}})
+        ops.append(
+            {
+                "op": "add",
+                "path": "/metadata/annotations/"
+                + self.RESOURCE_HASH_ANNOTATION.replace("~", "~0").replace("/", "~1"),
+                "value": desired_hash,
+            }
+        )
+        return ops
+
+    def owns(self, resource: Dict[str, Any]) -> bool:
+        """Whether a resource read from the API is owned by this KasprApp."""
+        refs = (resource.get("metadata") or {}).get("ownerReferences") or []
+        return any(
+            ref.get("kind") == self.KIND
+            and ref.get("name") == self.cluster
+            and str(ref.get("apiVersion", "")).split("/")[0] == self.GROUP_NAME
+            for ref in refs
+        )
+
+    def prepare_vpa_condition(self, ready: bool, reason: str, message: str) -> Dict[str, str]:
+        return {
+            "type": self.VPA_CONDITION,
+            "status": "True" if ready else "False",
+            "reason": reason,
+            "message": message,
+        }
+
+    def prepare_vpa_not_installed_condition(self) -> Dict[str, str]:
+        return self.prepare_vpa_condition(
+            False,
+            "NotInstalled",
+            f"The VerticalPodAutoscaler API ({self.VPA_GROUP}/{self.VPA_VERSION}) is not "
+            "available in this cluster. Install the Vertical Pod Autoscaler to autoscale "
+            "this app; until then its pods keep the resources set in spec.resources.",
+        )
+
+    def prepare_vpa_error_condition(self, ex: ApiException) -> Dict[str, str]:
+        detail = _api_error_detail(ex)
+        if ex.status == 403:
+            return self.prepare_vpa_condition(
+                False,
+                "Forbidden",
+                f"The operator may not manage VerticalPodAutoscalers ({detail}). Grant its "
+                "service account get, create, patch and delete on "
+                f"{self.VPA_PLURAL}.{self.VPA_GROUP}.",
+            )
+        if ex.status == 404:
+            # The API went away since it was discovered.
+            self.forget_api_resources(self.VPA_GROUP, self.VPA_VERSION)
+            return self.prepare_vpa_not_installed_condition()
+        if ex.status in (400, 422):
+            return self.prepare_vpa_condition(
+                False,
+                "Invalid",
+                f"VerticalPodAutoscaler {self.vpa_name} was rejected: {detail}",
+            )
+        return self.prepare_vpa_condition(
+            False,
+            "Error",
+            f"Failed to synchronize VerticalPodAutoscaler {self.vpa_name}: {detail}",
+        )
+
+    def prepare_vpa_ready_condition(
+        self, live: Dict[str, Any], desired: Dict[str, Any]
+    ) -> Dict[str, str]:
+        """Report the VerticalPodAutoscaler as in sync, unless it rejects its configuration."""
+        for condition in (live.get("status") or {}).get("conditions") or []:
+            if condition.get("type") == "ConfigUnsupported" and condition.get("status") == "True":
+                return self.prepare_vpa_condition(
+                    False,
+                    "ConfigUnsupported",
+                    f"VerticalPodAutoscaler {self.vpa_name} does not support its "
+                    f"configuration: {condition.get('message') or condition.get('reason')}",
+                )
+        spec = desired["spec"]
+        target = spec["targetRef"]
+        policy = spec["resourcePolicy"]["containerPolicies"][0]
+        message = (
+            f"VerticalPodAutoscaler {self.vpa_name} targets {target['kind']} {target['name']} "
+            f"and controls the {' and '.join(policy['controlledResources'])} of the "
+            f"{self.KASPR_CONTAINER_NAME} container (updateMode "
+            f"{spec['updatePolicy']['updateMode']})."
+        )
+        if not (self.resources and (self.resources.requests or self.resources.limits)):
+            message += (
+                " spec.resources sets no requests, so pods start without any: each is "
+                "recreated once before it can be resized in place."
+            )
+        return self.prepare_vpa_condition(True, "Configured", message)
+
+    def prepare_container_resize_policy(self) -> Optional[List[V1ContainerResizePolicy]]:
+        """How the kaspr container takes resources resized in place.
+
+        Kaspr sizes its RocksDB block cache from the container's memory limit when it
+        starts, so a memory resize must restart the container; CPU resizes apply as
+        they are. Left unset unless the VerticalPodAutoscaler controls memory, which
+        keeps the pods of every other app as they were.
+        """
+        if not self.vpa_controls_memory:
+            return None
+        return [
+            V1ContainerResizePolicy(resource_name="cpu", restart_policy="NotRequired"),
+            V1ContainerResizePolicy(resource_name="memory", restart_policy="RestartContainer"),
+        ]
 
     async def patch_settings(self):
         """Update resources as a result of app settings change."""
@@ -3239,6 +3607,22 @@ class KasprApp(BaseResource):
             f"Rebalance requested on members {accepted} of {len(member_ids)}"
         )
         return True, f"Rebalance requested on {len(accepted)} of {len(member_ids)} members"
+
+    @property
+    def vertical_pod_autoscaler_enabled(self) -> bool:
+        """Whether the app asks for a VerticalPodAutoscaler; it never gets one by default."""
+        conf = self.vertical_pod_autoscaler
+        return bool(conf is not None and conf.enabled)
+
+    @property
+    def vpa_controls_memory(self) -> bool:
+        if not self.vertical_pod_autoscaler_enabled:
+            return False
+        resources = (
+            self.vertical_pod_autoscaler.controlled_resources
+            or VerticalPodAutoscalerSpecSchema.DEFAULT_CONTROLLED_RESOURCES
+        )
+        return "memory" in resources
 
     @property
     def pod_selector(self) -> str:

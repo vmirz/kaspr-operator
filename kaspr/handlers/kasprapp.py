@@ -110,6 +110,10 @@ class AppRuntimeState:
     # Loop time since which a pending rebalance could be requested (rollout over,
     # every member ready).
     rebalance_ready_since: Optional[float] = None
+    # Whether a reconciliation synchronized the app's VerticalPodAutoscaler, and the
+    # condition it reported (None when vertical autoscaling is not enabled).
+    vpa_reconciled: bool = False
+    vpa_condition: Optional[Dict[str, str]] = None
 
     def schedule_reconcile(self, delay: float, reason: str):
         """Schedule a full reconciliation, keeping an earlier one if already due sooner."""
@@ -1383,15 +1387,35 @@ def _post_rebalance_warning(
     name: str, namespace: str, meta: Optional[Mapping], message: str, logger: Logger
 ):
     """Post a Warning event on the app, where `kubectl describe` shows it."""
+    _post_app_event(name, namespace, meta, "Warning", "RebalanceNotEffective", message, logger)
+
+
+def _post_app_event(
+    name: str,
+    namespace: str,
+    meta: Optional[Mapping],
+    type: str,
+    reason: str,
+    message: str,
+    logger: Logger,
+):
+    """Post an event on the app, where `kubectl describe` shows it.
+
+    Log messages are not posted as events (kopf's posting.loggers is off), so events
+    are posted explicitly.
+    """
     reference = {
         "apiVersion": "kaspr.io/v1alpha1",
         "kind": APP_KIND,
         "metadata": {"name": name, "namespace": namespace, "uid": (meta or {}).get("uid")},
     }
     try:
-        kopf.warn(reference, reason="RebalanceNotEffective", message=message)
+        if type == "Warning":
+            kopf.warn(reference, reason=reason, message=message)
+        else:
+            kopf.event(reference, type=type, reason=reason, message=message)
     except Exception as e:
-        logger.debug(f"Could not post the rebalance event for {name}: {e}")
+        logger.debug(f"Could not post the {reason} event for {name}: {e}")
 
 
 async def fetch_python_packages_status(
@@ -1856,6 +1880,41 @@ def create_python_packages_condition(state_info: Optional[Dict], gen: int) -> Op
     }
 
 
+def _update_vpa_condition(
+    status_update: Dict,
+    _status: Dict,
+    condition: Optional[Dict[str, str]],
+    gen: int,
+    logger: Logger,
+) -> Optional[Dict[str, str]]:
+    """Report the app's VerticalPodAutoscaler as last reconciled.
+
+    The condition only exists while vertical autoscaling is enabled. Returns the
+    condition when its state changed, after logging it, so it can be announced.
+    """
+    conds = status_update.get("conditions", _status.get("conditions", []))
+    current = next((c for c in conds if c.get("type") == KasprApp.VPA_CONDITION), None)
+    if condition is None:
+        if current is not None:
+            status_update["conditions"] = [
+                c for c in conds if c.get("type") != KasprApp.VPA_CONDITION
+            ]
+        return None
+    status_update["conditions"] = upsert_condition(
+        conds, {**condition, "observedGeneration": gen}
+    )
+    if current is not None and (current.get("status"), current.get("reason")) == (
+        condition["status"],
+        condition["reason"],
+    ):
+        return None
+    if condition["status"] == "True":
+        logger.info(condition["message"])
+    else:
+        logger.warning(condition["message"])
+    return condition
+
+
 def _status_changes(current: Mapping[str, Any], update: Mapping[str, Any]) -> Dict[str, Any]:
     """Return the entries of a status update whose values differ from the current status."""
     changes = {}
@@ -2073,6 +2132,21 @@ async def update_status(
                 status_update["conditions"] = conds
                 logger.info("Python packages removed from spec, clearing PythonPackagesReady condition")
 
+        if state.vpa_reconciled:
+            changed = _update_vpa_condition(
+                status_update, _status, state.vpa_condition, gen, logger
+            )
+            if changed is not None:
+                _post_app_event(
+                    name,
+                    namespace,
+                    meta,
+                    "Normal" if changed["status"] == "True" else "Warning",
+                    KasprApp.VPA_KIND + changed["reason"],
+                    changed["message"],
+                    logger,
+                )
+
         # Detect hung rebalancing members against the effective status snapshot,
         # including freshly computed member transition timestamps.
         effective_status = dict(_status)
@@ -2216,6 +2290,8 @@ async def reconcile(
         state.desired_statefulset_fingerprint = app.prepare_statefulset_fingerprint(
             app.stateful_set
         )
+        state.vpa_reconciled = True
+        state.vpa_condition = app.vpa_condition
         logger.debug(f"Reconciled {APP_KIND}/{name} in {namespace} namespace.")
         await _report_app_status_to_components(
             [*app.agents, *app.webviews, *app.tables, *app.tasks], APP_FOUND, logger
