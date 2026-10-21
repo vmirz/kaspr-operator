@@ -145,6 +145,25 @@ class BaseResource:
 
         return self.compute_hash(resource_data)
 
+    def prepare_owner_references_patch(self, actual: Any, desired: Any) -> List[Dict]:
+        """JSON patch operations adding the owner references a live resource lacks.
+
+        Owner references are only written when a resource is created, so one created
+        before its owner adopted it stays orphaned unless they are added later.
+        """
+        desired_refs = getattr(desired.metadata, "owner_references", None) or []
+        actual_refs = getattr(actual.metadata, "owner_references", None) or []
+        actual_uids = {ref.uid for ref in actual_refs}
+        missing = [ref for ref in desired_refs if ref.uid not in actual_uids]
+        if not missing:
+            return []
+        if not actual_refs:
+            return [{"op": "add", "path": "/metadata/ownerReferences", "value": missing}]
+        return [
+            {"op": "add", "path": "/metadata/ownerReferences/-", "value": ref}
+            for ref in missing
+        ]
+
     async def fetch_service(
         self, core_v1_api: CoreV1Api, name: str, namespace: str
     ) -> V1Service:

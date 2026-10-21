@@ -788,25 +788,36 @@ class KasprApp(BaseResource):
                 desired = self.prepare_hpa_watch_fields(self.hpa)
                 actual_hash = self.compute_hash(actual)
                 desired_hash = self.compute_hash(desired)
-                
+
+                patch, drifted_fields = [], []
                 if actual_hash != desired_hash:
+                    patch.extend(self.prepare_hpa_patch(self.hpa))
+                    drifted_fields.append("spec")
+                # An HPA created before the app adopted it has no owner, and would
+                # outlive the app.
+                owner_patch = self.prepare_owner_references_patch(hpa, self.hpa)
+                if owner_patch:
+                    patch.extend(owner_patch)
+                    drifted_fields.append("metadata.ownerReferences")
+
+                if patch:
                     # Detect drift
                     self.sensor.on_resource_drift_detected(
-                        self.cluster, self.cluster, self.hpa.metadata.name, self.namespace, "hpa", ["spec"]
+                        self.cluster, self.cluster, self.hpa.metadata.name, self.namespace, "hpa", drifted_fields
                     )
-                    
+
                     # Instrument patch operation
                     sensor_state = self.sensor.on_resource_sync_start(
                         self.cluster, self.cluster, self.hpa.metadata.name, self.namespace, "hpa"
                     )
-                    
+
                     success = True
                     try:
                         await self.patch_hpa(
                             self.autoscaling_v2_api,
                             self.hpa_name,
                             self.namespace,
-                            hpa=self.prepare_hpa_patch(self.hpa),
+                            hpa=patch,
                         )
                     except Exception:
                         success = False
@@ -2652,6 +2663,9 @@ class KasprApp(BaseResource):
             )
             return
         else:
+            # The HPA deleted at zero replicas is created again here, and must be
+            # owned by the app like everything synchronize() creates.
+            self.unite()
             await self.sync_hpa()
             await self.sync_stateful_set()
 
