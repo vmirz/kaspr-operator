@@ -5,6 +5,31 @@ A KasprApp can ask the operator for a
 (VPA), which sets the resources of the app's `kaspr` container from their observed usage. It is
 opt-in: the operator creates nothing unless `spec.verticalPodAutoscaler.enabled` is `true`.
 
+## When to use it
+
+Vertical autoscaling suits apps whose event flow is volatile and unpredictable: bursts of many
+events that take long to process, in apps with large partitioned tables. Such apps are best spread
+across many members, so that a burst is processed by all of them. But traffic is not always heavy,
+and members sized for the bursts leave pods and CPU idle the rest of the time. Adding and removing
+members as the traffic changes is costly too: every partition that moves to another member must
+first replay its tables' changelogs there to rebuild its state, which for large tables is slow and
+wasteful.
+
+A VerticalPodAutoscaler keeps such an app scaled out, and adjusts the CPU its members request to
+their utilization instead. Members are resized in place: they keep running and keep their
+partitions, so neither the app nor its event flow is disrupted.
+
+To set it up:
+
+* Keep `replicas` at the number of members the bursts need (at most the number of partitions).
+* Set the CPU limit in `spec.resources` to what a member may use in a burst. With the default
+  `controlledValues: RequestsOnly`, it stays the ceiling.
+* Enable the VerticalPodAutoscaler with the default `updateMode: InPlaceOrRecreate`. It follows
+  usage over time rather than single spikes: the limit lets members burst above their request
+  while their node has CPU to spare, and the VPA keeps the CPU they reserve close to what they use.
+
+## Example
+
 ```yaml
 apiVersion: kaspr.io/v1alpha1
 kind: KasprApp
