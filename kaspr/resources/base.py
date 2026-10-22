@@ -145,6 +145,25 @@ class BaseResource:
 
         return self.compute_hash(resource_data)
 
+    def prepare_owner_references_patch(self, actual: Any, desired: Any) -> List[Dict]:
+        """JSON patch operations adding the owner references a live resource lacks.
+
+        Owner references are only written when a resource is created, so one created
+        before its owner adopted it stays orphaned unless they are added later.
+        """
+        desired_refs = getattr(desired.metadata, "owner_references", None) or []
+        actual_refs = getattr(actual.metadata, "owner_references", None) or []
+        actual_uids = {ref.uid for ref in actual_refs}
+        missing = [ref for ref in desired_refs if ref.uid not in actual_uids]
+        if not missing:
+            return []
+        if not actual_refs:
+            return [{"op": "add", "path": "/metadata/ownerReferences", "value": missing}]
+        return [
+            {"op": "add", "path": "/metadata/ownerReferences/-", "value": ref}
+            for ref in missing
+        ]
+
     async def fetch_service(
         self, core_v1_api: CoreV1Api, name: str, namespace: str
     ) -> V1Service:
@@ -483,6 +502,66 @@ class BaseResource:
         except ApiException as ex:
             if ex.status == 404:
                 return None
+            raise
+
+    async def create_custom_object(
+        self,
+        custom_objects_api: CustomObjectsApi,
+        namespace: str,
+        group: str,
+        version: str,
+        plural: str,
+        body: Dict[str, Any],
+    ):
+        return await custom_objects_api.create_namespaced_custom_object(
+            group=group,
+            version=version,
+            namespace=namespace,
+            plural=plural,
+            body=body,
+        )
+
+    async def patch_custom_object(
+        self,
+        custom_objects_api: CustomObjectsApi,
+        namespace: str,
+        group: str,
+        version: str,
+        plural: str,
+        name: str,
+        patch: List[Dict[str, Any]],
+    ):
+        """Apply JSON patch operations to a custom object."""
+        return await custom_objects_api.patch_namespaced_custom_object(
+            group=group,
+            version=version,
+            namespace=namespace,
+            plural=plural,
+            name=name,
+            body=patch,
+            _content_type="application/json-patch+json",
+        )
+
+    async def delete_custom_object(
+        self,
+        custom_objects_api: CustomObjectsApi,
+        namespace: str,
+        group: str,
+        version: str,
+        plural: str,
+        name: str,
+    ):
+        try:
+            await custom_objects_api.delete_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                name=name,
+            )
+        except ApiException as ex:
+            if ex.status == 404:
+                return
             raise
 
     async def patch_custom_object_status(
