@@ -379,7 +379,6 @@ class KasprApp(BaseResource):
         await self.sync_python_packages_pvc()
         await self.sync_hpa()
         await self.sync_stateful_set()
-        # Last, so that the optional add-on can never hold up the app's own resources.
         await self.sync_vpa()
 
     async def sync_service(self):
@@ -2978,7 +2977,7 @@ class KasprApp(BaseResource):
     def prepare_container_resize_policy(self) -> Optional[List[V1ContainerResizePolicy]]:
         """How the kaspr container takes resources resized in place.
 
-        Kaspr sizes its RocksDB block cache from the container's memory limit when it
+        Kaspr sizes some internal resources from the container's memory limit when it
         starts, so a memory resize must restart the container; CPU resizes apply as
         they are. Left unset unless the VerticalPodAutoscaler controls memory, which
         keeps the pods of every other app as they were.
