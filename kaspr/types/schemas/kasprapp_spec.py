@@ -15,6 +15,7 @@ from kaspr.types.schemas.pod_template import PodTemplateSchema
 from kaspr.types.schemas.service_template import ServiceTemplateSchema
 from kaspr.types.schemas.container_template import ContainerTemplateSchema
 from kaspr.types.schemas.python_packages import PythonPackagesSpecSchema
+from kaspr.types.schemas.vertical_pod_autoscaler import VerticalPodAutoscalerSpecSchema
 
 
 class KasprAppTemplateSchema(BaseSchema):
@@ -56,7 +57,7 @@ class KasprAppSpecSchema(BaseSchema):
     __model__ = KasprAppSpec
 
     version = fields.Str(data_key="version", allow_none=True, load_default=None)
-    replicas = fields.Int(data_key="replicas", allow_none=True)
+    replicas = fields.Int(data_key="replicas", allow_none=True, load_default=None)
     image = fields.Str(data_key="image", allow_none=True, load_default=None)
     bootstrap_servers = fields.Str(data_key="bootstrapServers", required=True)
     tls = fields.Nested(
@@ -95,6 +96,12 @@ class KasprAppSpecSchema(BaseSchema):
     python_packages = fields.Nested(
         PythonPackagesSpecSchema(),
         data_key="pythonPackages",
+        allow_none=True,
+        load_default=None,
+    )
+    vertical_pod_autoscaler = fields.Nested(
+        VerticalPodAutoscalerSpecSchema(),
+        data_key="verticalPodAutoscaler",
         allow_none=True,
         load_default=None,
     )

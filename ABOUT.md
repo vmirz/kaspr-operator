@@ -14,7 +14,10 @@ Kaspr is a Kubernetes operator that manages stream processing applications built
 - Manages a StatefulSet of Kaspr pods with Kafka connectivity
 - Handles: replicas, authentication, storage (persistent/ephemeral), resource limits, Kafka bootstrap servers
 - Status tracking: member health, rebalancing state, rollout progress, linked resources
-- Features: automatic rebalancing, hung member detection, HPA scaling policies
+- Features: automatic rebalancing, hung member detection, HPA scaling policies, opt-in vertical
+  pod autoscaling (`spec.verticalPodAutoscaler`)
+- Scale subresource (`spec.replicas`, `status.replicas`, `status.selector`): `kubectl scale` and
+  autoscalers can target a KasprApp
 
 #### **KasprAgent** - Stream processor with transformation pipelines
 - Subscribes to Kafka topics/channels as input
@@ -49,7 +52,8 @@ Kaspr is a Kubernetes operator that manages stream processing applications built
 
 #### **Handler-Resource Split**
 - **Handlers** (`kaspr/handlers/`): Kopf event handlers for CRD lifecycle (create, update, delete, field watches, raw events, and one timer per KasprApp)
-- **Resources** (`kaspr/resources/`): Kubernetes resource generation (StatefulSet, Service, ConfigMap, HPA, PVC)
+- **Resources** (`kaspr/resources/`): Kubernetes resource generation (StatefulSet, Service, ConfigMap, HPA, PVC,
+  and the opt-in VerticalPodAutoscaler)
 - **Base classes**: All resources inherit from `BaseResource` with common K8s operations
 
 #### **Type System**
@@ -78,6 +82,20 @@ Kaspr is a Kubernetes operator that manages stream processing applications built
 - Refreshes the app's status every `REBALANCE_CHECK_INTERVAL_SECONDS` while a rebalance is pending
 - Members still rebalancing past the group's session timeout after a requested rebalance are restarted as hung
 - Configurable via `kaspr.io/auto-rebalance` annotation or global config
+
+#### **Vertical Pod Autoscaling (opt-in)**
+- `spec.verticalPodAutoscaler.enabled: true` makes the operator manage a VerticalPodAutoscaler
+  `<app>-app-vpa`, owned by the app; nothing is created otherwise (see
+  `docs/user-guide/vertical-pod-autoscaling.md`)
+- Controls only the kaspr container: by default its CPU requests (`RequestsOnly`, so the limits
+  in `spec.resources` stay ceilings), applied in place (`InPlaceOrRecreate`)
+- The VPA is an add-on: its API is discovered once a minute (shared by all apps), never assumed.
+  Without it, without RBAC for it, or when it rejects the object, the app is reconciled as usual
+  and the `VerticalPodAutoscalerReady` condition (plus an event on change) says why
+- Targets the KasprApp through its scale subresource, or the StatefulSet while the cluster's CRD
+  predates it; synchronized after all other resources
+- With `memory` controlled, the kaspr container restarts on memory resizes (`resizePolicy`), since
+  Kaspr sizes its RocksDB block cache from the memory limit at startup
 
 #### **Hung Member Detection & Recovery**
 - Monitors members stuck in rebalancing state (3-strike system)
@@ -152,13 +170,15 @@ Reconciliation is event-driven. All work for one app runs in its timer, one piec
      StatefulSet whose pods mount them
    - Synchronize desired state (StatefulSet, Service, ConfigMap, etc.); the StatefulSet's
      `kaspr.io/resource-hash` annotation makes any change to its rendering visible as drift
+   - Synchronize the opt-in VerticalPodAutoscaler last, recording its outcome for the status
    - Patch resources if needed
 5. **Status Update** (after each reconciliation, and every `STATUS_UPDATE_INTERVAL_SECONDS`): 
    - Read the StatefulSet and fetch member status from the app's web API
    - List pods only if the StatefulSet changed since the last refresh
    - Detect subscription changes (after reconciliations, from the listed child resources)
    - Detect hung members
-   - Update conditions (`Progressing`, `Ready`)
+   - Report `status.replicas` and `status.selector` (read by the scale subresource)
+   - Update conditions (`Progressing`, `Ready`, and `VerticalPodAutoscalerReady` while enabled)
    - Attempt auto-rebalance if required, or check that a requested one took effect
    - Patch only the status fields that changed
 6. **Cleanup**: Mark work done, allow re-queuing

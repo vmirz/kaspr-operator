@@ -56,3 +56,7 @@ class KasprAppResources:
     @classmethod
     def hpa_name(self, cluster_name: str):
         return f"{cluster_name}-app-hpa"
+
+    @classmethod
+    def vpa_name(self, cluster_name: str):
+        return f"{cluster_name}-app-vpa"
