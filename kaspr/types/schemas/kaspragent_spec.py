@@ -18,6 +18,7 @@ from kaspr.types.schemas.topicout import TopicOutSpecSchema
 from kaspr.types.schemas.code import CodeSpecSchema
 from kaspr.types.schemas.operation import MapOperationSchema, FilterOperationSchema
 from kaspr.types.schemas.tableref import TableRefSpecSchema
+from kaspr.types.schemas.setting_map import setting_map
 
 
 def validate_within(value: str) -> bool:
@@ -72,13 +73,7 @@ class KasprAgentInputTopicSchema(BaseSchema):
     compacting = fields.Bool(data_key="compacting", required=False, load_default=None)
     deleting = fields.Bool(data_key="deleting", required=False, load_default=None)
     replicas = fields.Int(data_key="replicas", required=False, load_default=None)
-    config = fields.Dict(
-        keys=fields.Str(required=True),
-        values=fields.Str(required=True),
-        data_key="config",
-        required=False,
-        load_default=None,
-    )
+    config = setting_map("config", required=False, load_default=None)
 
     @post_dump
     def camel_to_snake_dump(self, data, **kwargs):
