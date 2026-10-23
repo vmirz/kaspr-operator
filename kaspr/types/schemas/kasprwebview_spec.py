@@ -16,6 +16,7 @@ from kaspr.types.models import (
 from kaspr.types.schemas.topicout import TopicOutSpecSchema
 from kaspr.types.schemas.code import CodeSpecSchema
 from kaspr.types.schemas.tableref import TableRefSpecSchema
+from kaspr.types.schemas.setting_map import setting_map
 
 class KasprWebViewProcessorTopicSendOperatorSchema(TopicOutSpecSchema):
     __model__ = KasprWebViewProcessorTopicSendOperator
@@ -120,13 +121,7 @@ class KasprWebViewResponseSpecSchema(BaseSchema):
         data_key="contentType", allow_none=False, load_default=None
     )
     status_code = fields.Int(data_key="statusCode", allow_none=False, load_default=None)
-    headers = fields.Mapping(
-        keys=fields.Str(required=True),
-        values=fields.Str(required=True),
-        data_key="headers",
-        allow_none=False,
-        load_default={},
-    )
+    headers = setting_map("headers", allow_none=False, load_default=dict)
     body_selector = fields.Nested(
         KasprWebViewResponseSelectorSchema(),
         data_key="bodySelector",

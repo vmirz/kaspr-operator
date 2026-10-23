@@ -58,10 +58,12 @@ spec:
                   description: Number of partitions in the table.
                 extraTopicConfigs:
                   type: object
-                  description: Topic configurations to use when creating the table's changelog topic.
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: "Topic configurations to use when creating the table's changelog topic, as name-value pairs such as `retention.ms: 86400000`. A value may be a string, number or boolean; the app receives it as a string."
                 options:
                   type: object
-                  description: Advanced table configuration options. See documentation for more information.
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: "Advanced table configuration options, as name-value pairs such as `write_buffer_size: 4194304`. A value may be a string, number or boolean; the app receives it as a string. See documentation for more information."
                 window:
                   type: object
                   description: Window configuration for the table.

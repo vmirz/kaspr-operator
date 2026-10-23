@@ -3,6 +3,7 @@ from kaspr.utils.helpers import camel_to_snake
 from kaspr.types.base import BaseSchema
 from kaspr.types.models import TopicOutSpec
 from kaspr.types.schemas.code import CodeSpecSchema
+from kaspr.types.schemas.setting_map import setting_map
 
 
 class TopicOutSpecSchema(BaseSchema):
@@ -28,13 +29,7 @@ class TopicOutSpecSchema(BaseSchema):
     compacting = fields.Bool(data_key="compacting", required=False, load_default=None)
     deleting = fields.Bool(data_key="deleting", required=False, load_default=None)
     replicas = fields.Int(data_key="replicas", required=False, load_default=None)
-    config = fields.Dict(
-        keys=fields.Str(required=True),
-        values=fields.Str(required=True),
-        data_key="config",
-        required=False,
-        load_default=None,
-    )
+    config = setting_map("config", required=False, load_default=None)
     key_selector = fields.Nested(
         CodeSpecSchema(), data_key="keySelector", required=False, load_default=None
     )

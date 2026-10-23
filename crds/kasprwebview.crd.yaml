@@ -57,7 +57,8 @@ spec:
                       description: HTTP status code to return on success
                     headers:
                       type: object
-                      description: Headers as key and value pairs to return in the response
+                      x-kubernetes-preserve-unknown-fields: true
+                      description: Headers as key and value pairs to return in the response. A value may be a string, number or boolean; it is sent as a string.
                     bodySelector:
                       description: Python code to transform response body on success or error.
                       type: object
