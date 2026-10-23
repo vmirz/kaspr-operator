@@ -15,9 +15,9 @@ from marshmallow import ValidationError
 from kaspr.types.schemas.component import KasprAppComponentsSchema
 from kaspr.types.schemas.kaspragent_spec import KasprAgentInputTopicSchema
 from kaspr.types.schemas.kasprtable_spec import KasprTableSpecSchema
-from kaspr.types.schemas.kasprwebview_spec import KasprWebViewResponseSpecSchema
+from kaspr.types.schemas.kasprwebview_spec import KasprWebViewResponseSpecSchema, KasprWebViewSpecSchema
 from kaspr.types.schemas.topicout import TopicOutSpecSchema
-from kaspr.utils.helpers import ordered_dict_to_dict
+from kaspr.utils.helpers import VerbatimKeys, camel_to_snake, ordered_dict_to_dict
 
 CRDS = Path(__file__).resolve().parents[2] / "crds"
 
@@ -106,6 +106,28 @@ def test_topic_configs_and_headers_reach_the_app_as_strings():
     assert TopicOutSpecSchema().load({"name": "out", "config": {"preallocate": False}}).config == {"preallocate": "false"}
     headers = KasprWebViewResponseSpecSchema().load({"headers": {"Cache-Control": "no-store", "X-Retry-After": 5}}).headers
     assert headers == {"Cache-Control": "no-store", "X-Retry-After": "5"}
+
+
+def test_header_names_reach_the_app_as_written():
+    view = KasprWebViewSpecSchema().load(
+        {
+            "name": "maps",
+            "request": {"method": "GET", "path": "/maps"},
+            "response": {"statusCode": 200, "headers": {"Cache-Control": "no-store", "X-Retry-After": 5}},
+            "processors": {"pipeline": ["noop"], "operations": [{"name": "noop", "map": {"entrypoint": "noop", "python": "def noop(v):\n    return v"}}]},
+        }
+    )
+    components = KasprAppComponentsSchema().dump({"agents": [], "webviews": [view], "tables": [], "tasks": [], "joins": []})
+    written = yaml.safe_load(yaml.dump(ordered_dict_to_dict(components), default_flow_style=False))
+    response = written["webviews"][0]["response"]
+    # The operator's own keys are converted, the headers' names are not.
+    assert response["status_code"] == 200
+    assert response["headers"] == {"Cache-Control": "no-store", "X-Retry-After": "5"}
+
+
+def test_camel_to_snake_leaves_verbatim_names_alone():
+    data = {"statusCode": 200, "nested": {"bodySelector": 1}, "headers": VerbatimKeys({"Cache-Control": "no-store"})}
+    assert camel_to_snake(data) == {"status_code": 200, "nested": {"body_selector": 1}, "headers": {"Cache-Control": "no-store"}}
 
 
 @pytest.mark.parametrize("value", [{"nested": 1}, [1, 2], None])

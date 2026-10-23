@@ -10,6 +10,8 @@ from typing import Any
 
 from marshmallow import ValidationError, fields
 
+from kaspr.utils.helpers import VerbatimKeys
+
 
 def setting_string(value: Any) -> str:
     """A setting's value as text: a string as it is, a boolean `true`/`false`, a number as written."""
@@ -31,6 +33,15 @@ class SettingValue(fields.Field):
         return None if value is None else setting_string(value)
 
 
+class SettingMap(fields.Mapping):
+    """A map of setting names to their values. The names are Kafka's, RocksDB's or HTTP's, so they are
+    written as given: the schemas' camelCase to snake_case conversion does not apply to them."""
+
+    def _serialize(self, value: Any, attr: Any, obj: Any, **kwargs: Any) -> Any:
+        result = super()._serialize(value, attr, obj, **kwargs)
+        return None if result is None else VerbatimKeys(result)
+
+
 def setting_map(data_key: str, **kwargs: Any) -> fields.Mapping:
     """A map of setting names to their values as strings, read from `data_key`."""
-    return fields.Mapping(keys=fields.Str(required=True), values=SettingValue(required=True), data_key=data_key, **kwargs)
+    return SettingMap(keys=fields.Str(required=True), values=SettingValue(required=True), data_key=data_key, **kwargs)
