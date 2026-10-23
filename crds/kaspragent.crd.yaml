@@ -76,7 +76,8 @@ spec:
                           description: Number of replicas for the topic. Optional.
                         config:
                           type: object
-                          description: Additional configuration for the topic as key-value pairs. Optional.
+                          x-kubernetes-preserve-unknown-fields: true
+                          description: "Additional configuration for the topic as key-value pairs, such as `cleanup.policy: compact`. A value may be a string, number or boolean; the app receives it as a string. Optional."
                       anyOf:
                         - required: ["name"]
                         - required: ["pattern"]
@@ -158,7 +159,8 @@ spec:
                             description: Number of replicas for the topic. Optional.
                           config:
                             type: object
-                            description: Additional configuration for the topic as key-value pairs. Optional.
+                            x-kubernetes-preserve-unknown-fields: true
+                            description: "Additional configuration for the topic as key-value pairs, such as `cleanup.policy: compact`. A value may be a string, number or boolean; the app receives it as a string. Optional."
                           keySelector:
                             type: object
                             properties:
@@ -313,7 +315,8 @@ spec:
                                 description: Number of replicas for the topic. Optional.
                               config:
                                 type: object
-                                description: Additional configuration for the topic as key-value pairs. Optional.
+                                x-kubernetes-preserve-unknown-fields: true
+                                description: "Additional configuration for the topic as key-value pairs, such as `cleanup.policy: compact`. A value may be a string, number or boolean; the app receives it as a string. Optional."
                               keySelector:
                                 type: object
                                 description: Python code to determine the key of the message

@@ -201,9 +201,17 @@ def ordered_dict_to_dict(data):
         return data
 
 
+class VerbatimKeys(dict):
+    """A map whose keys are names defined elsewhere - a Kafka topic setting, a RocksDB option, an
+    HTTP header - which `camel_to_snake` leaves as they are."""
+
+
 def camel_to_snake(data):
     """
     Convert all keys in a dictionary from camelCase to snake_case.
+
+    A `VerbatimKeys` map, and everything in it, is left as it is: `Cache-Control` is a header's
+    name, not a field of the operator's to convert.
 
     Args:
         data (dict): Input dictionary with camelCase keys
@@ -221,7 +229,7 @@ def camel_to_snake(data):
                 result += char
         return result
 
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or isinstance(data, VerbatimKeys):
         return data
 
     return {

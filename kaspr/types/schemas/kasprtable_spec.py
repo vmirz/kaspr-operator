@@ -8,6 +8,7 @@ from kaspr.types.models import (
     KasprTableSpec,
 )
 from kaspr.types.schemas.code import CodeSpecSchema
+from kaspr.types.schemas.setting_map import setting_map
 
 
 class KasprTableWindowTumblingSpecSchema(BaseSchema):
@@ -69,20 +70,8 @@ class KasprTableSpecSchema(BaseSchema):
         data_key="valueSerializer", required=False, load_default=None
     )
     partitions = fields.Int(data_key="partitions", required=False, load_default=None)
-    extra_topic_configs = fields.Mapping(
-        keys=fields.Str(required=True),
-        values=fields.Str(required=True),
-        data_key="extraTopicConfigs",
-        allow_none=True,
-        load_default=dict,
-    )
-    options = fields.Mapping(
-        keys=fields.Str(required=True),
-        values=fields.Str(required=True),
-        data_key="options",
-        allow_none=True,
-        load_default=dict,
-    )
+    extra_topic_configs = setting_map("extraTopicConfigs", allow_none=True, load_default=dict)
+    options = setting_map("options", allow_none=True, load_default=dict)
     window = fields.Nested(
         KasprTableWindowSpecSchema(),
         data_key="window",
