@@ -125,6 +125,27 @@ def test_header_names_reach_the_app_as_written():
     assert response["headers"] == {"Cache-Control": "no-store", "X-Retry-After": "5"}
 
 
+def test_an_error_content_type_reaches_the_app_and_is_declared_by_the_crd():
+    view = KasprWebViewSpecSchema().load(
+        {
+            "name": "rows",
+            "request": {"method": "GET", "path": "/rows"},
+            "response": {"contentType": "application/octet-stream", "errorContentType": "application/json"},
+            "processors": {"pipeline": ["noop"], "operations": [{"name": "noop", "map": {"entrypoint": "noop", "python": "def noop(v):\n    return v"}}]},
+        }
+    )
+    components = KasprAppComponentsSchema().dump({"agents": [], "webviews": [view], "tables": [], "tasks": [], "joins": []})
+    written = yaml.safe_load(yaml.dump(ordered_dict_to_dict(components), default_flow_style=False))
+    response = written["webviews"][0]["response"]
+    assert (response["content_type"], response["error_content_type"]) == ("application/octet-stream", "application/json")
+
+    without = KasprWebViewResponseSpecSchema().load({"contentType": "application/json"})
+    assert without.error_content_type is None
+
+    declared = {at: node for kind, at, node in _crd_nodes() if kind == "kasprwebview"}
+    assert declared[".spec.response.errorContentType"]["enum"] == declared[".spec.response.contentType"]["enum"]
+
+
 def test_camel_to_snake_leaves_verbatim_names_alone():
     data = {"statusCode": 200, "nested": {"bodySelector": 1}, "headers": VerbatimKeys({"Cache-Control": "no-store"})}
     assert camel_to_snake(data) == {"status_code": 200, "nested": {"body_selector": 1}, "headers": {"Cache-Control": "no-store"}}
