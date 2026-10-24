@@ -38,6 +38,8 @@ class KasprWebViewResponseSelector(BaseModel):
 
 class KasprWebViewResponseSpec(BaseModel):
     content_type: Optional[str]
+    #: The content type of error responses; the view's `content_type` when absent.
+    error_content_type: Optional[str]
     status_code: Optional[int]
     headers: Optional[Mapping[str, str]]
     body_selector: Optional[KasprWebViewResponseSelector]

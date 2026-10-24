@@ -120,6 +120,9 @@ class KasprWebViewResponseSpecSchema(BaseSchema):
     content_type = fields.Str(
         data_key="contentType", allow_none=False, load_default=None
     )
+    error_content_type = fields.Str(
+        data_key="errorContentType", allow_none=False, load_default=None
+    )
     status_code = fields.Int(data_key="statusCode", allow_none=False, load_default=None)
     headers = setting_map("headers", allow_none=False, load_default=dict)
     body_selector = fields.Nested(
