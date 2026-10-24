@@ -52,6 +52,10 @@ spec:
                       type: string
                       description: Content type of the response
                       enum: ["text/html", "application/json", "text/plain", "application/octet-stream"]
+                    errorContentType:
+                      type: string
+                      description: Content type of error responses; the contentType when not set. A view that answers binary data can answer its errors as JSON.
+                      enum: ["text/html", "application/json", "text/plain", "application/octet-stream"]
                     statusCode:
                       type: integer
                       description: HTTP status code to return on success
