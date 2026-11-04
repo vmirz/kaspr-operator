@@ -105,7 +105,6 @@ from kaspr.resources.definitions import (
     prepare_shard_volumes,
     resolve_delivery,
 )
-from kaspr.utils.errors import already_exists_error
 from kaspr.common.models.labels import Labels
 from kaspr.web import KasprWebClient
 from kaspr.sensors import SensorDelegate
@@ -1261,7 +1260,8 @@ class KasprApp(BaseResource):
                     created.append(shard)
                     continue
                 except ApiException as ex:
-                    if not already_exists_error(ex):
+                    # Created meanwhile; checked below like a listed one.
+                    if ex.status != 409:
                         raise
                 existing = await self.fetch_config_map(
                     self.core_v1_api, shard.name, self.namespace
