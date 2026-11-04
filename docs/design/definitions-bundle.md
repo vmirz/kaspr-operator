@@ -432,6 +432,7 @@ until the KasprApp is deleted, or until this operator returns and cleans them up
 | App deleted in `bundle` mode | shards and StatefulSet collected by their owner |
 | Components created before an app born in `bundle` mode | their ConfigMaps deleted once the first pod was ready |
 | 94-component app to `bundle` and back | 95 → 2 ConfigMaps, 124 → 31 mounts, template 53.7 → 15.1 KiB; all 53 routes served; back to the original revision, ConfigMaps and statuses |
+| Operator default flipped to `bundle`, then back to `components` | nothing restarted over a full cycle either way; an unannotated app switched within its next rollout, each way |
 
 ## Alternatives considered
 
