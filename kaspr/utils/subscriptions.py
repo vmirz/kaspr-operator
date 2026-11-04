@@ -28,6 +28,22 @@ def changelog_topic(app_name: str, table_name: str) -> str:
     return f"{KasprAppResources.component_name(app_name)}-{table_name}-changelog"
 
 
+def join_topics(app_name: str, left_table: str, right_table: str) -> Set[str]:
+    """The internal topics a key join's members consume.
+
+    Faust names them after the app id and both tables (``faust/tables/keyjoin.py``): the
+    subscription registration and response topics, and the changelogs of the join's
+    subscriptions and previous foreign key stores.
+    """
+    prefix = f"{KasprAppResources.component_name(app_name)}-{left_table}-{right_table}"
+    return {
+        f"{prefix}-subscription-registration",
+        f"{prefix}-subscription-response",
+        f"{prefix}-subscriptions-changelog",
+        f"{prefix}-previous-fk-changelog",
+    }
+
+
 def agent_topics(agents: Iterable[Mapping]) -> Set[str]:
     """The topics agents subscribe to by name (``topicName``, comma-separated)."""
     topics = set()
@@ -49,12 +65,16 @@ def agent_patterns(agents: Iterable[Mapping]) -> Set[str]:
 
 
 def subscribed_topics(linked_resources: Optional[Mapping], app_name: str) -> Set[str]:
-    """Every topic an app consumes by name: its agents' topics and its tables' changelogs."""
+    """Every topic an app consumes by name: its agents' topics, its tables' changelogs,
+    and the internal topics of the joins delivered to it."""
     linked = linked_resources or {}
     topics = agent_topics(linked.get("agents"))
     for table in linked.get("tables") or ():
         if table.get("tableName"):
             topics.add(changelog_topic(app_name, table["tableName"]))
+    for join in linked.get("joins") or ():
+        if join.get("leftTable") and join.get("rightTable"):
+            topics |= join_topics(app_name, join["leftTable"], join["rightTable"])
     return topics
 
 

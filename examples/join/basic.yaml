@@ -10,6 +10,9 @@
 #   kubectl apply -f examples/join/basic.yaml
 #   kubectl get kjoin
 #   kubectl describe kjoin orders-products-join
+#
+# KasprJoins reach the app's pods only with definitions bundle delivery: annotate the
+# KasprApp "kaspr.io/definitions-delivery: bundle" (docs/user-guide/definitions-delivery.md).
 
 ---
 # Orders table (keyed by order_id)
@@ -90,11 +93,11 @@ spec:
           python: |
             def enrich_order(value):
                 """
-                value is a JoinedValue dict:
-                  {"left": <order>, "right": <product>}
+                value is a JoinedValue named tuple:
+                  JoinedValue(left=<order>, right=<product>)
                 """
-                order = value["left"]
-                product = value["right"]
+                order = value.left
+                product = value.right
                 return {
                     "order_id": order.get("order_id"),
                     "product_id": order.get("product_id"),

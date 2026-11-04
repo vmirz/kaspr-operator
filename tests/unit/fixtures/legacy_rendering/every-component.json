@@ -219,12 +219,12 @@
   {
    "apiVersion": "v1",
    "data": {
-    "process-enriched-orders-kaspragent-agent.yaml": "agents:\n- description: Processes joined order+product records from key join\n  input:\n    channel:\n      name: orders-products-joined\n    declare: null\n    take: null\n    topic: null\n  isolated_partitions: null\n  name: process-enriched-orders-kaspragent\n  noack: null\n  output:\n    topics:\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value.get(\\\"order_id\\\")\\n\"\n      key_serializer: null\n      name: enriched-orders\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate: null\n      replicas: null\n      retention: null\n      value_selector: null\n      value_serializer: null\n  processors:\n    init:\n      entrypoint: null\n      python: 'from datetime import datetime, timezone\n\n        '\n    operations:\n    - filter: null\n      map:\n        entrypoint: enrich_order\n        python: \"def enrich_order(value):\\n    \\\"\\\"\\\"\\n    value is a JoinedValue\\\n          \\ dict:\\n      {\\\"left\\\": <order>, \\\"right\\\": <product>}\\n    \\\"\\\"\\\"\\n \\\n          \\   order = value[\\\"left\\\"]\\n    product = value[\\\"right\\\"]\\n    return\\\n          \\ {\\n        \\\"order_id\\\": order.get(\\\"order_id\\\"),\\n        \\\"product_id\\\"\\\n          : order.get(\\\"product_id\\\"),\\n        \\\"quantity\\\": order.get(\\\"quantity\\\"\\\n          ),\\n        \\\"product_name\\\": product.get(\\\"name\\\"),\\n        \\\"unit_price\\\"\\\n          : product.get(\\\"price\\\"),\\n        \\\"total\\\": product.get(\\\"price\\\", 0)\\\n          \\ * order.get(\\\"quantity\\\", 0),\\n        \\\"enriched_at\\\": datetime.now(timezone.utc).isoformat()\\n\\\n          \\    }\\n\"\n      name: enrich\n      tables: []\n      topic_send: null\n    pipeline:\n    - enrich\n"
+    "process-enriched-orders-kaspragent-agent.yaml": "agents:\n- description: Processes joined order+product records from key join\n  input:\n    channel:\n      name: orders-products-joined\n    declare: null\n    take: null\n    topic: null\n  isolated_partitions: null\n  name: process-enriched-orders-kaspragent\n  noack: null\n  output:\n    topics:\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value.get(\\\"order_id\\\")\\n\"\n      key_serializer: null\n      name: enriched-orders\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate: null\n      replicas: null\n      retention: null\n      value_selector: null\n      value_serializer: null\n  processors:\n    init:\n      entrypoint: null\n      python: 'from datetime import datetime, timezone\n\n        '\n    operations:\n    - filter: null\n      map:\n        entrypoint: enrich_order\n        python: \"def enrich_order(value):\\n    \\\"\\\"\\\"\\n    value is a JoinedValue\\\n          \\ named tuple:\\n      JoinedValue(left=<order>, right=<product>)\\n    \\\"\\\n          \\\"\\\"\\n    order = value.left\\n    product = value.right\\n    return {\\n\\\n          \\        \\\"order_id\\\": order.get(\\\"order_id\\\"),\\n        \\\"product_id\\\"\\\n          : order.get(\\\"product_id\\\"),\\n        \\\"quantity\\\": order.get(\\\"quantity\\\"\\\n          ),\\n        \\\"product_name\\\": product.get(\\\"name\\\"),\\n        \\\"unit_price\\\"\\\n          : product.get(\\\"price\\\"),\\n        \\\"total\\\": product.get(\\\"price\\\", 0)\\\n          \\ * order.get(\\\"quantity\\\", 0),\\n        \\\"enriched_at\\\": datetime.now(timezone.utc).isoformat()\\n\\\n          \\    }\\n\"\n      name: enrich\n      tables: []\n      topic_send: null\n    pipeline:\n    - enrich\n"
    },
    "kind": "ConfigMap",
    "metadata": {
     "annotations": {
-     "kaspr.io/resource-hash": "ae94bd928b431a95"
+     "kaspr.io/resource-hash": "15b7c1026f71c75e"
     },
     "labels": {
      "app.kubernetes.io/instance": "process-enriched-orders-kaspragent",
@@ -318,7 +318,7 @@
   "kind": "StatefulSet",
   "metadata": {
    "annotations": {
-    "kaspr.io/resource-hash": "6eec4d8d17eba0a1"
+    "kaspr.io/resource-hash": "5c7178a9bd2064a8"
    },
    "labels": {},
    "name": "every-component-app"
@@ -473,7 +473,7 @@
         },
         {
          "name": "AGENTS_HASH",
-         "value": "545c2c7672717a57"
+         "value": "f4135e2abcae6b47"
         },
         {
          "name": "WEBVIEWS_HASH",

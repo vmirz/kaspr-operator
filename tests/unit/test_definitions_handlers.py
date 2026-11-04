@@ -570,3 +570,26 @@ def test_reconcile_status_clears_the_pending_count():
     desired = handler._definitions_status(dict(mode="bundle", shards=[shard("s")], waiting=0))
 
     assert handler._merge_patch_value(status["definitions"], desired)["pendingDeletion"] is None
+
+
+def test_a_delivered_joins_internal_topics_are_subscriptions():
+    """Without them a rebalance after delivering a join would look unnecessary."""
+    from kaspr.utils.subscriptions import check_assignment, subscribed_topics, subscription_change
+
+    linked = {"joins": [{"name": "j", "leftTable": "orders", "rightTable": "products"}]}
+    expected = {
+        f"probe-app-orders-products-{suffix}"
+        for suffix in (
+            "subscription-registration",
+            "subscription-response",
+            "subscriptions-changelog",
+            "previous-fk-changelog",
+        )
+    }
+
+    assert subscribed_topics(linked, "probe") == expected
+    assert subscription_change({}, linked, "probe").added == expected
+    assert subscription_change(linked, {}, "probe").removed == expected
+    members = [{"assignment": {"actives": {"probe-orders": [0]}, "standbys": {}}, "rebalancing": False}]
+    check = check_assignment(members, subscribed_topics(linked, "probe"))
+    assert not check.satisfied and check.unassigned == sorted(expected)
