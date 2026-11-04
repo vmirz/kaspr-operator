@@ -289,7 +289,11 @@ next event. A `components`-mode app with no history of bundles patches nothing.
     belongs to the same app), `hash` and `delivery`. A join whose spec does not load is left out of the
     app with a warning; the join's own handler reports the error.
   - `bundle` mode: joins go into shard 0 (§2), `JOINS_HASH` joins the env, and a change to the set of joins
-    or their tables marks `rebalanceRequired` (joins consume internal topics).
+    or their tables marks `rebalanceRequired`. A join consumes internal topics Faust names after the app and
+    both tables (`<app>-app-<left>-<right>-subscription-registration`, `-subscription-response`,
+    `-subscriptions-changelog`, `-previous-fk-changelog`). They count among the app's subscriptions: static
+    members keep the assignment they had, so without a rebalance no member is assigned them and the join
+    stays inert.
   - `components` mode: joins are not delivered. The app gets a `JoinsDelivered=False` condition (reason
     `RequiresBundleDelivery`) and a warning event; each join gets `delivery: notDelivered` and a warning event.
     Its pods are not touched.
@@ -392,34 +396,42 @@ until the KasprApp is deleted, or until this operator returns and cleans them up
 
 ## Testing and validation
 
-**Unit tests**
+**Unit tests** (`tests/unit/test_definitions*.py`, `legacy_rendering.py`)
 
-- Golden renderings generated from the previous release: StatefulSets and component ConfigMaps of a set of
-  `components`-mode apps must be byte-identical on this branch.
-- Mode resolution, including every row of the §1 table and the template-change detector.
-- Bundle document: equality with the per-component specs, ordering, shard packing, size limits, names.
-- Pod template in `bundle` mode; env hashes equal to `components` mode.
-- Cleanup planning: each precondition, candidate selection, foreign ConfigMaps never selected.
-- Component and join handlers in both modes; KasprJoin CRD absent.
+- Golden renderings of every example app, and of one app holding every example component, made by
+  v0.19.8's code: StatefulSets (with their `kaspr.io/resource-hash`) and component ConfigMaps are
+  byte-identical on this branch, KasprJoin attached included.
+- Shards: one document holds each component as its own ConfigMap does; sorted; content-addressed names;
+  core kinds in shard 0, webviews spilling; hard limit.
+- Mode resolution: every row of §1, the template-change detector, definitions outgrowing a bundle.
+- Writing shards against a fake API: created immutable and owned, left alone when present, a create race,
+  a missing owner added, foreign objects refused.
+- Cleanup: candidates per mode, each precondition, pods mounting, a replaced or vanished ConfigMap, and
+  which apps pay an API call for it.
+- Component and join handlers in both modes; KasprJoin CRD or permission missing; an invalid join.
+- Status and the `JoinsDelivered` condition; dropped `status.definitions` keys cleared under merge patch;
+  joins as linked resources and their topics as subscriptions.
+- The full-template handlers render the components first; scaling no longer patches a template without
+  definitions (the test fails with the fix removed).
 
-**Cluster validation**
+**Cluster validation** (k3s 1.34, Kaspr 0.11.31; the branch replaced the operator)
 
-1. Run the branch against existing `components`-mode apps through startup, status refreshes, full
-   reconciliations and a restart: no StatefulSet, ConfigMap or component status changes.
-2. A probe app with agents, a table pair, a join and its consumer, tasks and webviews:
-   - `components` mode: unchanged behaviour; `JoinsDelivered=False`.
-   - Annotate `bundle`: one rollout, shard mounted, per-component ConfigMaps deleted after the rollout;
-     webviews answer, the join's consumer receives joined records.
-   - Edit, add and delete components: one rollout each, the previous shard deleted after it.
-   - Stop the operator after shard creation, during a rollout and during cleanup: converges, no leftovers.
-   - Back to `components`: per-component ConfigMaps recreated, one rollout, shards deleted.
-   - More than one shard (definitions above the budget): all components load.
-   - Default `bundle` without the annotation: nothing restarts until a component changes; that rollout
-     switches the app.
-   - Delete the app: no ConfigMaps left.
-3. A 94-component app: `bundle` mode and back, each with one rollout and no leftovers.
-
----
+| Check | Result |
+|---|---|
+| Offline: every live app rendered by the branch vs its StatefulSet hash, fingerprint and ConfigMaps (13 apps) | identical |
+| Branch operator over existing apps: startup, a full reconcile cycle, a restart | no StatefulSet, revision, pod, ConfigMap or status change |
+| Probe app (tables, a join and its consumer, agents, webviews, a task) to `bundle` | shard created before the patch, one rollout, 7 ConfigMaps deleted 11 s after it |
+| Edits, additions, deletions in `bundle` mode | new shard, one rollout, previous shard deleted after it; unchanged content reuses its name |
+| Join in `bundle` mode | built, rebalance requested and verified by the operator, joined records emitted |
+| Operator killed right after a StatefulSet patch | rollout completes; the restarted operator deletes the old shard |
+| Leftover shard; mounted shard deleted by hand | leftover deleted; mounted one recreated under its name; no pod restart |
+| ConfigMap quota blocking a shard | reconcile fails before the patch, pods keep serving; converges once lifted |
+| Old-revision pod lost mid-rollout | recreated and started; old shard kept until the rollout completed |
+| 611 KB of definitions | two shards, two mounts; every webview answers; the join still works |
+| Back to `components`; annotation removed | ConfigMaps recreated before the patch; shards deleted; no rollout on removal |
+| App deleted in `bundle` mode | shards and StatefulSet collected by their owner |
+| Components created before an app born in `bundle` mode | their ConfigMaps deleted once the first pod was ready |
+| 94-component app to `bundle` and back | 95 → 2 ConfigMaps, 124 → 31 mounts, template 53.7 → 15.1 KiB; all 53 routes served; back to the original revision, ConfigMaps and statuses |
 
 ## Alternatives considered
 

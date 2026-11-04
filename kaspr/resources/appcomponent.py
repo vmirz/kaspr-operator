@@ -319,8 +319,8 @@ class BaseAppComponent(BaseResource):
     def definitions_status(self, bundled: bool) -> Dict[str, Any]:
         """Status fields telling how this component reaches its app's pods.
 
-        A component of an app that does not deliver bundles has today's status: its
-        ConfigMap, and no delivery field.
+        A component of an app that does not deliver bundles reports its own ConfigMap
+        and no delivery field, as before bundles existed.
         """
         if bundled:
             return {"configMap": None, "delivery": BUNDLE}
