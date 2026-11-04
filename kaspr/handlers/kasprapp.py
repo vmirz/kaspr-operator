@@ -22,9 +22,20 @@ from kaspr.types.schemas import (
     KasprTaskSpecSchema,
     KasprWebViewSpecSchema,
     KasprTableSpecSchema,
+    KasprJoinSpecSchema,
 )
-from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable, KasprTask
+from kaspr.resources import KasprApp, KasprAgent, KasprWebView, KasprTable, KasprTask, KasprJoin
 from kaspr.resources.kasprapp import PodMetadataCache
+from kaspr.resources.definitions import (
+    BUNDLE,
+    COMPONENTS,
+    DELIVERY_ANNOTATION,
+    CleanupPlan,
+    DefinitionsConflict,
+    DefinitionsTooLarge,
+    Delivery,
+)
+from kaspr.resources.kasprjoin import NOT_DELIVERED
 from kaspr.types.settings import Settings
 from kaspr.utils.helpers import upsert_condition, deep_compare_dict, now
 from kaspr.utils.errors import convert_api_exception
@@ -114,6 +125,10 @@ class AppRuntimeState:
     # condition it reported (None when vertical autoscaling is not enabled).
     vpa_reconciled: bool = False
     vpa_condition: Optional[Dict[str, str]] = None
+    # (delivery mode, desired ConfigMap names) while definitions ConfigMaps the app no
+    # longer mounts wait for a rollout before they are deleted; checked on each status
+    # refresh. After a restart the next full reconciliation finds them again.
+    definitions_cleanup: Optional[Tuple[str, frozenset]] = None
 
     def schedule_reconcile(self, delay: float, reason: str):
         """Schedule a full reconciliation, keeping an earlier one if already due sooner."""
@@ -151,15 +166,16 @@ async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, an
         namespace: The namespace of the KasprApp
 
     Returns:
-        Dictionary with keys: 'agents', 'webviews', 'tables', 'tasks', 'success'
+        Dictionary with keys: 'agents', 'webviews', 'tables', 'tasks', 'joins', 'success'
         Each resource key contains a list of resource items
         'success' is True only if ALL fetches succeeded
     """
-    agent_task, webview_task, table_task, task_task = await asyncio.gather(
+    agent_task, webview_task, table_task, task_task, join_task = await asyncio.gather(
         KasprAgent.default().search(namespace, apps=[name]),
         KasprWebView.default().search(namespace, apps=[name]),
         KasprTable.default().search(namespace, apps=[name]),
         KasprTask.default().search(namespace, apps=[name]),
+        _search_joins(namespace, name),
         return_exceptions=True,
     )
 
@@ -180,8 +196,23 @@ async def fetch_app_related_resources(name: str, namespace: str) -> Dict[str, an
         "webviews": extract_items(webview_task, "webviews"),
         "tables": extract_items(table_task, "tables"),
         "tasks": extract_items(task_task, "tasks"),
+        "joins": extract_items(join_task, "joins"),
         "success": all_succeeded,
     }
+
+
+async def _search_joins(namespace: str, name: str):
+    """The app's KasprJoins; none when the cluster lacks the KasprJoin CRD.
+
+    An operator role from before KasprJoins may not grant reading them either; that
+    must not stop the app's reconciliation.
+    """
+    try:
+        return await KasprJoin.default().search(namespace, apps=[name])
+    except ApiException as ex:
+        if ex.status in (403, 404):
+            return {"items": []}
+        raise
 
 
 def _component_from_item(resource_cls, schema_cls, item: Dict, namespace: str):
@@ -202,7 +233,7 @@ def _component_from_item(resource_cls, schema_cls, item: Dict, namespace: str):
 async def attach_app_related_resources(
     app: KasprApp, name: str, namespace: str, related: Optional[Dict] = None
 ) -> bool:
-    """Attach the app's agents, webviews, tables, and tasks to the app model.
+    """Attach the app's agents, webviews, tables, tasks and joins to the app model.
 
     Args:
         related: Components as returned by fetch_app_related_resources; fetched
@@ -238,6 +269,16 @@ async def attach_app_related_resources(
             for item in related["tasks"]
         ]
     )
+    joins = []
+    for item in related.get("joins", []):
+        try:
+            joins.append(_component_from_item(KasprJoin, KasprJoinSpecSchema, item, namespace))
+        except Exception as e:
+            # The join's own handler reports why; the rest of the app is unaffected.
+            app.logger.warning(
+                f"Leaving out KasprJoin {item['metadata']['name']} of {name}: {e}"
+            )
+    app.with_joins(joins)
     return related["success"]
 
 
@@ -379,6 +420,42 @@ def _extract_table_info(
             info["tableName"] = table_name
         result.append(info)
     return result
+
+
+def _extract_join_info(
+    resources: List, hashes: Optional[Mapping[str, str]] = None
+) -> List[Dict]:
+    """Extract join info: a join's tables decide the internal topics its members consume.
+
+    Args:
+        resources: List of join resource dictionaries
+        hashes: Hashes computed from the joins' specs, by join name
+
+    Returns:
+        List of join info dicts with name, hash, leftTable and rightTable
+    """
+    return [
+        {
+            "name": resource["metadata"]["name"],
+            "hash": _resource_hash(resource, hashes),
+            "leftTable": (resource.get("spec") or {}).get("leftTable"),
+            "rightTable": (resource.get("spec") or {}).get("rightTable"),
+        }
+        for resource in resources
+    ]
+
+
+def _detect_join_subscription_changes(
+    current_joins: List[Dict], new_joins: List[Dict], app_name: str, logger: Logger
+) -> bool:
+    """Whether the app's delivered joins, or the tables they join, changed."""
+    def key(joins):
+        return {(j.get("name"), j.get("leftTable"), j.get("rightTable")) for j in joins}
+
+    if key(current_joins) != key(new_joins):
+        logger.info(f"Delivered joins changed for {app_name}")
+        return True
+    return False
 
 
 def _extract_basic_info(
@@ -917,9 +994,28 @@ def _update_linked_resources_status(
     webviews_info = _extract_basic_info(related_resources["webviews"], hashes.get("webviews"))
     tables_info = _extract_table_info(related_resources["tables"], hashes.get("tables"))
     tasks_info = _extract_basic_info(related_resources["tasks"], hashes.get("tasks"))
+    # Joins consume internal topics only once they reach the pods, in bundles. Apps
+    # without delivered joins track none, so their linked resources stay as they were.
+    definitions = related_resources.get("definitions") or {}
+    delivered_joins = set(definitions.get("joins") or ()) if definitions.get("mode") == BUNDLE else set()
+    joins_info = _extract_join_info(
+        [j for j in related_resources.get("joins", []) if j["metadata"]["name"] in delivered_joins],
+        hashes.get("joins"),
+    )
 
     # Get current resources from status
     current_resources = _status.get("linkedResources") or {}
+
+    def linked_resources() -> Dict:
+        linked = {
+            "agents": agents_info,
+            "webviews": webviews_info,
+            "tables": tables_info,
+            "tasks": tasks_info,
+        }
+        if joins_info or "joins" in current_resources:
+            linked["joins"] = joins_info
+        return linked
 
     # The first time an app's resources are tracked (a new app, or a status from before
     # tracking) there is nothing to compare them with, so no rebalance is triggered. An
@@ -929,12 +1025,7 @@ def _update_linked_resources_status(
 
     if is_first_tracking:
         # First time tracking - initialize status without triggering rebalance
-        status_update["linkedResources"] = {
-            "agents": agents_info,
-            "webviews": webviews_info,
-            "tables": tables_info,
-            "tasks": tasks_info,
-        }
+        status_update["linkedResources"] = linked_resources()
         logger.info(f"Initialized linkedResources tracking for {name} (no rebalance triggered)")
         return False
 
@@ -953,18 +1044,16 @@ def _update_linked_resources_status(
         or not deep_compare_dict(
             {"tasks": tasks_info}, {"tasks": current_resources.get("tasks", [])}
         )
+        or not deep_compare_dict(
+            {"joins": joins_info}, {"joins": current_resources.get("joins", [])}
+        )
     )
 
     subscription_changed = False
     change_details = []
     
     if resources_changed:
-        status_update["linkedResources"] = {
-            "agents": agents_info,
-            "webviews": webviews_info,
-            "tables": tables_info,
-            "tasks": tasks_info,
-        }
+        status_update["linkedResources"] = linked_resources()
 
         # Surgical detection: only check subscription-affecting changes
         current_agents = current_resources.get("agents", [])
@@ -977,6 +1066,13 @@ def _update_linked_resources_status(
             if _detect_table_subscription_changes(current_tables, tables_info, name, logger):
                 subscription_changed = True
                 change_details.append("table changelog topics")
+
+        if not subscription_changed:
+            if _detect_join_subscription_changes(
+                current_resources.get("joins", []), joins_info, name, logger
+            ):
+                subscription_changed = True
+                change_details.append("joins")
 
         # Mark rebalance required if subscriptions changed
         if subscription_changed:
@@ -2024,6 +2120,18 @@ async def update_status(
         _update_basic_status_fields(status_update, _status, _actual_status, app, logger)
         if related_resources is not None:
             _update_linked_resources_status(status_update, _status, app, related_resources, name, logger)
+        if related_resources is not None and "definitions" in related_resources:
+            definitions = related_resources["definitions"]
+            status_update["definitions"] = _definitions_status(definitions)
+            changed = _update_joins_condition(status_update, _status, definitions, gen)
+            if changed and changed["status"] == "False":
+                _post_app_event(
+                    name, namespace, meta, "Warning", "JoinsNotDelivered", changed["message"], logger
+                )
+        elif related_resources is None and state.definitions_cleanup is not None:
+            await _refresh_definitions_cleanup(
+                app, status_update, _status, state, name, namespace, meta, logger
+            )
         if "rebalanceRequired" not in status_update and "rebalanceRequired" not in _status:
             status_update["rebalanceRequired"] = False
         
@@ -2179,6 +2287,62 @@ async def update_status(
         state.pod_cache.listed_pods = None
 
 
+async def _refresh_definitions_cleanup(
+    app: KasprApp,
+    status_update: Dict,
+    _status: Mapping,
+    state: AppRuntimeState,
+    name: str,
+    namespace: str,
+    meta: Optional[Mapping],
+    logger: Logger,
+):
+    """Retry deleting the definitions ConfigMaps that waited for a rollout, on a status refresh."""
+    mode, desired = state.definitions_cleanup
+    try:
+        plan = await app.clean_up_definitions(mode, set(desired))
+    except Exception as e:
+        logger.warning(f"Failed to clean up the definitions ConfigMaps of {name}: {e}")
+        return
+    _post_cleanup_events(name, namespace, meta, plan, logger)
+    state.definitions_cleanup = (mode, desired) if plan.waiting else None
+    current = _status.get("definitions")
+    if current is None:
+        return
+    updated = dict(current)
+    if plan.waiting:
+        updated["pendingDeletion"] = len(plan.waiting)
+    else:
+        updated.pop("pendingDeletion", None)
+    if updated.get("delivery") != BUNDLE and "pendingDeletion" not in updated:
+        updated = None
+    status_update["definitions"] = updated
+
+
+async def _prepare_full_rendering(app: KasprApp, name: str, namespace: str):
+    """Make the app render its whole pod template as a reconciliation would.
+
+    Attaches the app's components, chooses its delivery mode against its StatefulSet,
+    and writes missing shards in bundle mode, for handlers that write the whole pod
+    template outside a reconciliation.
+
+    Returns the StatefulSet as read (None if it does not exist).
+
+    Raises:
+        kopf.TemporaryError: a component kind could not be listed. A pod template
+            rendered without its components would drop their definitions.
+    """
+    if not await attach_app_related_resources(app, name, namespace):
+        raise kopf.TemporaryError(
+            f"Could not list the components of KasprApp {name}; retrying.", delay=10
+        )
+    stateful_set = await app.fetch_stateful_set(app.apps_v1_api, app.stateful_set_name, namespace)
+    app.resolve_definitions_delivery(stateful_set)
+    if app.definitions_delivery == BUNDLE:
+        await app.sync_definition_shards()
+    return stateful_set
+
+
 async def _report_app_status_to_components(
     components: List, app_status: str, logger: Logger
 ):
@@ -2224,6 +2388,209 @@ RECONCILED = "reconciled"
 RETRY = "retry"
 FAILED_PERMANENTLY = "failed-permanently"
 PAUSED = "paused"
+
+JOINS_DELIVERED = "JoinsDelivered"
+
+
+def _post_delivery_events(
+    name: str, namespace: str, meta: Optional[Mapping], delivery: Delivery, logger: Logger
+):
+    """Tell the app's events that its delivery mode changes, or its annotation is wrong."""
+    if delivery.invalid_annotation is not None:
+        _post_app_event(
+            name, namespace, meta, "Warning", "InvalidDefinitionsDelivery",
+            f"Annotation {DELIVERY_ANNOTATION}={delivery.invalid_annotation!r} names no "
+            f"delivery mode ({COMPONENTS} or {BUNDLE}); it is ignored.",
+            logger,
+        )
+    if delivery.changes:
+        why = (
+            f"the {DELIVERY_ANNOTATION} annotation"
+            if delivery.reason == "annotation"
+            else "the operator default, applied with this rollout"
+        )
+        message = (
+            f"Definitions delivery changes from {delivery.deployed} to {delivery.mode} "
+            f"({why}); the pods roll once."
+        )
+        logger.info(message)
+        _post_app_event(name, namespace, meta, "Normal", "DefinitionsDeliveryChanged", message, logger)
+
+
+async def _sync_definitions(
+    app: KasprApp, name: str, namespace: str, meta: Optional[Mapping], logger: Logger
+) -> Optional[List]:
+    """Write the app's definitions for its delivery mode.
+
+    Returns the ConfigMaps labelled for the app as listed, or None when none were listed.
+    """
+    if app.definitions_delivery != BUNDLE:
+        return await app.sync_component_config_maps()
+    try:
+        config_maps = await app.sync_definition_shards()
+    except (DefinitionsTooLarge, DefinitionsConflict) as e:
+        _post_app_event(name, namespace, meta, "Warning", type(e).__name__, str(e), logger)
+        raise
+    created = app.created_definition_shards or []
+    if created:
+        _post_app_event(
+            name, namespace, meta, "Normal", "DefinitionsBundleCreated",
+            "Created definitions ConfigMaps "
+            + ", ".join(f"{s.name} ({s.components} components, {s.size} bytes)" for s in created)
+            + ".",
+            logger,
+        )
+    return config_maps
+
+
+def _post_cleanup_events(
+    name: str, namespace: str, meta: Optional[Mapping], plan: CleanupPlan, logger: Logger
+):
+    if plan.delete:
+        names = sorted(config_map.metadata.name for config_map in plan.delete)
+        shown = ", ".join(names[:10]) + (f" and {len(names) - 10} more" if len(names) > 10 else "")
+        message = f"Deleted {len(names)} definitions ConfigMaps no pod mounts any more: {shown}."
+        logger.info(message)
+        _post_app_event(name, namespace, meta, "Normal", "DefinitionsCleanedUp", message, logger)
+
+
+async def _clean_up_definitions(
+    app: KasprApp,
+    config_maps: Optional[List],
+    status: Optional[Mapping],
+    state: AppRuntimeState,
+    name: str,
+    namespace: str,
+    meta: Optional[Mapping],
+    logger: Logger,
+) -> Dict:
+    """Delete the definitions ConfigMaps the app no longer mounts, once no pod can need them.
+
+    An app that delivers its components one ConfigMap each and has never had bundles
+    costs no API call here: its listing comes from the definitions sync, and without
+    components it is only listed while its status shows bundles may be left.
+
+    Returns what the app's status reports about its definitions.
+    """
+    mode = app.definitions_delivery
+    desired = frozenset(app.desired_definitions_config_maps)
+    plan = CleanupPlan()
+    if mode == BUNDLE or config_maps is not None or (status or {}).get("definitions"):
+        plan = await app.clean_up_definitions(mode, desired, config_maps)
+        _post_cleanup_events(name, namespace, meta, plan, logger)
+        if plan.waiting:
+            logger.info(
+                f"{len(plan.waiting)} definitions ConfigMaps of {name} wait before they are "
+                f"deleted: {plan.reason}."
+            )
+    state.definitions_cleanup = (mode, desired) if plan.waiting else None
+    return {
+        "mode": mode,
+        "shards": app.definition_shards if mode == BUNDLE else [],
+        "waiting": len(plan.waiting),
+        "joins": sorted(join.cluster for join in app.joins or []),
+    }
+
+
+def _definitions_status(info: Mapping) -> Optional[Dict]:
+    """The app's status.definitions, or None when there is nothing to report."""
+    if info["mode"] == BUNDLE:
+        shards = info["shards"]
+        status = {
+            "delivery": BUNDLE,
+            "configMaps": [shard.name for shard in shards],
+            "components": sum(shard.components for shard in shards),
+            "bytes": sum(shard.size for shard in shards),
+        }
+    elif info["waiting"]:
+        status = {"delivery": COMPONENTS}
+    else:
+        return None
+    if info["waiting"]:
+        status["pendingDeletion"] = info["waiting"]
+    return status
+
+
+def _update_joins_condition(
+    status_update: Dict, _status: Dict, info: Mapping, gen: int
+) -> Optional[Dict]:
+    """Report whether the app's KasprJoins reach its pods. Apps without joins get no condition.
+
+    Returns the condition when it changed.
+    """
+    conds = status_update.get("conditions", _status.get("conditions", []))
+    existing = next((c for c in conds if c.get("type") == JOINS_DELIVERED), None)
+    joins = info["joins"]
+    if not joins:
+        if existing:
+            status_update["conditions"] = [c for c in conds if c.get("type") != JOINS_DELIVERED]
+        return None
+    if info["mode"] == BUNDLE:
+        condition = {
+            "type": JOINS_DELIVERED,
+            "status": "True",
+            "reason": "Bundled",
+            "message": f"{len(joins)} KasprJoins are delivered in the definitions bundle.",
+        }
+    else:
+        condition = {
+            "type": JOINS_DELIVERED,
+            "status": "False",
+            "reason": "RequiresBundleDelivery",
+            "message": (
+                f"KasprJoins {', '.join(joins)} are not delivered: KasprJoins need definitions "
+                f"bundle delivery (annotate the KasprApp {DELIVERY_ANNOTATION}={BUNDLE})."
+            ),
+        }
+    condition["observedGeneration"] = gen
+    status_update["conditions"] = upsert_condition(conds, condition)
+    if existing and all(existing.get(k) == condition[k] for k in ("status", "reason", "message")):
+        return None
+    return condition
+
+
+async def _report_definitions_to_components(app: KasprApp, logger: Logger):
+    """Tell the app's components how they reach its pods, where that changed.
+
+    Components of an app that never delivered bundles are left as they are. Components
+    that have not reported yet are left to their own handler.
+    """
+    bundled = app.definitions_delivery == BUNDLE
+    tables = {table.cluster for table in app.tables or []}
+    for component in [*(app.agents or []), *(app.webviews or []), *(app.tables or []),
+                      *(app.tasks or []), *(app.joins or [])]:
+        owner = component.owner or {}
+        if (owner.get("metadata") or {}).get("deletionTimestamp"):
+            continue
+        reported = owner.get("status") or {}
+        if not reported:
+            continue
+        if component.WRITES_CONFIG_MAP and not bundled and "delivery" not in reported:
+            continue
+        desired = component.definitions_status(bundled)
+        if isinstance(component, KasprJoin):
+            desired.update(component.tables_status(tables))
+        changes = {key: value for key, value in desired.items() if reported.get(key) != value}
+        if not changes:
+            continue
+        try:
+            if await component.patch_status(changes) is None:
+                continue  # the component is gone
+        except Exception as e:
+            logger.warning(
+                f"Failed to update the delivery status of {component.KIND} {component.cluster}: {e}"
+            )
+            continue
+        if changes.get("delivery") == NOT_DELIVERED:
+            kopf.warn(
+                owner,
+                reason="NotDelivered",
+                message=(
+                    f"Not delivered to the pods of KasprApp `{component.app_name}`: KasprJoins "
+                    f"need definitions bundle delivery (annotate the KasprApp "
+                    f"`{DELIVERY_ANNOTATION}: {BUNDLE}`)."
+                ),
+            )
 
 
 async def reconcile(
@@ -2282,20 +2649,32 @@ async def reconcile(
             "webviews": {webview.cluster: webview.hash for webview in app.webviews},
             "tables": {table.cluster: table.hash for table in app.tables},
             "tasks": {task.cluster: task.hash for task in app.tasks},
+            "joins": {join.cluster: join.hash for join in app.joins or []},
         }
         logger.debug(f"Reconciling {APP_KIND}/{name} in {namespace} namespace.")
+        # The delivery mode decides how the pod template mounts the definitions, so it
+        # is chosen before anything renders the template.
+        stateful_set = await app.fetch_stateful_set(
+            app.apps_v1_api, app.stateful_set_name, namespace
+        )
+        delivery = app.resolve_definitions_delivery(stateful_set)
+        _post_delivery_events(name, namespace, meta, delivery, logger)
         # Definitions must be current before the StatefulSet rolls pods that mount them.
-        await app.sync_component_config_maps()
-        await app.synchronize()
+        config_maps = await _sync_definitions(app, name, namespace, meta, logger)
+        await app.synchronize(stateful_set=stateful_set)
         state.desired_statefulset_fingerprint = app.prepare_statefulset_fingerprint(
             app.stateful_set
         )
         state.vpa_reconciled = True
         state.vpa_condition = app.vpa_condition
+        related["definitions"] = await _clean_up_definitions(
+            app, config_maps, status, state, name, namespace, meta, logger
+        )
         logger.debug(f"Reconciled {APP_KIND}/{name} in {namespace} namespace.")
         await _report_app_status_to_components(
-            [*app.agents, *app.webviews, *app.tables, *app.tasks], APP_FOUND, logger
+            [*app.agents, *app.webviews, *app.tables, *app.tasks, *(app.joins or [])], APP_FOUND, logger
         )
+        await _report_definitions_to_components(app, logger)
         await update_status(
             name,
             spec,
@@ -2356,10 +2735,11 @@ async def on_create(
         )
     
     try:
-        # Render the initial pod template with the component definition volumes already
-        # attached, so the first pod does not start without them.
-        await attach_app_related_resources(app, name, namespace)
-        await app.create()
+        # Render the pod template with the component definitions already attached and
+        # in the app's delivery mode, so neither the first pod nor an operator restart
+        # rolls the pods to other definitions.
+        stateful_set = await _prepare_full_rendering(app, name, namespace)
+        await app.create(stateful_set=stateful_set)
         # Autoscalers find the app's pods by this selector (scale subresource), so it
         # is reported before the first status refresh.
         if (status or {}).get("selector") != app.pod_selector:
@@ -2426,6 +2806,8 @@ async def on_replicas_update(
         logger.info("Reconciliation is paused.")
         return
     try:
+        # Scaling up synchronizes the whole StatefulSet, pod template included.
+        await _prepare_full_rendering(app, name, namespace)
         await app.patch_replicas()    
         
     except Exception as e:
@@ -2579,6 +2961,8 @@ async def on_storage_size_update(
         logger.info("Reconciliation is paused.")
         return
     try:
+        # The StatefulSet is recreated whole, pod template included.
+        await _prepare_full_rendering(app, name, namespace)
         await app.patch_storage_size()
     except ApiException as e:
         logger.error(f"Failed to patch storage size for KasprApp: {e}")
@@ -2644,6 +3028,8 @@ async def on_template_pod_updated(
         return
 
     try:
+        # The whole pod template is replaced.
+        await _prepare_full_rendering(app, name, namespace)
         await app.patch_template_pod()
     except Exception as e:
         logger.error(f"Failed to patch template pod for KasprApp: {e}")
@@ -2801,7 +3187,7 @@ async def on_delete(name, namespace=None, logger: Logger = None, **kwargs):
         app = KasprApp.default()
         await attach_app_related_resources(app, name, namespace, related=related)
         await _report_app_status_to_components(
-            [*app.agents, *app.webviews, *app.tables, *app.tasks], APP_NOT_FOUND, logger
+            [*app.agents, *app.webviews, *app.tables, *app.tasks, *(app.joins or [])], APP_NOT_FOUND, logger
         )
     except Exception as e:
         logger.warning(f"Failed to update the components of deleted KasprApp {name}: {e}")
@@ -2973,7 +3359,7 @@ def _record_component_observations(related: Dict, namespace: str, app_name: str)
     (deleted or moved away), then trigger no repeat reconciliation.
     """
     listed = set()
-    for kind in ("agents", "webviews", "tables", "tasks"):
+    for kind in ("agents", "webviews", "tables", "tasks", "joins"):
         for item in related.get(kind, []):
             uid, observation = _observe_component(item)
             component_observations[uid] = observation
@@ -2986,8 +3372,8 @@ def _record_component_observations(related: Dict, namespace: str, app_name: str)
 async def notify_component_event(event_type: Optional[str], body: Mapping, logger: Logger):
     """Request reconciliation of the KasprApps affected by a component event.
 
-    Components (agents, webviews, tables and tasks) are mounted into their app's
-    pods, so the app is reconciled when a component is added, deleted, moved to
+    Components (agents, webviews, tables, tasks and joins) are mounted into their
+    app's pods, so the app is reconciled when a component is added, deleted, moved to
     another app, or has its spec or labels changed. Other events, such as status
     updates, and components the app has already reconciled are ignored.
     """

@@ -1,0 +1,777 @@
+{
+ "configMaps": [
+  {
+   "apiVersion": "v1",
+   "data": {
+    "api-cache-kasprtable-table.yaml": "tables:\n- default_selector: null\n  description: 'Caches API responses to reduce external API calls and improve performance.\n\n    Key format: {api_type}:{cache_key}\n\n    '\n  extra_topic_configs:\n    retention.ms: '86400000'\n  global: false\n  key_serializer: json\n  name: api-cache-kasprtable\n  options: {}\n  partitions: 8\n  value_serializer: json\n  window: null\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "f5773830058709ab"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "api-cache-kasprtable",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprTable",
+     "app.kubernetes.io/part-of": "kaspr-api-cache-kasprtable",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprTable",
+     "kaspr.io/kind": "KasprTable",
+     "kaspr.io/name": "api-cache-kasprtable-table"
+    },
+    "name": "api-cache-kasprtable-table",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "api-enricher-kaspragent-agent.yaml": "agents:\n- description: 'Enriches user events by calling external APIs to gather additional\n    information\n\n    such as geolocation data and user details. Implements caching to minimize API\n    calls.\n\n    '\n  input:\n    channel: null\n    declare: null\n    take: null\n    topic:\n      compacting: null\n      config: null\n      deleting: null\n      key_serializer: null\n      name: enriched-user-events\n      partitions: null\n      pattern: null\n      replicas: null\n      retention: null\n      value_serializer: null\n  isolated_partitions: null\n  name: api-enricher-kaspragent\n  noack: null\n  output:\n    topics:\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value[\\\"user_id\\\"]\\n\"\n      key_serializer: null\n      name: api-enriched-events\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value.get(\\\"enrichment_successful\\\"\\\n          , False)\\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"enriched_event\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value[\\\"user_id\\\"]\\n\"\n      key_serializer: null\n      name: api-enrichment-errors\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return not value.get(\\\"enrichment_successful\\\"\\\n          , True)\\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"error_info\\\"]\\n\"\n      value_serializer: null\n  processors:\n    init:\n      entrypoint: null\n      python: \"import aiohttp\\nimport asyncio\\nimport json\\nimport os\\nfrom datetime\\\n        \\ import datetime, timezone, timedelta\\nimport hashlib\\n\\napp = context[\\\"\\\n        app\\\"]\\n\\n# Configuration\\nGEO_API_URL = os.getenv(\\\"GEO_API_URL\\\", \\\"http://ip-api.com/json\\\"\\\n        )\\nUSER_API_URL = os.getenv(\\\"USER_API_URL\\\", \\\"https://jsonplaceholder.typicode.com/users\\\"\\\n        )\\nAPI_TIMEOUT = int(os.getenv(\\\"API_TIMEOUT_SECONDS\\\", \\\"5\\\"))\\nCACHE_TTL_HOURS\\\n        \\ = int(os.getenv(\\\"CACHE_TTL_HOURS\\\", \\\"24\\\"))\\n\\n# Create a single HTTP\\\n        \\ session for reuse across all API calls\\n# This session will be reused for\\\n        \\ all HTTP requests to improve performance\\nhttp_session = aiohttp.ClientSession(\\n\\\n        \\    timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)\\n)\\n\\n# Note: In a production\\\n        \\ environment, you may want to handle session cleanup\\n# when the agent shuts\\\n        \\ down, though Kaspr typically handles this automatically\\n\\nasync def make_api_call(session,\\\n        \\ url, params=None):\\n    \\\"\\\"\\\"Make an HTTP API call with timeout and error\\\n        \\ handling.\\\"\\\"\\\"\\n    try:\\n        async with session.get(url, params=params)\\\n        \\ as response:\\n            if response.status == 200:\\n                return\\\n        \\ await response.json()\\n            else:\\n                return {\\\"error\\\"\\\n        : f\\\"HTTP {response.status}\\\"}\\n    except asyncio.TimeoutError:\\n       \\\n        \\ return {\\\"error\\\": \\\"API timeout\\\"}\\n    except Exception as e:\\n      \\\n        \\  return {\\\"error\\\": str(e)}\\n\\ndef is_cache_valid(cached_item):\\n    \\\"\\\"\\\n        \\\"Check if a cached item is still valid based on TTL.\\\"\\\"\\\"\\n    if not cached_item\\\n        \\ or \\\"cached_at\\\" not in cached_item:\\n        return False\\n    \\n    cached_at\\\n        \\ = datetime.fromisoformat(cached_item[\\\"cached_at\\\"])\\n    expiry = cached_at\\\n        \\ + timedelta(hours=CACHE_TTL_HOURS)\\n    return datetime.now(timezone.utc)\\\n        \\ < expiry\\n\\ndef get_cache_key(api_type, identifier):\\n    \\\"\\\"\\\"Generate\\\n        \\ a consistent cache key.\\\"\\\"\\\"\\n    return f\\\"{api_type}:{hashlib.md5(str(identifier).encode()).hexdigest()}\\\"\\\n        \\n    \\n\"\n    operations:\n    - filter: null\n      map:\n        entrypoint: check_cache\n        python: \"def check_cache(value, cache):\\n    \\\"\\\"\\\"\\n    Check if we have\\\n          \\ valid cached data for this event's enrichment needs.\\n    \\\"\\\"\\\"\\n   \\\n          \\ ip_address = value.get(\\\"ip_address\\\")\\n    user_id = value[\\\"user_id\\\"\\\n          ]\\n    \\n    # Check geo cache\\n    geo_data = None\\n    if ip_address:\\n\\\n          \\        geo_cache_key = get_cache_key(\\\"geo\\\", ip_address)\\n        cached_geo\\\n          \\ = cache.get(geo_cache_key)\\n        if is_cache_valid(cached_geo):\\n \\\n          \\           geo_data = cached_geo[\\\"data\\\"]\\n    \\n    # Check user data\\\n          \\ cache\\n    user_data = None\\n    user_cache_key = get_cache_key(\\\"user\\\"\\\n          , user_id)\\n    cached_user = cache.get(user_cache_key)\\n    if is_cache_valid(cached_user):\\n\\\n          \\        user_data = cached_user[\\\"data\\\"]\\n    \\n    return {\\n       \\\n          \\ **value,\\n        \\\"cached_geo_data\\\": geo_data,\\n        \\\"cached_user_data\\\"\\\n          : user_data,\\n        \\\"needs_geo_api\\\": ip_address and not geo_data,\\n\\\n          \\        \\\"needs_user_api\\\": not user_data,\\n        \\\"geo_cache_key\\\":\\\n          \\ get_cache_key(\\\"geo\\\", ip_address) if ip_address else None,\\n        \\\"\\\n          user_cache_key\\\": user_cache_key\\n    }\\n    \\n\"\n      name: check-cache\n      tables:\n      - name: api-cache\n        param_name: cache\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: enrich_with_geo_api\n        python: \"async def enrich_with_geo_api(value):\\n    \\\"\\\"\\\"\\n    Call geolocation\\\n          \\ API to enrich event with location data.\\n    \\\"\\\"\\\"\\n    if not value.get(\\\"\\\n          needs_geo_api\\\"):\\n        return {**value, \\\"api_geo_data\\\": value.get(\\\"\\\n          cached_geo_data\\\")}\\n    \\n    ip_address = value.get(\\\"ip_address\\\")\\n\\\n          \\    if not ip_address:\\n        return {**value, \\\"api_geo_data\\\": None}\\n\\\n          \\    \\n    geo_url = f\\\"{GEO_API_URL}/{ip_address}\\\"\\n    geo_response =\\\n          \\ await make_api_call(http_session, geo_url)\\n        \\n        if \\\"error\\\"\\\n          \\ in geo_response:\\n            app.log.warning(f\\\"Geo API error for IP\\\n          \\ {ip_address}: {geo_response['error']}\\\")\\n            return {**value,\\\n          \\ \\\"api_geo_data\\\": None, \\\"geo_api_error\\\": geo_response[\\\"error\\\"]}\\n\\\n          \\        \\n        # Extract relevant geo data\\n        geo_data = {\\n \\\n          \\           \\\"country\\\": geo_response.get(\\\"country\\\"),\\n            \\\"\\\n          country_code\\\": geo_response.get(\\\"countryCode\\\"),\\n            \\\"region\\\"\\\n          : geo_response.get(\\\"regionName\\\"),\\n            \\\"city\\\": geo_response.get(\\\"\\\n          city\\\"),\\n            \\\"timezone\\\": geo_response.get(\\\"timezone\\\"),\\n  \\\n          \\          \\\"latitude\\\": geo_response.get(\\\"lat\\\"),\\n            \\\"longitude\\\"\\\n          : geo_response.get(\\\"lon\\\"),\\n            \\\"isp\\\": geo_response.get(\\\"isp\\\"\\\n          )\\n        }\\n        \\n        return {**value, \\\"api_geo_data\\\": geo_data}\\n\\\n          \\        \\n\"\n      name: enrich-with-geo-api\n      tables: []\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: enrich_with_user_api\n        python: \"async def enrich_with_user_api(value):\\n    \\\"\\\"\\\"\\n    Call user\\\n          \\ API to enrich event with user profile data.\\n    \\\"\\\"\\\"\\n    if not value.get(\\\"\\\n          needs_user_api\\\"):\\n        return {**value, \\\"api_user_data\\\": value.get(\\\"\\\n          cached_user_data\\\")}\\n    \\n    user_id = value[\\\"user_id\\\"]\\n    \\n   \\\n          \\ # Simulate user lookup - in real world, this would be your user service\\n\\\n          \\    user_url = f\\\"{USER_API_URL}/{hash(user_id) % 10 + 1}\\\"  # Map to user\\\n          \\ 1-10\\n    user_response = await make_api_call(http_session, user_url)\\n\\\n          \\        \\n        if \\\"error\\\" in user_response:\\n            app.log.warning(f\\\"\\\n          User API error for user {user_id}: {user_response['error']}\\\")\\n       \\\n          \\     return {**value, \\\"api_user_data\\\": None, \\\"user_api_error\\\": user_response[\\\"\\\n          error\\\"]}\\n        \\n        # Extract relevant user data\\n        user_data\\\n          \\ = {\\n            \\\"name\\\": user_response.get(\\\"name\\\"),\\n            \\\"\\\n          username\\\": user_response.get(\\\"username\\\"),\\n            \\\"email\\\": user_response.get(\\\"\\\n          email\\\"),\\n            \\\"phone\\\": user_response.get(\\\"phone\\\"),\\n      \\\n          \\      \\\"website\\\": user_response.get(\\\"website\\\"),\\n            \\\"company\\\"\\\n          : user_response.get(\\\"company\\\", {}).get(\\\"name\\\"),\\n            \\\"address\\\"\\\n          : {\\n                \\\"city\\\": user_response.get(\\\"address\\\", {}).get(\\\"\\\n          city\\\"),\\n                \\\"zipcode\\\": user_response.get(\\\"address\\\", {}).get(\\\"\\\n          zipcode\\\")\\n            }\\n        }\\n        \\n        return {**value,\\\n          \\ \\\"api_user_data\\\": user_data}\\n        \\n\"\n      name: enrich-with-user-api\n      tables: []\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: update_cache\n        python: \"def update_cache(value, cache):\\n    \\\"\\\"\\\"\\n    Update cache with\\\n          \\ new API responses.\\n    \\\"\\\"\\\"\\n    current_time = datetime.now(timezone.utc).isoformat()\\n\\\n          \\    \\n    # Cache geo data if we fetched it\\n    if value.get(\\\"needs_geo_api\\\"\\\n          ) and value.get(\\\"api_geo_data\\\"):\\n        geo_cache_key = value[\\\"geo_cache_key\\\"\\\n          ]\\n        cache[geo_cache_key] = {\\n            \\\"data\\\": value[\\\"api_geo_data\\\"\\\n          ],\\n            \\\"cached_at\\\": current_time,\\n            \\\"cache_type\\\"\\\n          : \\\"geo\\\"\\n        }\\n    \\n    # Cache user data if we fetched it\\n   \\\n          \\ if value.get(\\\"needs_user_api\\\") and value.get(\\\"api_user_data\\\"):\\n \\\n          \\       user_cache_key = value[\\\"user_cache_key\\\"]\\n        cache[user_cache_key]\\\n          \\ = {\\n            \\\"data\\\": value[\\\"api_user_data\\\"],\\n            \\\"cached_at\\\"\\\n          : current_time,\\n            \\\"cache_type\\\": \\\"user\\\"\\n        }\\n    \\n\\\n          \\    return value\\n    \\n\"\n      name: update-cache\n      tables:\n      - name: api-cache\n        param_name: cache\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: compile_enrichment\n        python: \"def compile_enrichment(value):\\n    \\\"\\\"\\\"\\n    Compile all enrichment\\\n          \\ data into the final enriched event.\\n    \\\"\\\"\\\"\\n    enriched_event =\\\n          \\ {**value}\\n    \\n    # Add geo enrichment\\n    geo_data = value.get(\\\"\\\n          api_geo_data\\\")\\n    if geo_data:\\n        enriched_event.update({\\n   \\\n          \\         \\\"geo_country\\\": geo_data.get(\\\"country\\\"),\\n            \\\"geo_country_code\\\"\\\n          : geo_data.get(\\\"country_code\\\"),\\n            \\\"geo_region\\\": geo_data.get(\\\"\\\n          region\\\"),\\n            \\\"geo_city\\\": geo_data.get(\\\"city\\\"),\\n        \\\n          \\    \\\"geo_timezone\\\": geo_data.get(\\\"timezone\\\"),\\n            \\\"geo_coordinates\\\"\\\n          : [geo_data.get(\\\"latitude\\\"), geo_data.get(\\\"longitude\\\")] if geo_data.get(\\\"\\\n          latitude\\\") else None,\\n            \\\"geo_isp\\\": geo_data.get(\\\"isp\\\")\\n\\\n          \\        })\\n    \\n    # Add user enrichment\\n    user_data = value.get(\\\"\\\n          api_user_data\\\")\\n    if user_data:\\n        enriched_event.update({\\n \\\n          \\           \\\"user_name\\\": user_data.get(\\\"name\\\"),\\n            \\\"user_username\\\"\\\n          : user_data.get(\\\"username\\\"),\\n            \\\"user_email\\\": user_data.get(\\\"\\\n          email\\\"),\\n            \\\"user_phone\\\": user_data.get(\\\"phone\\\"),\\n     \\\n          \\       \\\"user_company\\\": user_data.get(\\\"company\\\"),\\n            \\\"user_city\\\"\\\n          : user_data.get(\\\"address\\\", {}).get(\\\"city\\\"),\\n            \\\"user_zipcode\\\"\\\n          : user_data.get(\\\"address\\\", {}).get(\\\"zipcode\\\")\\n        })\\n    \\n  \\\n          \\  # Track enrichment success\\n    has_errors = bool(value.get(\\\"geo_api_error\\\"\\\n          ) or value.get(\\\"user_api_error\\\"))\\n    enrichment_successful = not has_errors\\n\\\n          \\    \\n    result = {\\n        **value,\\n        \\\"enriched_event\\\": enriched_event,\\n\\\n          \\        \\\"enrichment_successful\\\": enrichment_successful,\\n        \\\"enrichment_timestamp\\\"\\\n          : datetime.now(timezone.utc).isoformat()\\n    }\\n    \\n    if has_errors:\\n\\\n          \\        result[\\\"error_info\\\"] = {\\n            \\\"user_id\\\": value[\\\"user_id\\\"\\\n          ],\\n            \\\"geo_error\\\": value.get(\\\"geo_api_error\\\"),\\n         \\\n          \\   \\\"user_error\\\": value.get(\\\"user_api_error\\\"),\\n            \\\"timestamp\\\"\\\n          : result[\\\"enrichment_timestamp\\\"]\\n        }\\n    \\n    return result\"\n      name: compile-enrichment\n      tables: []\n      topic_send: null\n    pipeline:\n    - check-cache\n    - enrich-with-geo-api\n    - enrich-with-user-api\n    - update-cache\n    - compile-enrichment\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "3e8a72addfc54afc"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "api-enricher-kaspragent",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprAgent",
+     "app.kubernetes.io/part-of": "kaspr-api-enricher-kaspragent",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprAgent",
+     "kaspr.io/kind": "KasprAgent",
+     "kaspr.io/name": "api-enricher-kaspragent-agent"
+    },
+    "name": "api-enricher-kaspragent-agent",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "counter-processor-kaspragent-agent.yaml": "agents:\n- description: 'Processes enriched user events and maintains real-time counters for\n    various dimensions.\n\n    Performs lookups against user profiles for additional enrichment.\n\n    '\n  input:\n    channel: null\n    declare: null\n    take: null\n    topic:\n      compacting: null\n      config: null\n      deleting: null\n      key_serializer: null\n      name: enriched-user-events\n      partitions: null\n      pattern: null\n      replicas: null\n      retention: null\n      value_serializer: null\n  isolated_partitions: null\n  name: counter-processor-kaspragent\n  noack: null\n  output:\n    topics:\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return f\\\"metrics:{value['dimension']}:{value['time_window']}\\\"\\\n          \\n\"\n      key_serializer: null\n      name: real-time-metrics\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate: null\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"metrics\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value[\\\"user_id\\\"]\\n\"\n      key_serializer: null\n      name: user-segments-updated\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return \\\"segment_data\\\" in value\\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"segment_data\\\"]\\n\"\n      value_serializer: null\n  processors:\n    init:\n      entrypoint: null\n      python: \"from datetime import datetime, timezone, timedelta\\nfrom collections\\\n        \\ import defaultdict\\nimport os\\nimport math\\n\\napp = context[\\\"app\\\"]\\n\\n\\\n        # Configuration from environment\\nWINDOW_SIZE_MINUTES = int(os.getenv(\\\"WINDOW_SIZE_MINUTES\\\"\\\n        , \\\"5\\\"))\\nMAX_COUNTERS_PER_KEY = int(os.getenv(\\\"MAX_COUNTERS_PER_KEY\\\",\\\n        \\ \\\"1000\\\"))\\n\\ndef get_time_window(timestamp, window_minutes=WINDOW_SIZE_MINUTES):\\n\\\n        \\    \\\"\\\"\\\"Get the time window bucket for a timestamp.\\\"\\\"\\\"\\n    dt = datetime.fromtimestamp(timestamp,\\\n        \\ tz=timezone.utc)\\n    # Round down to the nearest window_minutes interval\\n\\\n        \\    minutes = (dt.minute // window_minutes) * window_minutes\\n    window_start\\\n        \\ = dt.replace(minute=minutes, second=0, microsecond=0)\\n    return window_start.isoformat()\\n\\\n        \\ndef calculate_user_segment(profile, recent_activity):\\n    \\\"\\\"\\\"Calculate\\\n        \\ user segment based on profile and recent activity.\\\"\\\"\\\"\\n    # Simple segmentation\\\n        \\ logic\\n    total_events = profile.get(\\\"total_events\\\", 0)\\n    days_since_signup\\\n        \\ = profile.get(\\\"days_since_signup\\\", 0)\\n    avg_daily_events = total_events\\\n        \\ / max(days_since_signup, 1)\\n    \\n    recent_purchases = recent_activity.get(\\\"\\\n        purchase_count\\\", 0)\\n    recent_logins = recent_activity.get(\\\"login_count\\\"\\\n        , 0)\\n    \\n    if recent_purchases >= 2:\\n        return \\\"high_value\\\"\\n\\\n        \\    elif recent_logins >= 5 and avg_daily_events > 10:\\n        return \\\"\\\n        active_user\\\"\\n    elif days_since_signup <= 7:\\n        return \\\"new_user\\\"\\\n        \\n    elif recent_logins == 0:\\n        return \\\"dormant\\\"\\n    else:\\n  \\\n        \\      return \\\"regular_user\\\"\\n        \\n\"\n    operations:\n    - filter: null\n      map:\n        entrypoint: lookup_profile\n        python: \"def lookup_profile(value, profiles):\\n    \\\"\\\"\\\"\\n    Looks up user\\\n          \\ profile information and adds it to the event.\\n    \\\"\\\"\\\"\\n    user_id\\\n          \\ = value[\\\"user_id\\\"]\\n    profile = profiles.get(user_id, {\\n        \\\"\\\n          user_id\\\": user_id,\\n        \\\"total_events\\\": 0,\\n        \\\"first_seen\\\"\\\n          : value[\\\"timestamp\\\"],\\n        \\\"signup_date\\\": value.get(\\\"event_date\\\"\\\n          ),\\n        \\\"country\\\": value.get(\\\"country_name\\\", \\\"Unknown\\\"),\\n   \\\n          \\     \\\"segments\\\": []\\n    })\\n    \\n    # Calculate days since signup\\n\\\n          \\    if profile.get(\\\"signup_date\\\"):\\n        signup_date = datetime.fromisoformat(profile[\\\"\\\n          signup_date\\\"])\\n        current_date = datetime.fromisoformat(value[\\\"\\\n          event_date\\\"])\\n        days_since_signup = (current_date - signup_date).days\\n\\\n          \\        profile[\\\"days_since_signup\\\"] = days_since_signup\\n    \\n    return\\\n          \\ {\\n        **value,\\n        \\\"user_profile\\\": profile\\n    }\\n    \\n\"\n      name: lookup-user-profile\n      tables:\n      - name: user-profiles\n        param_name: profiles\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: update_counters\n        python: \"def update_counters(value, counters):\\n    \\\"\\\"\\\"\\n    Updates various\\\n          \\ dimensional counters based on the event.\\n    \\\"\\\"\\\"\\n    timestamp =\\\n          \\ float(value[\\\"timestamp\\\"])\\n    time_window = get_time_window(timestamp)\\n\\\n          \\    event_type = value[\\\"event_type\\\"]\\n    country = value.get(\\\"country_name\\\"\\\n          , \\\"Unknown\\\")\\n    user_id = value[\\\"user_id\\\"]\\n    \\n    # Define dimensions\\\n          \\ to count\\n    dimensions = [\\n        f\\\"global:total:{time_window}\\\"\\\n          ,\\n        f\\\"event_type:{event_type}:{time_window}\\\",\\n        f\\\"country:{country}:{time_window}\\\"\\\n          ,\\n        f\\\"hour:{value['event_hour']}:{time_window}\\\",\\n        f\\\"weekend:{value['is_weekend']}:{time_window}\\\"\\\n          \\n    ]\\n    \\n    updated_counters = []\\n    \\n    for dimension in dimensions:\\n\\\n          \\        counter = counters.get(dimension, {\\n            \\\"count\\\": 0,\\n\\\n          \\            \\\"unique_users\\\": set(),\\n            \\\"first_event\\\": timestamp,\\n\\\n          \\            \\\"last_event\\\": timestamp,\\n            \\\"dimension\\\": dimension,\\n\\\n          \\            \\\"time_window\\\": time_window\\n        })\\n        \\n      \\\n          \\  # Update counter\\n        counter[\\\"count\\\"] += 1\\n        counter[\\\"\\\n          unique_users\\\"].add(user_id)\\n        counter[\\\"last_event\\\"] = max(counter[\\\"\\\n          last_event\\\"], timestamp)\\n        \\n        # Convert set to list for serialization,\\\n          \\ keep only count\\n        serializable_counter = {\\n            **counter,\\n\\\n          \\            \\\"unique_user_count\\\": len(counter[\\\"unique_users\\\"])\\n   \\\n          \\     }\\n        del serializable_counter[\\\"unique_users\\\"]\\n        \\n\\\n          \\        counters[dimension] = counter  # Keep set in table\\n        updated_counters.append(serializable_counter)\\n\\\n          \\    \\n    return {\\n        **value,\\n        \\\"updated_counters\\\": updated_counters,\\n\\\n          \\        \\\"time_window\\\": time_window\\n    }\\n    \\n\"\n      name: update-counters\n      tables:\n      - name: event-counters\n        param_name: counters\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: calculate_segments\n        python: \"def calculate_segments(value, profiles, counters):\\n    \\\"\\\"\\\"\\n\\\n          \\    Updates user segments based on recent activity patterns.\\n    \\\"\\\"\\\"\\\n          \\n    user_id = value[\\\"user_id\\\"]\\n    profile = value[\\\"user_profile\\\"\\\n          ]\\n    time_window = value[\\\"time_window\\\"]\\n    \\n    # Get recent activity\\\n          \\ from counters\\n    recent_activity = {}\\n    for event_type in [\\\"login\\\"\\\n          , \\\"purchase\\\", \\\"page_view\\\"]:\\n        counter_key = f\\\"user:{user_id}:event_type:{event_type}:{time_window}\\\"\\\n          \\n        counter = counters.get(counter_key, {\\\"count\\\": 0})\\n        recent_activity[f\\\"\\\n          {event_type}_count\\\"] = counter[\\\"count\\\"]\\n    \\n    # Calculate new segment\\n\\\n          \\    new_segment = calculate_user_segment(profile, recent_activity)\\n  \\\n          \\  \\n    # Update profile\\n    updated_profile = {\\n        **profile,\\n\\\n          \\        \\\"total_events\\\": profile[\\\"total_events\\\"] + 1,\\n        \\\"last_seen\\\"\\\n          : value[\\\"timestamp\\\"],\\n        \\\"current_segment\\\": new_segment,\\n   \\\n          \\     \\\"last_updated\\\": datetime.now(timezone.utc).isoformat()\\n    }\\n\\\n          \\    \\n    # Add to segments history if segment changed\\n    if profile.get(\\\"\\\n          current_segment\\\") != new_segment:\\n        segments = profile.get(\\\"segments\\\"\\\n          , [])\\n        segments.append({\\n            \\\"segment\\\": new_segment,\\n\\\n          \\            \\\"timestamp\\\": value[\\\"timestamp\\\"],\\n            \\\"trigger_event\\\"\\\n          : value[\\\"event_type\\\"]\\n        })\\n        # Keep only last 10 segments\\n\\\n          \\        updated_profile[\\\"segments\\\"] = segments[-10:]\\n    \\n    profiles[user_id]\\\n          \\ = updated_profile\\n    \\n    result = {**value}\\n    if profile.get(\\\"\\\n          current_segment\\\") != new_segment:\\n        result[\\\"segment_data\\\"] = {\\n\\\n          \\            \\\"user_id\\\": user_id,\\n            \\\"old_segment\\\": profile.get(\\\"\\\n          current_segment\\\"),\\n            \\\"new_segment\\\": new_segment,\\n       \\\n          \\     \\\"change_timestamp\\\": value[\\\"timestamp\\\"]\\n        }\\n    \\n    return\\\n          \\ result\\n    \\n\"\n      name: calculate-segments\n      tables:\n      - name: user-profiles\n        param_name: profiles\n      - name: event-counters\n        param_name: counters\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: emit_metrics\n        python: \"def emit_metrics(value):\\n    \\\"\\\"\\\"\\n    Emits metrics for each\\\n          \\ updated counter.\\n    \\\"\\\"\\\"\\n    for counter in value[\\\"updated_counters\\\"\\\n          ]:\\n        yield {\\n            \\\"dimension\\\": counter[\\\"dimension\\\"],\\n\\\n          \\            \\\"time_window\\\": counter[\\\"time_window\\\"],\\n            \\\"\\\n          metrics\\\": counter\\n        }\"\n      name: emit-metrics\n      tables: []\n      topic_send: null\n    pipeline:\n    - lookup-user-profile\n    - update-counters\n    - calculate-segments\n    - emit-metrics\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "a429c917a2c3580f"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "counter-processor-kaspragent",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprAgent",
+     "app.kubernetes.io/part-of": "kaspr-counter-processor-kaspragent",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprAgent",
+     "kaspr.io/kind": "KasprAgent",
+     "kaspr.io/name": "counter-processor-kaspragent-agent"
+    },
+    "name": "counter-processor-kaspragent-agent",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "event-counters-kasprtable-table.yaml": "tables:\n- default_selector: null\n  description: 'Stores real-time counters for various event dimensions.\n\n    Key format: {dimension}:{value}:{time_window}\n\n    Value: counter object with metrics\n\n    '\n  extra_topic_configs:\n    retention.ms: '604800000'\n  global: false\n  key_serializer: json\n  name: event-counters-kasprtable\n  options: {}\n  partitions: 16\n  value_serializer: json\n  window: null\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "aa8c595506b11ce3"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "event-counters-kasprtable",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprTable",
+     "app.kubernetes.io/part-of": "kaspr-event-counters-kasprtable",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprTable",
+     "kaspr.io/kind": "KasprTable",
+     "kaspr.io/name": "event-counters-kasprtable-table"
+    },
+    "name": "event-counters-kasprtable-table",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "event-enricher-kaspragent-agent.yaml": "agents:\n- description: 'Processes raw user events by enriching them with additional metadata,\n\n    normalizing data formats, and filtering out invalid events.\n\n    '\n  input:\n    channel: null\n    declare: null\n    take: null\n    topic:\n      compacting: null\n      config: null\n      deleting: null\n      key_serializer: null\n      name: raw-user-events\n      partitions: null\n      pattern: null\n      replicas: null\n      retention: null\n      value_serializer: null\n  isolated_partitions: null\n  name: event-enricher-kaspragent\n  noack: null\n  output:\n    topics:\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value[\\\"user_id\\\"]\\n\"\n      key_serializer: null\n      name: enriched-user-events\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value.get(\\\"is_valid\\\", False)\\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"enriched_event\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector: null\n      key_serializer: null\n      name: invalid-events-dlq\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return not value.get(\\\"is_valid\\\", True)\\n\"\n      replicas: null\n      retention: null\n      value_selector: null\n      value_serializer: null\n  processors:\n    init:\n      entrypoint: null\n      python: \"import json\\nfrom datetime import datetime, timezone\\nimport hashlib\\n\\\n        import re\\n\\napp = context[\\\"app\\\"]\\n\\n# Valid event types\\nVALID_EVENT_TYPES\\\n        \\ = {\\\"login\\\", \\\"logout\\\", \\\"page_view\\\", \\\"click\\\", \\\"purchase\\\", \\\"signup\\\"\\\n        }\\n\\n# Country code mapping\\nCOUNTRY_CODES = {\\n    \\\"US\\\": \\\"United States\\\"\\\n        ,\\n    \\\"CA\\\": \\\"Canada\\\", \\n    \\\"GB\\\": \\\"United Kingdom\\\",\\n    \\\"DE\\\":\\\n        \\ \\\"Germany\\\",\\n    \\\"FR\\\": \\\"France\\\",\\n    \\\"JP\\\": \\\"Japan\\\",\\n    \\\"AU\\\"\\\n        : \\\"Australia\\\"\\n}\\n\\ndef is_valid_email(email):\\n    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\\\\\\n        .[a-zA-Z]{2,}$'\\n    return re.match(pattern, email) is not None\\n\\ndef generate_session_id(user_id,\\\n        \\ timestamp):\\n    # Generate deterministic session ID based on user and hour\\n\\\n        \\    hour_key = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime(\\\"\\\n        %Y%m%d%H\\\")\\n    return hashlib.md5(f\\\"{user_id}_{hour_key}\\\".encode()).hexdigest()[:16]\\n\\\n        \\    \\n\"\n    operations:\n    - filter: null\n      map:\n        entrypoint: validate_event\n        python: \"def validate_event(value):\\n    \\\"\\\"\\\"\\n    Validates incoming user\\\n          \\ events for required fields and data quality.\\n    \\\"\\\"\\\"\\n    errors =\\\n          \\ []\\n    \\n    # Check required fields\\n    required_fields = [\\\"user_id\\\"\\\n          , \\\"event_type\\\", \\\"timestamp\\\"]\\n    for field in required_fields:\\n  \\\n          \\      if field not in value or value[field] is None:\\n            errors.append(f\\\"\\\n          Missing required field: {field}\\\")\\n    \\n    # Validate event type\\n  \\\n          \\  if value.get(\\\"event_type\\\") not in VALID_EVENT_TYPES:\\n        errors.append(f\\\"\\\n          Invalid event_type: {value.get('event_type')}\\\")\\n    \\n    # Validate email\\\n          \\ if present\\n    if \\\"email\\\" in value and not is_valid_email(value[\\\"\\\n          email\\\"]):\\n        errors.append(\\\"Invalid email format\\\")\\n    \\n    #\\\n          \\ Validate timestamp\\n    try:\\n        timestamp = float(value.get(\\\"timestamp\\\"\\\n          , 0))\\n        if timestamp <= 0:\\n            errors.append(\\\"Invalid timestamp\\\"\\\n          )\\n    except (ValueError, TypeError):\\n        errors.append(\\\"Timestamp\\\n          \\ must be a number\\\")\\n    \\n    is_valid = len(errors) == 0\\n    \\n   \\\n          \\ return {\\n        \\\"raw_event\\\": value,\\n        \\\"is_valid\\\": is_valid,\\n\\\n          \\        \\\"validation_errors\\\": errors,\\n        \\\"processed_at\\\": datetime.now(timezone.utc).isoformat()\\n\\\n          \\    }\\n    \\n\"\n      name: validate-event\n      tables: []\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: enrich_metadata\n        python: \"def enrich_metadata(value):\\n    \\\"\\\"\\\"\\n    Enriches valid events\\\n          \\ with additional metadata and computed fields.\\n    \\\"\\\"\\\"\\n    if not\\\n          \\ value[\\\"is_valid\\\"]:\\n        return value\\n    \\n    event = value[\\\"\\\n          raw_event\\\"]\\n    timestamp = float(event[\\\"timestamp\\\"])\\n    \\n    # Add\\\n          \\ session information\\n    session_id = generate_session_id(event[\\\"user_id\\\"\\\n          ], timestamp)\\n    \\n    # Enrich country information\\n    country_code\\\n          \\ = event.get(\\\"country_code\\\", \\\"UNKNOWN\\\")\\n    country_name = COUNTRY_CODES.get(country_code,\\\n          \\ \\\"Unknown\\\")\\n    \\n    # Add computed fields\\n    event_date = datetime.fromtimestamp(timestamp,\\\n          \\ tz=timezone.utc)\\n    \\n    enriched = {\\n        **event,\\n        \\\"\\\n          session_id\\\": session_id,\\n        \\\"country_name\\\": country_name,\\n   \\\n          \\     \\\"event_date\\\": event_date.date().isoformat(),\\n        \\\"event_hour\\\"\\\n          : event_date.hour,\\n        \\\"day_of_week\\\": event_date.strftime(\\\"%A\\\"\\\n          ),\\n        \\\"is_weekend\\\": event_date.weekday() >= 5,\\n        \\\"enrichment_version\\\"\\\n          : \\\"1.0\\\"\\n    }\\n    \\n    value[\\\"enriched_event\\\"] = enriched\\n    return\\\n          \\ value\\n    \\n\"\n      name: enrich-metadata\n      tables: []\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: normalize_data\n        python: \"def normalize_data(value):\\n    \\\"\\\"\\\"\\n    Normalizes data formats\\\n          \\ and ensures consistency across events.\\n    \\\"\\\"\\\"\\n    if not value[\\\"\\\n          is_valid\\\"]:\\n        return value\\n    \\n    event = value[\\\"enriched_event\\\"\\\n          ]\\n    \\n    # Normalize event_type to lowercase\\n    event[\\\"event_type\\\"\\\n          ] = event[\\\"event_type\\\"].lower()\\n    \\n    # Normalize email to lowercase\\n\\\n          \\    if \\\"email\\\" in event:\\n        event[\\\"email\\\"] = event[\\\"email\\\"\\\n          ].lower().strip()\\n    \\n    # Normalize country code to uppercase\\n   \\\n          \\ if \\\"country_code\\\" in event:\\n        event[\\\"country_code\\\"] = event[\\\"\\\n          country_code\\\"].upper()\\n    \\n    # Add standard metadata\\n    event[\\\"\\\n          processing_timestamp\\\"] = datetime.now(timezone.utc).isoformat()\\n    event[\\\"\\\n          event_schema_version\\\"] = \\\"2.0\\\"\\n    \\n    value[\\\"enriched_event\\\"] =\\\n          \\ event\\n    return value\"\n      name: normalize-data\n      tables: []\n      topic_send: null\n    pipeline:\n    - validate-event\n    - enrich-metadata\n    - normalize-data\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "5a0cf80a76397754"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "event-enricher-kaspragent",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprAgent",
+     "app.kubernetes.io/part-of": "kaspr-event-enricher-kaspragent",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprAgent",
+     "kaspr.io/kind": "KasprAgent",
+     "kaspr.io/name": "event-enricher-kaspragent-agent"
+    },
+    "name": "event-enricher-kaspragent-agent",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "heartbeat-kasprtask-task.yaml": "tasks:\n- description: Sends a heartbeat every minute\n  name: heartbeat-kasprtask\n  on_leader: true\n  processors:\n    init: null\n    operations:\n    - filter: null\n      map:\n        entrypoint: beat\n        python: \"def beat():\\n    return {'alive': True}\\n\"\n      name: beat\n      tables: []\n      topic_send: null\n    pipeline:\n    - beat\n  schedule:\n    cron: null\n    interval: 60s\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "733c8f9e51d81155"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "heartbeat-kasprtask",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprTask",
+     "app.kubernetes.io/part-of": "kaspr-heartbeat-kasprtask",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprTask",
+     "kaspr.io/kind": "KasprTask",
+     "kaspr.io/name": "heartbeat-kasprtask-task"
+    },
+    "name": "heartbeat-kasprtask-task",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "metrics-dashboard-kasprwebview-webview.yaml": "webviews:\n- description: REST API for querying real-time analytics metrics\n  name: metrics-dashboard-kasprwebview\n  processors:\n    init:\n      entrypoint: null\n      python: \"from datetime import datetime, timezone, timedelta\\nimport json\\n\\n\\\n        def get_current_time_window(window_minutes=5):\\n    \\\"\\\"\\\"Get the current\\\n        \\ time window.\\\"\\\"\\\"\\n    now = datetime.now(timezone.utc)\\n    minutes =\\\n        \\ (now.minute // window_minutes) * window_minutes\\n    window_start = now.replace(minute=minutes,\\\n        \\ second=0, microsecond=0)\\n    return window_start.isoformat()\\n    \\ndef\\\n        \\ parse_time_range(time_range_param):\\n    \\\"\\\"\\\"Parse time range parameter\\\n        \\ (e.g., '1h', '24h', '7d').\\\"\\\"\\\"\\n    if not time_range_param:\\n       \\\n        \\ return 1  # Default 1 hour\\n        \\n    unit = time_range_param[-1].lower()\\n\\\n        \\    try:\\n        value = int(time_range_param[:-1])\\n    except ValueError:\\n\\\n        \\        return 1\\n        \\n    if unit == 'h':\\n        return value\\n \\\n        \\   elif unit == 'd':\\n        return value * 24\\n    elif unit == 'w':\\n\\\n        \\        return value * 24 * 7\\n    else:\\n        return 1\\n        \\n\"\n    operations:\n    - filter: null\n      map:\n        entrypoint: validate_request\n        python: \"def validate_request(request, dimension):\\n    \\\"\\\"\\\"\\n    Validates\\\n          \\ the incoming API request parameters.\\n    \\\"\\\"\\\"\\n    # Parse query parameters\\n\\\n          \\    query_params = {}\\n    if hasattr(request, 'query_string') and request.query_string:\\n\\\n          \\        for param in request.query_string.decode().split('&'):\\n      \\\n          \\      if '=' in param:\\n                key, value = param.split('=', 1)\\n\\\n          \\                query_params[key] = value\\n    \\n    # Validate dimension\\n\\\n          \\    valid_dimensions = [\\n        \\\"global\\\", \\\"event_type\\\", \\\"country\\\"\\\n          , \\\"hour\\\", \\\"weekend\\\"\\n    ]\\n    \\n    if dimension not in valid_dimensions:\\n\\\n          \\        raise ValueError(f\\\"Invalid dimension '{dimension}'. Valid options:\\\n          \\ {valid_dimensions}\\\")\\n    \\n    # Parse and validate parameters\\n   \\\n          \\ time_range_hours = parse_time_range(query_params.get('time_range', '1h'))\\n\\\n          \\    dimension_value = query_params.get('value', 'total')\\n    \\n    return\\\n          \\ {\\n        \\\"dimension\\\": dimension,\\n        \\\"dimension_value\\\": dimension_value,\\n\\\n          \\        \\\"time_range_hours\\\": time_range_hours,\\n        \\\"query_timestamp\\\"\\\n          : datetime.now(timezone.utc).isoformat(),\\n        \\\"query_params\\\": query_params\\n\\\n          \\    }\\n    \\n\"\n      name: validate-request\n      tables: []\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: query_metrics\n        python: \"def query_metrics(request, counters):\\n    \\\"\\\"\\\"\\n    Queries metrics\\\n          \\ from the counters table based on the request parameters.\\n    \\\"\\\"\\\"\\n\\\n          \\    dimension = request[\\\"dimension\\\"]\\n    dimension_value = request[\\\"\\\n          dimension_value\\\"]\\n    time_range_hours = request[\\\"time_range_hours\\\"\\\n          ]\\n    \\n    # Calculate time windows to query\\n    current_window = get_current_time_window()\\n\\\n          \\    current_time = datetime.fromisoformat(current_window.replace('Z', '+00:00'))\\n\\\n          \\    \\n    metrics = []\\n    windows_to_check = time_range_hours * (60 //\\\n          \\ 5)  # 5-minute windows\\n    \\n    for i in range(windows_to_check):\\n\\\n          \\        window_time = current_time - timedelta(minutes=i * 5)\\n       \\\n          \\ window_key = window_time.isoformat()\\n        \\n        # Build counter\\\n          \\ key\\n        counter_key = f\\\"{dimension}:{dimension_value}:{window_key}\\\"\\\n          \\n        \\n        counter = counters.get(counter_key)\\n        if counter:\\n\\\n          \\            metrics.append({\\n                \\\"time_window\\\": window_key,\\n\\\n          \\                \\\"count\\\": counter[\\\"count\\\"],\\n                \\\"unique_users\\\"\\\n          : counter.get(\\\"unique_user_count\\\", 0),\\n                \\\"dimension\\\"\\\n          : dimension,\\n                \\\"dimension_value\\\": dimension_value\\n   \\\n          \\         })\\n    \\n    if not metrics:\\n        raise ValueError(f\\\"No\\\n          \\ metrics found for {dimension}:{dimension_value}\\\")\\n    \\n    # Calculate\\\n          \\ aggregates\\n    total_count = sum(m[\\\"count\\\"] for m in metrics)\\n   \\\n          \\ total_unique_users = len(set(str(m[\\\"unique_users\\\"]) for m in metrics\\\n          \\ if m[\\\"unique_users\\\"] > 0))\\n    avg_count_per_window = total_count /\\\n          \\ len(metrics) if metrics else 0\\n    \\n    return {\\n        **request,\\n\\\n          \\        \\\"metrics\\\": metrics,\\n        \\\"summary\\\": {\\n            \\\"total_events\\\"\\\n          : total_count,\\n            \\\"unique_users\\\": total_unique_users,\\n    \\\n          \\        \\\"avg_events_per_window\\\": round(avg_count_per_window, 2),\\n  \\\n          \\          \\\"windows_queried\\\": len(metrics),\\n            \\\"time_range_hours\\\"\\\n          : time_range_hours\\n        }\\n    }\\n    \\n\"\n      name: query-metrics\n      tables:\n      - name: event-counters\n        param_name: counters\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: format_response\n        python: \"def format_response(result):\\n    \\\"\\\"\\\"\\n    Formats the final API\\\n          \\ response.\\n    \\\"\\\"\\\"\\n    return {\\n        \\\"query\\\": {\\n          \\\n          \\  \\\"dimension\\\": result[\\\"dimension\\\"],\\n            \\\"dimension_value\\\"\\\n          : result[\\\"dimension_value\\\"],\\n            \\\"time_range_hours\\\": result[\\\"\\\n          time_range_hours\\\"]\\n        },\\n        \\\"summary\\\": result[\\\"summary\\\"\\\n          ],\\n        \\\"metrics\\\": result[\\\"metrics\\\"],\\n        \\\"query_timestamp\\\"\\\n          : result[\\\"query_timestamp\\\"]\\n    }\"\n      name: format-response\n      tables: []\n      topic_send: null\n    pipeline:\n    - validate-request\n    - query-metrics\n    - format-response\n  request:\n    method: GET\n    path: /api/v1/metrics/{dimension}\n  response:\n    body_selector:\n      on_error:\n        entrypoint: error_body\n        python: \"def error_body(error):\\n    return {\\n        \\\"success\\\": False,\\n\\\n          \\        \\\"error\\\": str(error),\\n        \\\"timestamp\\\": datetime.now(timezone.utc).isoformat()\\n\\\n          \\    }\\n\"\n      on_success:\n        entrypoint: success_body\n        python: \"def success_body(result):\\n    return {\\n        \\\"success\\\": True,\\n\\\n          \\        \\\"data\\\": result,\\n        \\\"timestamp\\\": result.get(\\\"query_timestamp\\\"\\\n          )\\n    }\\n\"\n    content_type: application/json\n    error_content_type: null\n    headers: {}\n    headers_selector: null\n    status_code: null\n    status_code_selector:\n      on_error:\n        entrypoint: error_status\n        python: \"def error_status(error):\\n    if \\\"not found\\\" in str(error).lower():\\n\\\n          \\        return 404\\n    return 500\\n\"\n      on_success:\n        entrypoint: success_status\n        python: \"def success_status(result):\\n    return 200\\n\"\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "872280f7f7bf084a"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "metrics-dashboard-kasprwebview",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprWebView",
+     "app.kubernetes.io/part-of": "kaspr-metrics-dashboard-kasprwebview",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprWebView",
+     "kaspr.io/kind": "KasprWebView",
+     "kaspr.io/name": "metrics-dashboard-kasprwebview-webview"
+    },
+    "name": "metrics-dashboard-kasprwebview-webview",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "notification-fanout-kaspragent-agent.yaml": "agents:\n- description: 'Demonstrates fan-out capability by taking a single notification request\n    and\n\n    generating multiple targeted notifications based on user preferences, device types,\n\n    and delivery channels. Implements rate limiting and preference checking.\n\n    '\n  input:\n    channel: null\n    declare: null\n    take: null\n    topic:\n      compacting: null\n      config: null\n      deleting: null\n      key_serializer: null\n      name: notification-requests\n      partitions: null\n      pattern: null\n      replicas: null\n      retention: null\n      value_serializer: null\n  isolated_partitions: null\n  name: notification-fanout-kaspragent\n  noack: null\n  output:\n    topics:\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return f\\\"{value['user_id']}:{value['notification_id']}\\\"\\\n          \\n\"\n      key_serializer: null\n      name: email-notifications\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value[\\\"channel\\\"] == \\\"email\\\"\\\n          \\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"notification\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return f\\\"{value['user_id']}:{value['notification_id']}\\\"\\\n          \\n\"\n      key_serializer: null\n      name: push-notifications\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value[\\\"channel\\\"] == \\\"push\\\"\\\n          \\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"notification\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return f\\\"{value['user_id']}:{value['notification_id']}\\\"\\\n          \\n\"\n      key_serializer: null\n      name: sms-notifications\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value[\\\"channel\\\"] == \\\"sms\\\"\\\n          \\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"notification\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return f\\\"{value['user_id']}:{value['notification_id']}\\\"\\\n          \\n\"\n      key_serializer: null\n      name: in-app-notifications\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value[\\\"channel\\\"] == \\\"in_app\\\"\\\n          \\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"notification\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value[\\\"analytics_key\\\"]\\n\"\n      key_serializer: null\n      name: notification-analytics\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return \\\"analytics_data\\\" in value\\n\\\n          \\    \\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"analytics_data\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value[\\\"user_id\\\"]\\n\"\n      key_serializer: null\n      name: rate-limit-violations\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value.get(\\\"rate_limited\\\", False)\\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"rate_limit_info\\\"]\\n\"\n      value_serializer: null\n  processors:\n    init:\n      entrypoint: null\n      python: \"from datetime import datetime, timezone, timedelta\\nimport uuid\\nimport\\\n        \\ os\\nfrom collections import defaultdict\\n\\napp = context[\\\"app\\\"]\\n\\n# Configuration\\n\\\n        MAX_NOTIFICATIONS_PER_USER = int(os.getenv(\\\"MAX_NOTIFICATIONS_PER_USER\\\"\\\n        , \\\"5\\\"))\\nNOTIFICATION_WINDOW_HOURS = int(os.getenv(\\\"NOTIFICATION_WINDOW_HOURS\\\"\\\n        , \\\"1\\\"))\\n\\n# Default user preferences\\nDEFAULT_PREFERENCES = {\\n    \\\"email\\\"\\\n        : {\\\"enabled\\\": True, \\\"frequency\\\": \\\"immediate\\\"},\\n    \\\"push\\\": {\\\"enabled\\\"\\\n        : True, \\\"frequency\\\": \\\"immediate\\\"},\\n    \\\"sms\\\": {\\\"enabled\\\": False,\\\n        \\ \\\"frequency\\\": \\\"daily_digest\\\"},\\n    \\\"in_app\\\": {\\\"enabled\\\": True, \\\"\\\n        frequency\\\": \\\"immediate\\\"}\\n}\\n\\n# Notification priority levels\\nPRIORITY_LEVELS\\\n        \\ = {\\n    \\\"critical\\\": 1,\\n    \\\"high\\\": 2,\\n    \\\"normal\\\": 3,\\n    \\\"\\\n        low\\\": 4\\n}\\n\\ndef should_send_channel(preferences, channel, notification_type,\\\n        \\ priority):\\n    \\\"\\\"\\\"Determine if notification should be sent on a specific\\\n        \\ channel.\\\"\\\"\\\"\\n    channel_prefs = preferences.get(channel, {})\\n    \\n\\\n        \\    if not channel_prefs.get(\\\"enabled\\\", False):\\n        return False\\n\\\n        \\    \\n    # Critical notifications always go through if channel is enabled\\n\\\n        \\    if priority == \\\"critical\\\":\\n        return True\\n    \\n    # Check\\\n        \\ notification type preferences\\n    type_prefs = channel_prefs.get(\\\"notification_types\\\"\\\n        , {})\\n    if notification_type in type_prefs:\\n        return type_prefs[notification_type]\\n\\\n        \\    \\n    # Default based on frequency setting\\n    frequency = channel_prefs.get(\\\"\\\n        frequency\\\", \\\"immediate\\\")\\n    if frequency == \\\"disabled\\\":\\n        return\\\n        \\ False\\n    elif frequency == \\\"immediate\\\":\\n        return True\\n    elif\\\n        \\ frequency == \\\"daily_digest\\\" and priority in [\\\"critical\\\", \\\"high\\\"]:\\n\\\n        \\        return True\\n    \\n    return False\\n\\ndef is_within_rate_limit(sent_notifications,\\\n        \\ max_count, window_hours):\\n    \\\"\\\"\\\"Check if user is within rate limit.\\\"\\\n        \\\"\\\"\\n    if not sent_notifications:\\n        return True\\n    \\n    cutoff_time\\\n        \\ = datetime.now(timezone.utc) - timedelta(hours=window_hours)\\n    recent_notifications\\\n        \\ = [\\n        notif for notif in sent_notifications \\n        if datetime.fromisoformat(notif[\\\"\\\n        sent_at\\\"]) > cutoff_time\\n    ]\\n    \\n    return len(recent_notifications)\\\n        \\ < max_count\\n    \\n\"\n    operations:\n    - filter: null\n      map:\n        entrypoint: parse_request\n        python: \"def parse_request(value):\\n    \\\"\\\"\\\"\\n    Parses and validates the\\\n          \\ incoming notification request.\\n    \\\"\\\"\\\"\\n    required_fields = [\\\"\\\n          user_id\\\", \\\"message\\\", \\\"notification_type\\\"]\\n    for field in required_fields:\\n\\\n          \\        if field not in value:\\n            raise ValueError(f\\\"Missing\\\n          \\ required field: {field}\\\")\\n    \\n    # Generate unique notification ID\\n\\\n          \\    notification_id = str(uuid.uuid4())\\n    \\n    return {\\n        \\\"\\\n          notification_id\\\": notification_id,\\n        \\\"user_id\\\": value[\\\"user_id\\\"\\\n          ],\\n        \\\"message\\\": value[\\\"message\\\"],\\n        \\\"notification_type\\\"\\\n          : value[\\\"notification_type\\\"],\\n        \\\"priority\\\": value.get(\\\"priority\\\"\\\n          , \\\"normal\\\"),\\n        \\\"title\\\": value.get(\\\"title\\\", \\\"Notification\\\"\\\n          ),\\n        \\\"data\\\": value.get(\\\"data\\\", {}),\\n        \\\"sender\\\": value.get(\\\"\\\n          sender\\\", \\\"system\\\"),\\n        \\\"expires_at\\\": value.get(\\\"expires_at\\\"\\\n          ),\\n        \\\"request_timestamp\\\": datetime.now(timezone.utc).isoformat(),\\n\\\n          \\        \\\"original_request\\\": value\\n    }\\n    \\n\"\n      name: parse-notification-request\n      tables: []\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: check_preferences\n        python: \"def check_preferences(request, preferences_table):\\n    \\\"\\\"\\\"\\n\\\n          \\    Looks up user notification preferences.\\n    \\\"\\\"\\\"\\n    user_id =\\\n          \\ request[\\\"user_id\\\"]\\n    user_prefs = preferences_table.get(user_id,\\\n          \\ {\\n        \\\"preferences\\\": DEFAULT_PREFERENCES,\\n        \\\"timezone\\\"\\\n          : \\\"UTC\\\",\\n        \\\"created_at\\\": datetime.now(timezone.utc).isoformat(),\\n\\\n          \\        \\\"sent_notifications\\\": []\\n    })\\n    \\n    return {\\n      \\\n          \\  **request,\\n        \\\"user_preferences\\\": user_prefs\\n    }\\n    \\n\"\n      name: check-user-preferences\n      tables:\n      - name: user-preferences\n        param_name: preferences_table\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: apply_rate_limiting\n        python: \"def apply_rate_limiting(request, preferences_table):\\n    \\\"\\\"\\\"\\n\\\n          \\    Applies rate limiting rules and updates user notification history.\\n\\\n          \\    \\\"\\\"\\\"\\n    user_id = request[\\\"user_id\\\"]\\n    user_prefs = request[\\\"\\\n          user_preferences\\\"]\\n    priority = request[\\\"priority\\\"]\\n    \\n    # Critical\\\n          \\ notifications bypass rate limiting\\n    if priority == \\\"critical\\\":\\n\\\n          \\        return {**request, \\\"rate_limited\\\": False}\\n    \\n    # Check\\\n          \\ rate limit\\n    sent_notifications = user_prefs.get(\\\"sent_notifications\\\"\\\n          , [])\\n    within_limit = is_within_rate_limit(\\n        sent_notifications,\\\n          \\ \\n        MAX_NOTIFICATIONS_PER_USER, \\n        NOTIFICATION_WINDOW_HOURS\\n\\\n          \\    )\\n    \\n    if not within_limit:\\n        # Log rate limit violation\\n\\\n          \\        return {\\n            **request,\\n            \\\"rate_limited\\\"\\\n          : True,\\n            \\\"rate_limit_info\\\": {\\n                \\\"user_id\\\"\\\n          : user_id,\\n                \\\"notification_id\\\": request[\\\"notification_id\\\"\\\n          ],\\n                \\\"reason\\\": \\\"exceeded_hourly_limit\\\",\\n           \\\n          \\     \\\"max_allowed\\\": MAX_NOTIFICATIONS_PER_USER,\\n                \\\"window_hours\\\"\\\n          : NOTIFICATION_WINDOW_HOURS,\\n                \\\"timestamp\\\": datetime.now(timezone.utc).isoformat()\\n\\\n          \\            }\\n        }\\n    \\n    return {**request, \\\"rate_limited\\\"\\\n          : False}\\n    \\n\"\n      name: apply-rate-limiting\n      tables:\n      - name: user-preferences\n        param_name: preferences_table\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: generate_notifications\n        python: \"def generate_notifications(request, preferences_table):\\n    \\\"\\\"\\\n          \\\"\\n    Fan-out: Generate multiple targeted notifications for different\\\n          \\ channels.\\n    This is where the fan-out happens - one input produces\\\n          \\ multiple outputs.\\n    \\\"\\\"\\\"\\n    if request.get(\\\"rate_limited\\\", False):\\n\\\n          \\        # Only yield rate limit violation, no notifications\\n        yield\\\n          \\ request\\n        return\\n    \\n    user_id = request[\\\"user_id\\\"]\\n  \\\n          \\  notification_id = request[\\\"notification_id\\\"]\\n    user_prefs = request[\\\"\\\n          user_preferences\\\"]\\n    preferences = user_prefs[\\\"preferences\\\"]\\n   \\\n          \\ \\n    # Track which notifications we're sending\\n    sent_channels = []\\n\\\n          \\    \\n    # Generate notification for each enabled channel\\n    for channel\\\n          \\ in [\\\"email\\\", \\\"push\\\", \\\"sms\\\", \\\"in_app\\\"]:\\n        should_send =\\\n          \\ should_send_channel(\\n            preferences, \\n            channel,\\\n          \\ \\n            request[\\\"notification_type\\\"], \\n            request[\\\"\\\n          priority\\\"]\\n        )\\n        \\n        if should_send:\\n            #\\\n          \\ Create channel-specific notification\\n            notification = {\\n \\\n          \\               \\\"notification_id\\\": notification_id,\\n                \\\"\\\n          user_id\\\": user_id,\\n                \\\"channel\\\": channel,\\n           \\\n          \\     \\\"title\\\": request[\\\"title\\\"],\\n                \\\"message\\\": request[\\\"\\\n          message\\\"],\\n                \\\"notification_type\\\": request[\\\"notification_type\\\"\\\n          ],\\n                \\\"priority\\\": request[\\\"priority\\\"],\\n             \\\n          \\   \\\"data\\\": request[\\\"data\\\"],\\n                \\\"sender\\\": request[\\\"\\\n          sender\\\"],\\n                \\\"expires_at\\\": request.get(\\\"expires_at\\\"),\\n\\\n          \\                \\\"created_at\\\": request[\\\"request_timestamp\\\"],\\n     \\\n          \\           \\\"delivery_timestamp\\\": datetime.now(timezone.utc).isoformat(),\\n\\\n          \\                \\n                # Channel-specific formatting\\n     \\\n          \\           \\\"channel_config\\\": preferences[channel]\\n            }\\n  \\\n          \\          \\n            # Add channel-specific content\\n            if\\\n          \\ channel == \\\"email\\\":\\n                notification.update({\\n       \\\n          \\             \\\"subject\\\": request[\\\"title\\\"],\\n                    \\\"html_body\\\"\\\n          : f\\\"<p>{request['message']}</p>\\\",\\n                    \\\"text_body\\\":\\\n          \\ request[\\\"message\\\"]\\n                })\\n            elif channel ==\\\n          \\ \\\"sms\\\":\\n                # Truncate for SMS\\n                notification[\\\"\\\n          message\\\"] = request[\\\"message\\\"][:160]\\n            elif channel == \\\"\\\n          push\\\":\\n                notification.update({\\n                    \\\"badge_count\\\"\\\n          : 1,\\n                    \\\"sound\\\": \\\"default\\\" if request[\\\"priority\\\"\\\n          ] in [\\\"critical\\\", \\\"high\\\"] else None\\n                })\\n          \\\n          \\  \\n            sent_channels.append(channel)\\n            \\n         \\\n          \\   yield {\\n                \\\"user_id\\\": user_id,\\n                \\\"notification_id\\\"\\\n          : notification_id,\\n                \\\"channel\\\": channel,\\n            \\\n          \\    \\\"notification\\\": notification\\n            }\\n    \\n    # Update user's\\\n          \\ notification history\\n    if sent_channels:\\n        updated_prefs = {**user_prefs}\\n\\\n          \\        sent_notifications = updated_prefs.get(\\\"sent_notifications\\\",\\\n          \\ [])\\n        sent_notifications.append({\\n            \\\"notification_id\\\"\\\n          : notification_id,\\n            \\\"sent_at\\\": datetime.now(timezone.utc).isoformat(),\\n\\\n          \\            \\\"channels\\\": sent_channels,\\n            \\\"notification_type\\\"\\\n          : request[\\\"notification_type\\\"],\\n            \\\"priority\\\": request[\\\"\\\n          priority\\\"]\\n        })\\n        \\n        # Keep only recent notifications\\\n          \\ for rate limiting\\n        cutoff_time = datetime.now(timezone.utc) -\\\n          \\ timedelta(days=7)\\n        updated_prefs[\\\"sent_notifications\\\"] = [\\n\\\n          \\            notif for notif in sent_notifications[-100:]  # Keep last 100\\n\\\n          \\            if datetime.fromisoformat(notif[\\\"sent_at\\\"]) > cutoff_time\\n\\\n          \\        ]\\n        \\n        preferences_table[user_id] = updated_prefs\\n\\\n          \\    \\n\"\n      name: generate-targeted-notifications\n      tables:\n      - name: user-preferences\n        param_name: preferences_table\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: track_analytics\n        python: \"def track_analytics(notification_data):\\n    \\\"\\\"\\\"\\n    Generate\\\n          \\ analytics data for notification delivery tracking.\\n    \\\"\\\"\\\"\\n    if\\\n          \\ notification_data.get(\\\"rate_limited\\\", False):\\n        return notification_data\\\n          \\  # Pass through rate limit violations\\n    \\n    if \\\"notification\\\" in\\\n          \\ notification_data:\\n        # This is a notification delivery\\n      \\\n          \\  notif = notification_data[\\\"notification\\\"]\\n        \\n        analytics_data\\\n          \\ = {\\n            \\\"event_type\\\": \\\"notification_sent\\\",\\n            \\\"\\\n          notification_id\\\": notif[\\\"notification_id\\\"],\\n            \\\"user_id\\\"\\\n          : notif[\\\"user_id\\\"],\\n            \\\"channel\\\": notif[\\\"channel\\\"],\\n  \\\n          \\          \\\"notification_type\\\": notif[\\\"notification_type\\\"],\\n      \\\n          \\      \\\"priority\\\": notif[\\\"priority\\\"],\\n            \\\"sender\\\": notif[\\\"\\\n          sender\\\"],\\n            \\\"timestamp\\\": notif[\\\"delivery_timestamp\\\"],\\n\\\n          \\            \\\"metadata\\\": {\\n                \\\"has_expiry\\\": bool(notif.get(\\\"\\\n          expires_at\\\")),\\n                \\\"has_custom_data\\\": bool(notif.get(\\\"\\\n          data\\\"))\\n            }\\n        }\\n        \\n        return {\\n       \\\n          \\     **notification_data,\\n            \\\"analytics_key\\\": f\\\"notification_analytics:{notif['notification_type']}:{notif['channel']}\\\"\\\n          ,\\n            \\\"analytics_data\\\": analytics_data\\n        }\\n    \\n   \\\n          \\ return notification_data\"\n      name: track-analytics\n      tables: []\n      topic_send: null\n    pipeline:\n    - parse-notification-request\n    - check-user-preferences\n    - apply-rate-limiting\n    - generate-targeted-notifications\n    - track-analytics\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "92a43844783eb490"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "notification-fanout-kaspragent",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprAgent",
+     "app.kubernetes.io/part-of": "kaspr-notification-fanout-kaspragent",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprAgent",
+     "kaspr.io/kind": "KasprAgent",
+     "kaspr.io/name": "notification-fanout-kaspragent-agent"
+    },
+    "name": "notification-fanout-kaspragent-agent",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "orders-kasprtable-table.yaml": "tables:\n- default_selector: null\n  description: Orders keyed by order_id\n  extra_topic_configs: {}\n  global: false\n  key_serializer: null\n  name: orders-kasprtable\n  options: {}\n  partitions: 6\n  value_serializer: null\n  window: null\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "134827a7c7e80d0b"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "orders-kasprtable",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprTable",
+     "app.kubernetes.io/part-of": "kaspr-orders-kasprtable",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprTable",
+     "kaspr.io/kind": "KasprTable",
+     "kaspr.io/name": "orders-kasprtable-table"
+    },
+    "name": "orders-kasprtable-table",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "process-enriched-orders-kaspragent-agent.yaml": "agents:\n- description: Processes joined order+product records from key join\n  input:\n    channel:\n      name: orders-products-joined\n    declare: null\n    take: null\n    topic: null\n  isolated_partitions: null\n  name: process-enriched-orders-kaspragent\n  noack: null\n  output:\n    topics:\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value.get(\\\"order_id\\\")\\n\"\n      key_serializer: null\n      name: enriched-orders\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate: null\n      replicas: null\n      retention: null\n      value_selector: null\n      value_serializer: null\n  processors:\n    init:\n      entrypoint: null\n      python: 'from datetime import datetime, timezone\n\n        '\n    operations:\n    - filter: null\n      map:\n        entrypoint: enrich_order\n        python: \"def enrich_order(value):\\n    \\\"\\\"\\\"\\n    value is a JoinedValue\\\n          \\ dict:\\n      {\\\"left\\\": <order>, \\\"right\\\": <product>}\\n    \\\"\\\"\\\"\\n \\\n          \\   order = value[\\\"left\\\"]\\n    product = value[\\\"right\\\"]\\n    return\\\n          \\ {\\n        \\\"order_id\\\": order.get(\\\"order_id\\\"),\\n        \\\"product_id\\\"\\\n          : order.get(\\\"product_id\\\"),\\n        \\\"quantity\\\": order.get(\\\"quantity\\\"\\\n          ),\\n        \\\"product_name\\\": product.get(\\\"name\\\"),\\n        \\\"unit_price\\\"\\\n          : product.get(\\\"price\\\"),\\n        \\\"total\\\": product.get(\\\"price\\\", 0)\\\n          \\ * order.get(\\\"quantity\\\", 0),\\n        \\\"enriched_at\\\": datetime.now(timezone.utc).isoformat()\\n\\\n          \\    }\\n\"\n      name: enrich\n      tables: []\n      topic_send: null\n    pipeline:\n    - enrich\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "ae94bd928b431a95"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "process-enriched-orders-kaspragent",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprAgent",
+     "app.kubernetes.io/part-of": "kaspr-process-enriched-orders-kaspragent",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprAgent",
+     "kaspr.io/kind": "KasprAgent",
+     "kaspr.io/name": "process-enriched-orders-kaspragent-agent"
+    },
+    "name": "process-enriched-orders-kaspragent-agent",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "products-kasprtable-table.yaml": "tables:\n- default_selector: null\n  description: Product catalog keyed by product_id\n  extra_topic_configs: {}\n  global: false\n  key_serializer: null\n  name: products-kasprtable\n  options: {}\n  partitions: 6\n  value_serializer: null\n  window: null\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "6b22d08c6c132668"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "products-kasprtable",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprTable",
+     "app.kubernetes.io/part-of": "kaspr-products-kasprtable",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprTable",
+     "kaspr.io/kind": "KasprTable",
+     "kaspr.io/name": "products-kasprtable-table"
+    },
+    "name": "products-kasprtable-table",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "user-preferences-kasprtable-table.yaml": "tables:\n- default_selector: null\n  description: 'Stores user notification preferences and rate limiting information.\n\n    Updated when users change their preferences or when notifications are sent.\n\n    '\n  extra_topic_configs: {}\n  global: false\n  key_serializer: json\n  name: user-preferences-kasprtable\n  options: {}\n  partitions: 8\n  value_serializer: json\n  window: null\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "5087e64311ec4f99"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "user-preferences-kasprtable",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprTable",
+     "app.kubernetes.io/part-of": "kaspr-user-preferences-kasprtable",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprTable",
+     "kaspr.io/kind": "KasprTable",
+     "kaspr.io/name": "user-preferences-kasprtable-table"
+    },
+    "name": "user-preferences-kasprtable-table",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "user-profiles-kasprtable-table.yaml": "tables:\n- default_selector: null\n  description: 'Maintains user profile information for lookups and enrichment.\n\n    Updated whenever user attributes change.\n\n    '\n  extra_topic_configs:\n    retention.ms: '-1'\n  global: false\n  key_serializer: json\n  name: user-profiles-kasprtable\n  options: {}\n  partitions: 8\n  value_serializer: json\n  window: null\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "f69171bb8f2b1c3a"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "user-profiles-kasprtable",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprTable",
+     "app.kubernetes.io/part-of": "kaspr-user-profiles-kasprtable",
+     "kaspr.io/app": "every-component",
+     "kaspr.io/component-type": "KasprTable",
+     "kaspr.io/kind": "KasprTable",
+     "kaspr.io/name": "user-profiles-kasprtable-table"
+    },
+    "name": "user-profiles-kasprtable-table",
+    "namespace": "legacy-rendering"
+   }
+  }
+ ],
+ "statefulSet": {
+  "apiVersion": "apps/v1",
+  "kind": "StatefulSet",
+  "metadata": {
+   "annotations": {
+    "kaspr.io/resource-hash": "6eec4d8d17eba0a1"
+   },
+   "labels": {},
+   "name": "every-component-app"
+  },
+  "spec": {
+   "persistentVolumeClaimRetentionPolicy": {
+    "whenDeleted": "Retain",
+    "whenScaled": "Retain"
+   },
+   "podManagementPolicy": "Parallel",
+   "selector": {
+    "matchLabels": {
+     "kaspr.io/cluster": "every-component",
+     "kaspr.io/kind": "KasprApp",
+     "kaspr.io/name": "every-component-app"
+    }
+   },
+   "serviceName": "every-component-app",
+   "template": {
+    "metadata": {
+     "annotations": {},
+     "labels": {
+      "app.kubernetes.io/instance": "every-component",
+      "app.kubernetes.io/managed-by": "kaspr-operator",
+      "app.kubernetes.io/name": "KasprApp",
+      "app.kubernetes.io/part-of": "kaspr-every-component",
+      "kaspr.io/app": "every-component",
+      "kaspr.io/cluster": "every-component",
+      "kaspr.io/component-type": "KasprApp",
+      "kaspr.io/kind": "KasprApp",
+      "kaspr.io/name": "every-component-app"
+     }
+    },
+    "spec": {
+     "containers": [
+      {
+       "env": [
+        {
+         "name": "K_APP_NAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_APP_NAME",
+           "name": "every-component-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_BOOTSTRAP_SERVERS",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_BOOTSTRAP_SERVERS",
+           "name": "every-component-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SECURITY_PROTOCOL",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SECURITY_PROTOCOL",
+           "name": "every-component-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SASL_MECHANISM",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SASL_MECHANISM",
+           "name": "every-component-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_USERNAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_AUTH_USERNAME",
+           "name": "every-component-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_PORT",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_WEB_PORT",
+           "name": "every-component-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DATA_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DATA_DIR",
+           "name": "every-component-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_TABLE_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_TABLE_DIR",
+           "name": "every-component-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DEFINITIONS_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DEFINITIONS_DIR",
+           "name": "every-component-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_PASSWORD",
+         "valueFrom": {
+          "secretKeyRef": {
+           "key": "password",
+           "name": "kafka-credentials"
+          }
+         }
+        },
+        {
+         "name": "K_CONSUMER_GROUP_INSTANCE_ID",
+         "valueFrom": {
+          "fieldRef": {
+           "apiVersion": "v1",
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "POD_NAME",
+         "valueFrom": {
+          "fieldRef": {
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_HOST",
+         "value": "$(POD_NAME).every-component-app.legacy-rendering.svc.cluster.local"
+        },
+        {
+         "name": "CONFIG_HASH",
+         "value": "cec779860b0fa11b"
+        },
+        {
+         "name": "AGENTS_HASH",
+         "value": "545c2c7672717a57"
+        },
+        {
+         "name": "WEBVIEWS_HASH",
+         "value": "75ea861753543e5e"
+        },
+        {
+         "name": "TABLES_HASH",
+         "value": "6cf6e0384b3bd537"
+        },
+        {
+         "name": "TASKS_HASH",
+         "value": "d41ad3cd17d83475"
+        }
+       ],
+       "image": "kasprio/kaspr:0.11.31",
+       "imagePullPolicy": "IfNotPresent",
+       "name": "kaspr",
+       "ports": [
+        {
+         "containerPort": 6065,
+         "name": "http"
+        }
+       ],
+       "volumeMounts": [
+        {
+         "mountPath": "/var/lib/data/tables",
+         "name": "every-component-app-pv"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/api-enricher-kaspragent-agent.yaml",
+         "name": "api-enricher-kaspragent-agent",
+         "readOnly": true,
+         "subPath": "api-enricher-kaspragent-agent.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/counter-processor-kaspragent-agent.yaml",
+         "name": "counter-processor-kaspragent-agent",
+         "readOnly": true,
+         "subPath": "counter-processor-kaspragent-agent.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/event-enricher-kaspragent-agent.yaml",
+         "name": "event-enricher-kaspragent-agent",
+         "readOnly": true,
+         "subPath": "event-enricher-kaspragent-agent.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/notification-fanout-kaspragent-agent.yaml",
+         "name": "notification-fanout-kaspragent-agent",
+         "readOnly": true,
+         "subPath": "notification-fanout-kaspragent-agent.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/process-enriched-orders-kaspragent-agent.yaml",
+         "name": "process-enriched-orders-kaspragent-agent",
+         "readOnly": true,
+         "subPath": "process-enriched-orders-kaspragent-agent.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/metrics-dashboard-kasprwebview-webview.yaml",
+         "name": "metrics-dashboard-kasprwebview-webview",
+         "readOnly": true,
+         "subPath": "metrics-dashboard-kasprwebview-webview.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/api-cache-kasprtable-table.yaml",
+         "name": "api-cache-kasprtable-table",
+         "readOnly": true,
+         "subPath": "api-cache-kasprtable-table.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/event-counters-kasprtable-table.yaml",
+         "name": "event-counters-kasprtable-table",
+         "readOnly": true,
+         "subPath": "event-counters-kasprtable-table.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/orders-kasprtable-table.yaml",
+         "name": "orders-kasprtable-table",
+         "readOnly": true,
+         "subPath": "orders-kasprtable-table.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/products-kasprtable-table.yaml",
+         "name": "products-kasprtable-table",
+         "readOnly": true,
+         "subPath": "products-kasprtable-table.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/user-preferences-kasprtable-table.yaml",
+         "name": "user-preferences-kasprtable-table",
+         "readOnly": true,
+         "subPath": "user-preferences-kasprtable-table.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/user-profiles-kasprtable-table.yaml",
+         "name": "user-profiles-kasprtable-table",
+         "readOnly": true,
+         "subPath": "user-profiles-kasprtable-table.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/heartbeat-kasprtask-task.yaml",
+         "name": "heartbeat-kasprtask-task",
+         "readOnly": true,
+         "subPath": "heartbeat-kasprtask-task.yaml"
+        }
+       ]
+      }
+     ],
+     "hostAliases": [],
+     "imagePullSecrets": [],
+     "serviceAccountName": "every-component-app",
+     "tolerations": [],
+     "topologySpreadConstraints": [],
+     "volumes": [
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "api-enricher-kaspragent-agent.yaml",
+          "path": "api-enricher-kaspragent-agent.yaml"
+         }
+        ],
+        "name": "api-enricher-kaspragent-agent"
+       },
+       "name": "api-enricher-kaspragent-agent"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "counter-processor-kaspragent-agent.yaml",
+          "path": "counter-processor-kaspragent-agent.yaml"
+         }
+        ],
+        "name": "counter-processor-kaspragent-agent"
+       },
+       "name": "counter-processor-kaspragent-agent"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "event-enricher-kaspragent-agent.yaml",
+          "path": "event-enricher-kaspragent-agent.yaml"
+         }
+        ],
+        "name": "event-enricher-kaspragent-agent"
+       },
+       "name": "event-enricher-kaspragent-agent"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "notification-fanout-kaspragent-agent.yaml",
+          "path": "notification-fanout-kaspragent-agent.yaml"
+         }
+        ],
+        "name": "notification-fanout-kaspragent-agent"
+       },
+       "name": "notification-fanout-kaspragent-agent"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "process-enriched-orders-kaspragent-agent.yaml",
+          "path": "process-enriched-orders-kaspragent-agent.yaml"
+         }
+        ],
+        "name": "process-enriched-orders-kaspragent-agent"
+       },
+       "name": "process-enriched-orders-kaspragent-agent"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "metrics-dashboard-kasprwebview-webview.yaml",
+          "path": "metrics-dashboard-kasprwebview-webview.yaml"
+         }
+        ],
+        "name": "metrics-dashboard-kasprwebview-webview"
+       },
+       "name": "metrics-dashboard-kasprwebview-webview"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "api-cache-kasprtable-table.yaml",
+          "path": "api-cache-kasprtable-table.yaml"
+         }
+        ],
+        "name": "api-cache-kasprtable-table"
+       },
+       "name": "api-cache-kasprtable-table"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "event-counters-kasprtable-table.yaml",
+          "path": "event-counters-kasprtable-table.yaml"
+         }
+        ],
+        "name": "event-counters-kasprtable-table"
+       },
+       "name": "event-counters-kasprtable-table"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "orders-kasprtable-table.yaml",
+          "path": "orders-kasprtable-table.yaml"
+         }
+        ],
+        "name": "orders-kasprtable-table"
+       },
+       "name": "orders-kasprtable-table"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "products-kasprtable-table.yaml",
+          "path": "products-kasprtable-table.yaml"
+         }
+        ],
+        "name": "products-kasprtable-table"
+       },
+       "name": "products-kasprtable-table"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "user-preferences-kasprtable-table.yaml",
+          "path": "user-preferences-kasprtable-table.yaml"
+         }
+        ],
+        "name": "user-preferences-kasprtable-table"
+       },
+       "name": "user-preferences-kasprtable-table"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "user-profiles-kasprtable-table.yaml",
+          "path": "user-profiles-kasprtable-table.yaml"
+         }
+        ],
+        "name": "user-profiles-kasprtable-table"
+       },
+       "name": "user-profiles-kasprtable-table"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "heartbeat-kasprtask-task.yaml",
+          "path": "heartbeat-kasprtask-task.yaml"
+         }
+        ],
+        "name": "heartbeat-kasprtask-task"
+       },
+       "name": "heartbeat-kasprtask-task"
+      }
+     ]
+    }
+   },
+   "updateStrategy": {
+    "type": "RollingUpdate"
+   },
+   "volumeClaimTemplates": [
+    {
+     "metadata": {
+      "annotations": {
+       "kaspr.io/resource-hash": "abcd4a044ec5d068"
+      },
+      "name": "every-component-app-pv"
+     },
+     "spec": {
+      "accessModes": [
+       "ReadWriteOnce"
+      ],
+      "resources": {
+       "requests": {
+        "storage": "1Gi"
+       }
+      },
+      "storageClassName": "standard"
+     }
+    }
+   ]
+  }
+ }
+}

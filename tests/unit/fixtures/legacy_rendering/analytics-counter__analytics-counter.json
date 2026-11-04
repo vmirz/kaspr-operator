@@ -1,0 +1,367 @@
+{
+ "configMaps": [
+  {
+   "apiVersion": "v1",
+   "data": {
+    "counter-processor-agent.yaml": "agents:\n- description: 'Processes enriched user events and maintains real-time counters for\n    various dimensions.\n\n    Performs lookups against user profiles for additional enrichment.\n\n    '\n  input:\n    channel: null\n    declare: null\n    take: null\n    topic:\n      compacting: null\n      config: null\n      deleting: null\n      key_serializer: null\n      name: enriched-user-events\n      partitions: null\n      pattern: null\n      replicas: null\n      retention: null\n      value_serializer: null\n  isolated_partitions: null\n  name: counter-processor\n  noack: null\n  output:\n    topics:\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return f\\\"metrics:{value['dimension']}:{value['time_window']}\\\"\\\n          \\n\"\n      key_serializer: null\n      name: real-time-metrics\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate: null\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"metrics\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value[\\\"user_id\\\"]\\n\"\n      key_serializer: null\n      name: user-segments-updated\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return \\\"segment_data\\\" in value\\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"segment_data\\\"]\\n\"\n      value_serializer: null\n  processors:\n    init:\n      entrypoint: null\n      python: \"from datetime import datetime, timezone, timedelta\\nfrom collections\\\n        \\ import defaultdict\\nimport os\\nimport math\\n\\napp = context[\\\"app\\\"]\\n\\n\\\n        # Configuration from environment\\nWINDOW_SIZE_MINUTES = int(os.getenv(\\\"WINDOW_SIZE_MINUTES\\\"\\\n        , \\\"5\\\"))\\nMAX_COUNTERS_PER_KEY = int(os.getenv(\\\"MAX_COUNTERS_PER_KEY\\\",\\\n        \\ \\\"1000\\\"))\\n\\ndef get_time_window(timestamp, window_minutes=WINDOW_SIZE_MINUTES):\\n\\\n        \\    \\\"\\\"\\\"Get the time window bucket for a timestamp.\\\"\\\"\\\"\\n    dt = datetime.fromtimestamp(timestamp,\\\n        \\ tz=timezone.utc)\\n    # Round down to the nearest window_minutes interval\\n\\\n        \\    minutes = (dt.minute // window_minutes) * window_minutes\\n    window_start\\\n        \\ = dt.replace(minute=minutes, second=0, microsecond=0)\\n    return window_start.isoformat()\\n\\\n        \\ndef calculate_user_segment(profile, recent_activity):\\n    \\\"\\\"\\\"Calculate\\\n        \\ user segment based on profile and recent activity.\\\"\\\"\\\"\\n    # Simple segmentation\\\n        \\ logic\\n    total_events = profile.get(\\\"total_events\\\", 0)\\n    days_since_signup\\\n        \\ = profile.get(\\\"days_since_signup\\\", 0)\\n    avg_daily_events = total_events\\\n        \\ / max(days_since_signup, 1)\\n    \\n    recent_purchases = recent_activity.get(\\\"\\\n        purchase_count\\\", 0)\\n    recent_logins = recent_activity.get(\\\"login_count\\\"\\\n        , 0)\\n    \\n    if recent_purchases >= 2:\\n        return \\\"high_value\\\"\\n\\\n        \\    elif recent_logins >= 5 and avg_daily_events > 10:\\n        return \\\"\\\n        active_user\\\"\\n    elif days_since_signup <= 7:\\n        return \\\"new_user\\\"\\\n        \\n    elif recent_logins == 0:\\n        return \\\"dormant\\\"\\n    else:\\n  \\\n        \\      return \\\"regular_user\\\"\\n        \\n\"\n    operations:\n    - filter: null\n      map:\n        entrypoint: lookup_profile\n        python: \"def lookup_profile(value, profiles):\\n    \\\"\\\"\\\"\\n    Looks up user\\\n          \\ profile information and adds it to the event.\\n    \\\"\\\"\\\"\\n    user_id\\\n          \\ = value[\\\"user_id\\\"]\\n    profile = profiles.get(user_id, {\\n        \\\"\\\n          user_id\\\": user_id,\\n        \\\"total_events\\\": 0,\\n        \\\"first_seen\\\"\\\n          : value[\\\"timestamp\\\"],\\n        \\\"signup_date\\\": value.get(\\\"event_date\\\"\\\n          ),\\n        \\\"country\\\": value.get(\\\"country_name\\\", \\\"Unknown\\\"),\\n   \\\n          \\     \\\"segments\\\": []\\n    })\\n    \\n    # Calculate days since signup\\n\\\n          \\    if profile.get(\\\"signup_date\\\"):\\n        signup_date = datetime.fromisoformat(profile[\\\"\\\n          signup_date\\\"])\\n        current_date = datetime.fromisoformat(value[\\\"\\\n          event_date\\\"])\\n        days_since_signup = (current_date - signup_date).days\\n\\\n          \\        profile[\\\"days_since_signup\\\"] = days_since_signup\\n    \\n    return\\\n          \\ {\\n        **value,\\n        \\\"user_profile\\\": profile\\n    }\\n    \\n\"\n      name: lookup-user-profile\n      tables:\n      - name: user-profiles\n        param_name: profiles\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: update_counters\n        python: \"def update_counters(value, counters):\\n    \\\"\\\"\\\"\\n    Updates various\\\n          \\ dimensional counters based on the event.\\n    \\\"\\\"\\\"\\n    timestamp =\\\n          \\ float(value[\\\"timestamp\\\"])\\n    time_window = get_time_window(timestamp)\\n\\\n          \\    event_type = value[\\\"event_type\\\"]\\n    country = value.get(\\\"country_name\\\"\\\n          , \\\"Unknown\\\")\\n    user_id = value[\\\"user_id\\\"]\\n    \\n    # Define dimensions\\\n          \\ to count\\n    dimensions = [\\n        f\\\"global:total:{time_window}\\\"\\\n          ,\\n        f\\\"event_type:{event_type}:{time_window}\\\",\\n        f\\\"country:{country}:{time_window}\\\"\\\n          ,\\n        f\\\"hour:{value['event_hour']}:{time_window}\\\",\\n        f\\\"weekend:{value['is_weekend']}:{time_window}\\\"\\\n          \\n    ]\\n    \\n    updated_counters = []\\n    \\n    for dimension in dimensions:\\n\\\n          \\        counter = counters.get(dimension, {\\n            \\\"count\\\": 0,\\n\\\n          \\            \\\"unique_users\\\": set(),\\n            \\\"first_event\\\": timestamp,\\n\\\n          \\            \\\"last_event\\\": timestamp,\\n            \\\"dimension\\\": dimension,\\n\\\n          \\            \\\"time_window\\\": time_window\\n        })\\n        \\n      \\\n          \\  # Update counter\\n        counter[\\\"count\\\"] += 1\\n        counter[\\\"\\\n          unique_users\\\"].add(user_id)\\n        counter[\\\"last_event\\\"] = max(counter[\\\"\\\n          last_event\\\"], timestamp)\\n        \\n        # Convert set to list for serialization,\\\n          \\ keep only count\\n        serializable_counter = {\\n            **counter,\\n\\\n          \\            \\\"unique_user_count\\\": len(counter[\\\"unique_users\\\"])\\n   \\\n          \\     }\\n        del serializable_counter[\\\"unique_users\\\"]\\n        \\n\\\n          \\        counters[dimension] = counter  # Keep set in table\\n        updated_counters.append(serializable_counter)\\n\\\n          \\    \\n    return {\\n        **value,\\n        \\\"updated_counters\\\": updated_counters,\\n\\\n          \\        \\\"time_window\\\": time_window\\n    }\\n    \\n\"\n      name: update-counters\n      tables:\n      - name: event-counters\n        param_name: counters\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: calculate_segments\n        python: \"def calculate_segments(value, profiles, counters):\\n    \\\"\\\"\\\"\\n\\\n          \\    Updates user segments based on recent activity patterns.\\n    \\\"\\\"\\\"\\\n          \\n    user_id = value[\\\"user_id\\\"]\\n    profile = value[\\\"user_profile\\\"\\\n          ]\\n    time_window = value[\\\"time_window\\\"]\\n    \\n    # Get recent activity\\\n          \\ from counters\\n    recent_activity = {}\\n    for event_type in [\\\"login\\\"\\\n          , \\\"purchase\\\", \\\"page_view\\\"]:\\n        counter_key = f\\\"user:{user_id}:event_type:{event_type}:{time_window}\\\"\\\n          \\n        counter = counters.get(counter_key, {\\\"count\\\": 0})\\n        recent_activity[f\\\"\\\n          {event_type}_count\\\"] = counter[\\\"count\\\"]\\n    \\n    # Calculate new segment\\n\\\n          \\    new_segment = calculate_user_segment(profile, recent_activity)\\n  \\\n          \\  \\n    # Update profile\\n    updated_profile = {\\n        **profile,\\n\\\n          \\        \\\"total_events\\\": profile[\\\"total_events\\\"] + 1,\\n        \\\"last_seen\\\"\\\n          : value[\\\"timestamp\\\"],\\n        \\\"current_segment\\\": new_segment,\\n   \\\n          \\     \\\"last_updated\\\": datetime.now(timezone.utc).isoformat()\\n    }\\n\\\n          \\    \\n    # Add to segments history if segment changed\\n    if profile.get(\\\"\\\n          current_segment\\\") != new_segment:\\n        segments = profile.get(\\\"segments\\\"\\\n          , [])\\n        segments.append({\\n            \\\"segment\\\": new_segment,\\n\\\n          \\            \\\"timestamp\\\": value[\\\"timestamp\\\"],\\n            \\\"trigger_event\\\"\\\n          : value[\\\"event_type\\\"]\\n        })\\n        # Keep only last 10 segments\\n\\\n          \\        updated_profile[\\\"segments\\\"] = segments[-10:]\\n    \\n    profiles[user_id]\\\n          \\ = updated_profile\\n    \\n    result = {**value}\\n    if profile.get(\\\"\\\n          current_segment\\\") != new_segment:\\n        result[\\\"segment_data\\\"] = {\\n\\\n          \\            \\\"user_id\\\": user_id,\\n            \\\"old_segment\\\": profile.get(\\\"\\\n          current_segment\\\"),\\n            \\\"new_segment\\\": new_segment,\\n       \\\n          \\     \\\"change_timestamp\\\": value[\\\"timestamp\\\"]\\n        }\\n    \\n    return\\\n          \\ result\\n    \\n\"\n      name: calculate-segments\n      tables:\n      - name: user-profiles\n        param_name: profiles\n      - name: event-counters\n        param_name: counters\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: emit_metrics\n        python: \"def emit_metrics(value):\\n    \\\"\\\"\\\"\\n    Emits metrics for each\\\n          \\ updated counter.\\n    \\\"\\\"\\\"\\n    for counter in value[\\\"updated_counters\\\"\\\n          ]:\\n        yield {\\n            \\\"dimension\\\": counter[\\\"dimension\\\"],\\n\\\n          \\            \\\"time_window\\\": counter[\\\"time_window\\\"],\\n            \\\"\\\n          metrics\\\": counter\\n        }\"\n      name: emit-metrics\n      tables: []\n      topic_send: null\n    pipeline:\n    - lookup-user-profile\n    - update-counters\n    - calculate-segments\n    - emit-metrics\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "713ac34b1a243290"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "counter-processor",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprAgent",
+     "app.kubernetes.io/part-of": "kaspr-counter-processor",
+     "kaspr.io/app": "analytics-counter",
+     "kaspr.io/component-type": "KasprAgent",
+     "kaspr.io/kind": "KasprAgent",
+     "kaspr.io/name": "counter-processor-agent"
+    },
+    "name": "counter-processor-agent",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "event-counters-table.yaml": "tables:\n- default_selector: null\n  description: 'Stores real-time counters for various event dimensions.\n\n    Key format: {dimension}:{value}:{time_window}\n\n    Value: counter object with metrics\n\n    '\n  extra_topic_configs:\n    retention.ms: '604800000'\n  global: false\n  key_serializer: json\n  name: event-counters\n  options: {}\n  partitions: 16\n  value_serializer: json\n  window: null\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "1aaac2ffb1ea9999"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "event-counters",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprTable",
+     "app.kubernetes.io/part-of": "kaspr-event-counters",
+     "kaspr.io/app": "analytics-counter",
+     "kaspr.io/component-type": "KasprTable",
+     "kaspr.io/kind": "KasprTable",
+     "kaspr.io/name": "event-counters-table"
+    },
+    "name": "event-counters-table",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "user-profiles-table.yaml": "tables:\n- default_selector: null\n  description: 'Maintains user profile information for lookups and enrichment.\n\n    Updated whenever user attributes change.\n\n    '\n  extra_topic_configs:\n    retention.ms: '-1'\n  global: false\n  key_serializer: json\n  name: user-profiles\n  options: {}\n  partitions: 8\n  value_serializer: json\n  window: null\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "eea381eb67092cb1"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "user-profiles",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprTable",
+     "app.kubernetes.io/part-of": "kaspr-user-profiles",
+     "kaspr.io/app": "analytics-counter",
+     "kaspr.io/component-type": "KasprTable",
+     "kaspr.io/kind": "KasprTable",
+     "kaspr.io/name": "user-profiles-table"
+    },
+    "name": "user-profiles-table",
+    "namespace": "legacy-rendering"
+   }
+  }
+ ],
+ "statefulSet": {
+  "apiVersion": "apps/v1",
+  "kind": "StatefulSet",
+  "metadata": {
+   "annotations": {
+    "kaspr.io/resource-hash": "87fa27b8cd671563"
+   },
+   "labels": {},
+   "name": "analytics-counter-app"
+  },
+  "spec": {
+   "persistentVolumeClaimRetentionPolicy": {
+    "whenDeleted": "Delete",
+    "whenScaled": "Retain"
+   },
+   "podManagementPolicy": "Parallel",
+   "selector": {
+    "matchLabels": {
+     "kaspr.io/cluster": "analytics-counter",
+     "kaspr.io/kind": "KasprApp",
+     "kaspr.io/name": "analytics-counter-app"
+    }
+   },
+   "serviceName": "analytics-counter-app",
+   "template": {
+    "metadata": {
+     "annotations": {},
+     "labels": {
+      "app.kubernetes.io/instance": "analytics-counter",
+      "app.kubernetes.io/managed-by": "kaspr-operator",
+      "app.kubernetes.io/name": "KasprApp",
+      "app.kubernetes.io/part-of": "kaspr-analytics-counter",
+      "kaspr.io/app": "analytics-counter",
+      "kaspr.io/cluster": "analytics-counter",
+      "kaspr.io/component-type": "KasprApp",
+      "kaspr.io/kind": "KasprApp",
+      "kaspr.io/name": "analytics-counter-app"
+     }
+    },
+    "spec": {
+     "containers": [
+      {
+       "env": [
+        {
+         "name": "K_APP_NAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_APP_NAME",
+           "name": "analytics-counter-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_BOOTSTRAP_SERVERS",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_BOOTSTRAP_SERVERS",
+           "name": "analytics-counter-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SECURITY_PROTOCOL",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SECURITY_PROTOCOL",
+           "name": "analytics-counter-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SASL_MECHANISM",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SASL_MECHANISM",
+           "name": "analytics-counter-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_USERNAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_AUTH_USERNAME",
+           "name": "analytics-counter-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_PORT",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_WEB_PORT",
+           "name": "analytics-counter-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DATA_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DATA_DIR",
+           "name": "analytics-counter-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_TABLE_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_TABLE_DIR",
+           "name": "analytics-counter-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DEFINITIONS_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DEFINITIONS_DIR",
+           "name": "analytics-counter-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_PASSWORD",
+         "valueFrom": {
+          "secretKeyRef": {
+           "key": "password",
+           "name": "kafka-credentials"
+          }
+         }
+        },
+        {
+         "name": "K_CONSUMER_GROUP_INSTANCE_ID",
+         "valueFrom": {
+          "fieldRef": {
+           "apiVersion": "v1",
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "POD_NAME",
+         "valueFrom": {
+          "fieldRef": {
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_HOST",
+         "value": "$(POD_NAME).analytics-counter-app.legacy-rendering.svc.cluster.local"
+        },
+        {
+         "name": "CONFIG_HASH",
+         "value": "e6967fa9fd34afa2"
+        },
+        {
+         "name": "AGENTS_HASH",
+         "value": "47debba9f4d11b1e"
+        },
+        {
+         "name": "TABLES_HASH",
+         "value": "1119b4b2b2514f41"
+        },
+        {
+         "name": "WINDOW_SIZE_MINUTES",
+         "value": "5"
+        },
+        {
+         "name": "MAX_COUNTERS_PER_KEY",
+         "value": "1000"
+        }
+       ],
+       "image": "kasprio/kaspr:0.11.31",
+       "imagePullPolicy": "IfNotPresent",
+       "name": "kaspr",
+       "ports": [
+        {
+         "containerPort": 6065,
+         "name": "http"
+        }
+       ],
+       "resources": {
+        "limits": {
+         "cpu": "1000m",
+         "memory": "1Gi"
+        },
+        "requests": {
+         "cpu": "200m",
+         "memory": "512Mi"
+        }
+       },
+       "volumeMounts": [
+        {
+         "mountPath": "/var/lib/data/tables",
+         "name": "analytics-counter-app-pv"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/counter-processor-agent.yaml",
+         "name": "counter-processor-agent",
+         "readOnly": true,
+         "subPath": "counter-processor-agent.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/event-counters-table.yaml",
+         "name": "event-counters-table",
+         "readOnly": true,
+         "subPath": "event-counters-table.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/user-profiles-table.yaml",
+         "name": "user-profiles-table",
+         "readOnly": true,
+         "subPath": "user-profiles-table.yaml"
+        }
+       ]
+      }
+     ],
+     "hostAliases": [],
+     "imagePullSecrets": [],
+     "serviceAccountName": "analytics-counter-app",
+     "tolerations": [],
+     "topologySpreadConstraints": [],
+     "volumes": [
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "counter-processor-agent.yaml",
+          "path": "counter-processor-agent.yaml"
+         }
+        ],
+        "name": "counter-processor-agent"
+       },
+       "name": "counter-processor-agent"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "event-counters-table.yaml",
+          "path": "event-counters-table.yaml"
+         }
+        ],
+        "name": "event-counters-table"
+       },
+       "name": "event-counters-table"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "user-profiles-table.yaml",
+          "path": "user-profiles-table.yaml"
+         }
+        ],
+        "name": "user-profiles-table"
+       },
+       "name": "user-profiles-table"
+      }
+     ]
+    }
+   },
+   "updateStrategy": {
+    "type": "RollingUpdate"
+   },
+   "volumeClaimTemplates": [
+    {
+     "metadata": {
+      "annotations": {
+       "kaspr.io/resource-hash": "9f16c0d32797b494"
+      },
+      "name": "analytics-counter-app-pv"
+     },
+     "spec": {
+      "accessModes": [
+       "ReadWriteOnce"
+      ],
+      "resources": {
+       "requests": {
+        "storage": "5Gi"
+       }
+      },
+      "storageClassName": "standard"
+     }
+    }
+   ]
+  }
+ }
+}

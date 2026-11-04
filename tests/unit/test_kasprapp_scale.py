@@ -186,8 +186,17 @@ def test_on_create_reports_the_selector_before_the_first_status_refresh(monkeypa
     class CreatedApp:
         reconciliation_paused = False
         pod_selector = SELECTOR
+        apps_v1_api = None
+        stateful_set_name = "app-a-app"
+        definitions_delivery = "components"
 
-        async def create(self):
+        async def fetch_stateful_set(self, api, name, namespace):
+            return None
+
+        def resolve_definitions_delivery(self, stateful_set):
+            pass
+
+        async def create(self, stateful_set=None):
             created.append(True)
 
     async def fake_attach(app, name, namespace, related=None):

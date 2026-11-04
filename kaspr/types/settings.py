@@ -126,6 +126,19 @@ RECONCILE_INTERVAL_SECONDS = float(
     _getenv("RECONCILE_INTERVAL_SECONDS", 300.0)
 )
 
+#: How KasprApps without the ``kaspr.io/definitions-delivery`` annotation get their
+#: components: ``components`` (a ConfigMap and a mount per component) or ``bundle``
+#: (all components in one immutable ConfigMap per shard). A change applies to an app
+#: only at its next rollout. See docs/design/definitions-bundle.md.
+DEFINITIONS_DELIVERY_DEFAULT = str(_getenv("DEFINITIONS_DELIVERY_DEFAULT", "components"))
+
+#: Bytes of definitions a bundle shard holds before webviews spill into the next one.
+DEFINITIONS_BUNDLE_SHARD_BYTES = int(_getenv("DEFINITIONS_BUNDLE_SHARD_BYTES", 524288))
+
+DEFINITIONS_DELIVERY_MODES = ("components", "bundle")
+DEFINITIONS_BUNDLE_SHARD_BYTES_MIN = 64 * 1024
+DEFINITIONS_BUNDLE_SHARD_BYTES_MAX = 1_000_000
+
 class Settings:
     """Operator settings"""
 
@@ -146,6 +159,8 @@ class Settings:
     rebalance_verify_timeout_seconds: float = REBALANCE_VERIFY_TIMEOUT_SECONDS
     kaspr_image_registry: str = KASPR_IMAGE_REGISTRY
     python_packages_init_image: str = PYTHON_PACKAGES_INIT_IMAGE
+    definitions_delivery_default: str = DEFINITIONS_DELIVERY_DEFAULT
+    definitions_bundle_shard_bytes: int = DEFINITIONS_BUNDLE_SHARD_BYTES
 
     def __init__(
         self,
@@ -165,6 +180,8 @@ class Settings:
         rebalance_verify_delay_seconds: float = None,
         rebalance_max_attempts: int = None,
         rebalance_verify_timeout_seconds: float = None,
+        definitions_delivery_default: str = None,
+        definitions_bundle_shard_bytes: int = None,
         **kwargs,
     ):
         if initial_max_replicas is not None:
@@ -212,4 +229,22 @@ class Settings:
 
         if rebalance_verify_timeout_seconds is not None:
             self.rebalance_verify_timeout_seconds = rebalance_verify_timeout_seconds
-            
+
+        if definitions_delivery_default is not None:
+            self.definitions_delivery_default = definitions_delivery_default
+
+        if definitions_bundle_shard_bytes is not None:
+            self.definitions_bundle_shard_bytes = definitions_bundle_shard_bytes
+
+        # A value naming no mode is reported once at startup and leaves the default.
+        mode = str(self.definitions_delivery_default).strip().lower()
+        self.invalid_definitions_delivery_default = (
+            None if mode in DEFINITIONS_DELIVERY_MODES else self.definitions_delivery_default
+        )
+        self.definitions_delivery_default = (
+            mode if mode in DEFINITIONS_DELIVERY_MODES else "components"
+        )
+        self.definitions_bundle_shard_bytes = min(
+            max(int(self.definitions_bundle_shard_bytes), DEFINITIONS_BUNDLE_SHARD_BYTES_MIN),
+            DEFINITIONS_BUNDLE_SHARD_BYTES_MAX,
+        )
