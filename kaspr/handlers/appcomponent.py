@@ -5,7 +5,6 @@ import logging
 from logging import Logger
 from kaspr.resources import KasprApp
 from kaspr.resources.appcomponent import BaseAppComponent
-from kaspr.resources.definitions import app_delivers_bundles
 from kaspr.handlers.kasprapp import APP_FOUND, APP_NOT_FOUND
 
 
@@ -49,8 +48,9 @@ async def reconcile_component(
     error = None
     try:
         component.validate()
-        app = await KasprApp.default().fetch(component.app_name, namespace)
-        bundled = app_delivers_bundles(app)
+        apps = KasprApp.default()
+        app = await apps.fetch(component.app_name, namespace)
+        bundled = await apps.delivers_bundles(app, component.app_name, namespace)
         if component.WRITES_CONFIG_MAP and not bundled:
             await component.synchronize()
 
@@ -60,7 +60,7 @@ async def reconcile_component(
                 "name": component.app_name,
                 "status": APP_FOUND if app else APP_NOT_FOUND,
             },
-            **component.definitions_status(bundled),
+            **component.config_map_status(bundled),
             "hash": component.hash,
         }
         patch.status.update(

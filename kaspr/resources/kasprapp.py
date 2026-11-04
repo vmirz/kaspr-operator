@@ -95,6 +95,8 @@ from kaspr.resources.definitions import (
     Delivery,
     DefinitionsConflict,
     Shard,
+    annotated_mode,
+    app_delivers_bundles,
     build_shards,
     cleanup_blocker,
     cleanup_candidates,
@@ -1185,6 +1187,21 @@ class KasprApp(BaseResource):
         )
         self.definitions_delivery = delivery.mode
         return delivery
+
+    async def delivers_bundles(self, app: Optional[Mapping], name: str, namespace: str) -> bool:
+        """Whether a KasprApp, as read from the API, delivers its components in bundles.
+
+        For its components, which write their own ConfigMaps otherwise. Reads the app's
+        StatefulSet only when no annotation decides.
+        """
+        stateful_set = None
+        if app and annotated_mode(app) is None:
+            stateful_set = await self.fetch_stateful_set(
+                self.apps_v1_api, KasprAppResources.stateful_set_name(name), namespace
+            )
+        conf = getattr(self, "conf", None)
+        default = conf.definitions_delivery_default if conf is not None else COMPONENTS
+        return app_delivers_bundles(app, stateful_set, default)
 
     @property
     def definitions_shard_bytes(self) -> int:

@@ -9,17 +9,12 @@ import kopf
 from kaspr.types.schemas import KasprJoinSpecSchema
 from kaspr.types.models import KasprJoinSpec
 from kaspr.resources import KasprJoin, KasprTable
-from kaspr.resources.definitions import APP_LABEL, DELIVERY_ANNOTATION
-from kaspr.resources.kasprjoin import (
-    NOT_DELIVERED,
-    LEFT_TABLE_FOUND,
-    RIGHT_TABLE_FOUND,
-)
+from kaspr.resources.definitions import APP_LABEL
+from kaspr.resources.kasprjoin import NOT_DELIVERED, LEFT_TABLE_FOUND, RIGHT_TABLE_FOUND
 from kaspr.handlers.appcomponent import reconcile_component
 from kaspr.handlers.kasprapp import notify_component_event
 
 KIND = "KasprJoin"
-NOT_DELIVERED_REASON = "NotDelivered"
 
 
 @kopf.on.resume(kind=KIND)
@@ -41,17 +36,8 @@ async def reconciliation(
         reason=reason,
         logger=logger,
     )
-    current = status or {}
-    if not bundled and current.get("delivery") != NOT_DELIVERED:
-        kopf.warn(
-            body,
-            reason=NOT_DELIVERED_REASON,
-            message=(
-                f"Not delivered to the pods of KasprApp `{join.app_name}`: KasprJoins need "
-                f"definitions bundle delivery (annotate the KasprApp "
-                f"`{DELIVERY_ANNOTATION}: bundle`)."
-            ),
-        )
+    if not bundled:
+        kopf.warn(body, reason=NOT_DELIVERED, message=join.not_delivered_message())
 
     # A join's tables must belong to its app.
     app_tables = set()
@@ -60,6 +46,7 @@ async def reconciliation(
         table_labels = ((table or {}).get("metadata") or {}).get("labels") or {}
         if table and table_labels.get(APP_LABEL) == join.app_name:
             app_tables.add(table_name)
+    current = status or {}
     location = f"`{namespace or 'default'}` namespace"
     for field, desired in join.tables_status(app_tables).items():
         if current.get(field) == desired:

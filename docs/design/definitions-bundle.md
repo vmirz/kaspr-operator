@@ -222,7 +222,7 @@ containers:
       bundle:     create missing shards (never patch one)
 5. synchronize(): services, …, StatefulSet patch rendered in the target mode → rollout
 6. Clean up (§6)
-7. Status: status.definitions, conditions, linkedResources; component statuses
+7. Status: linkedResources (with the delivered joins); component statuses
 ```
 
 A failure at any step stops the reconciliation before the next one; it is retried (`RETRY`). Steps 4–6 are
@@ -262,7 +262,9 @@ templates, not per-component ConfigMaps of a `components`-mode app.
 
 - Deleted with `preconditions.uid` of the listed object; `404` counts as deleted, `409` is retried next pass.
 - **When**: after every full reconciliation, and on every status refresh (30 s) while candidates wait for a
-  rollout. After an operator restart the next full reconciliation finds them again from the cluster.
+  rollout. Every full reconciliation lists the app's ConfigMaps (reusing the definitions sync's listing), so
+  the candidates come from the cluster, never from a status; after an operator restart the next full
+  reconciliation finds them again. A `components`-mode app with no shards left makes no other call.
 - **Ownership backs it up**: shards are owned by the KasprApp, per-component ConfigMaps by their component,
   so deleting either owner removes them even if the operator never runs again.
 
@@ -270,15 +272,15 @@ templates, not per-component ConfigMaps of a `components`-mode app.
 
 **Agents, webviews, tables, tasks.** The component handler checks its app:
 
-- App delivers bundles (annotation `bundle`, or no valid annotation and `status.definitions.delivery:
-  bundle`): no per-component ConfigMap is written. Status: `delivery: bundle`, `configMap` removed, `hash`
-  as before.
-- Otherwise: today's behaviour and today's status, unchanged.
+- App delivers bundles: no per-component ConfigMap is written, and `configMap` is removed from the
+  component's status (`app` and `hash` as before). The app's annotation decides; without a valid one, the
+  app's StatefulSet (`bundle` when it mounts shards), read only then; without a StatefulSet, the default.
+- Otherwise, or when the app does not exist: today's behaviour and today's status, unchanged.
 
 A per-component ConfigMap written in a race with a switch is a cleanup candidate (§6).
 
-The KasprApp reports `delivery` to its components when its mode changes, so they do not wait for their own
-next event. A `components`-mode app with no history of bundles patches nothing.
+When an app's mode changes, the KasprApp removes or restores its components' `configMap`, so they do not
+wait for their own next event. Components whose status already matches are not patched.
 
 **KasprJoin.**
 
@@ -287,43 +289,41 @@ next event. A `components`-mode app with no history of bundles patches nothing.
 - After this change:
   - The handler uses the shared component path (`reconcile_component`, `notify_app`). It never writes a
     ConfigMap. Its status reports `app`, `leftTable`, `rightTable` (found when a KasprTable of that name
-    belongs to the same app), `hash` and `delivery`. A join whose spec does not load is left out of the
-    app with a warning; the join's own handler reports the error.
+    belongs to the same app) and `hash`. A join whose spec does not load is left out of the app with a
+    warning; the join's own handler reports the error.
   - `bundle` mode: joins go into shard 0 (§2), `JOINS_HASH` joins the env, and a change to the set of joins
     or their tables marks `rebalanceRequired`. A join consumes internal topics Faust names after the app and
     both tables (`<app>-app-<left>-<right>-subscription-registration`, `-subscription-response`,
     `-subscriptions-changelog`, `-previous-fk-changelog`). They count among the app's subscriptions: static
     members keep the assignment they had, so without a rebalance no member is assigned them and the join
     stays inert.
-  - `components` mode: joins are not delivered. The app gets a `JoinsDelivered=False` condition (reason
-    `RequiresBundleDelivery`) and a warning event; each join gets `delivery: notDelivered` and a warning event.
-    Its pods are not touched.
-- Apps without joins get no new condition.
+  - `components` mode: joins are not delivered, and the pods are not touched. Each join gets a
+    `NotDelivered` warning on every reconciliation of its own and when its app switches away from bundles;
+    the app's `DefinitionsDeliveryChanged` event names them.
 
-### 8. Status, conditions and events
+### 8. Status and events
 
-`status.definitions` on the KasprApp, present while the app is in `bundle` mode or cleanup is pending:
+No status field or condition on the KasprApp reports the delivery. `components` mode is transitional
+(dropped in a later major release, see Migration); once every app delivers bundles such a field says
+nothing, and until then the cluster answers every question it would:
 
-```yaml
-definitions:
-  delivery: bundle            # the deployed mode
-  configMaps: [<app>-app-definitions-3f9a1c2b7d]
-  components: 94
-  bytes: 188287
-  pendingDeletion: 94         # definitions ConfigMaps waiting for the rollout; omitted when 0
-```
+| Question | Where |
+|---|---|
+| Which mode does the app run? | Its StatefulSet: volumes `kaspr-definitions-<i>` in `bundle` mode |
+| Which bundle, how many components? | `kubectl get configmap -l kaspr.io/app=<app>,kaspr.io/component=definitions`; each shard's `kaspr.io/definitions-components` annotation |
+| What waits to be deleted? | Definitions ConfigMaps of the app its StatefulSet does not mount; they go once its rollout completes (§6) |
 
-Removed once a `components`-mode app has nothing left to clean up, so it stays absent for apps that never
-used bundles.
+The only new status is the delivered joins in `status.linkedResources`, where they decide rebalances
+(§7). Components of a `bundle` app lose their `configMap`.
 
 | Event (KasprApp) | Type | When |
 |---|---|---|
-| `DefinitionsDeliveryChanged` | Normal | The target mode differs from the deployed mode; says why (annotation, default) |
+| `DefinitionsDeliveryChanged` | Normal | The target mode differs from the deployed mode; says why (annotation, default) and names the joins a switch to `components` leaves out |
 | `DefinitionsBundleCreated` | Normal | Shards created: names, components, bytes |
 | `DefinitionsCleanedUp` | Normal | ConfigMaps deleted |
 | `DefinitionsTooLarge` | Warning | A shard exceeds the hard limit |
+| `DefinitionsConflict` | Warning | A shard's name is taken by an object that is not this app's shard |
 | `InvalidDefinitionsDelivery` | Warning | The annotation has another value |
-| `JoinsNotDelivered` | Warning | A `components`-mode app has joins |
 
 Errors (`DefinitionsTooLarge`, a foreign object under a shard name) go through the existing reconciliation
 error path: `Progressing=False`, `Ready=False` with the message. The pods keep running what they have.
@@ -386,12 +386,13 @@ until the KasprApp is deleted, or until this operator returns and cleans them up
 
 - **Kaspr**: no change. Shards use the per-kind keys Kaspr has always read. Joins need Kaspr ≥ 0.9.1
   (`JoinSpecSchema`); older versions ignore the `joins` key.
-- **CRDs**: no change. The mode is an annotation; new status fields fall under
+- **CRDs**: no change. The mode is an annotation; the delivered joins in `status.linkedResources` fall under
   `x-kubernetes-preserve-unknown-fields`.
 - **RBAC**: no change. ConfigMaps (create, delete, list), pods (list) and StatefulSets are already granted.
 - **Kubernetes**: immutable ConfigMaps are GA since 1.21.
-- **`components`-mode apps**: same StatefulSet, ConfigMap data, status and API calls, plus one KasprJoin list
-  per full reconciliation.
+- **`components`-mode apps**: same StatefulSet, ConfigMap data and status. API calls: one KasprJoin list
+  per full reconciliation; a component's reconciliation reads its app's StatefulSet unless the app is
+  annotated; an app without components lists its ConfigMaps once per full reconciliation.
 - **Component ConfigMaps' hash annotation**: it used to be computed before the annotation existed and never
   matched the component's hash (its status, its app's `*_HASH` env). It now does. On upgrade each component
   ConfigMap gets one metadata patch; component hashes, and so pod templates, do not change.
@@ -413,9 +414,11 @@ until the KasprApp is deleted, or until this operator returns and cleans them up
   a missing owner added, foreign objects refused.
 - Cleanup: candidates per mode, each precondition, pods mounting, a replaced or vanished ConfigMap, and
   which apps pay an API call for it.
-- Component and join handlers in both modes; KasprJoin CRD or permission missing; an invalid join.
-- Status and the `JoinsDelivered` condition; dropped `status.definitions` keys cleared under merge patch;
-  joins as linked resources and their topics as subscriptions.
+- Component and join handlers in both modes, the mode read from the annotation, the StatefulSet or the
+  default; KasprJoin CRD or permission missing; an invalid join.
+- Nothing about definitions in the app's status; components' `configMap` removed and restored on a
+  switch; joins warned when they stop being delivered; joins as linked resources and their topics as
+  subscriptions.
 - The full-template handlers render the components first; scaling no longer patches a template without
   definitions (the test fails with the fix removed).
 

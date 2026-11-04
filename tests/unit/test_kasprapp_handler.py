@@ -534,6 +534,10 @@ def test_reconcile_attaches_components_before_synchronize(monkeypatch):
         async def synchronize(self, stateful_set=None):
             calls.append("synchronize")
 
+        async def clean_up_definitions(self, mode, desired, config_maps=None):
+            calls.append("clean_up_definitions")
+            return handler.CleanupPlan()
+
         def prepare_statefulset_fingerprint(self, stateful_set):
             return "fingerprint"
 
@@ -576,7 +580,7 @@ def test_reconcile_attaches_components_before_synchronize(monkeypatch):
     )
 
     # The delivery mode is chosen, and definitions are synced, before the StatefulSet
-    # that rolls pods mounting them.
+    # that rolls pods mounting them; the ConfigMaps it no longer mounts go after it.
     assert calls == [
         "fetch",
         "attach",
@@ -584,6 +588,7 @@ def test_reconcile_attaches_components_before_synchronize(monkeypatch):
         "resolve_definitions_delivery",
         "sync_component_config_maps",
         "synchronize",
+        "clean_up_definitions",
         "update_status",
     ]
     assert outcome == handler.RECONCILED
