@@ -442,6 +442,11 @@ until the KasprApp is deleted, or until this operator returns and cleans them up
 | 94-component app to `bundle` and back | 95 → 2 ConfigMaps, 124 → 31 mounts, template 53.7 → 15.1 KiB; all 53 routes served; back to the original revision, ConfigMaps and statuses |
 | Operator default flipped to `bundle`, then back to `components` | nothing restarted over a full cycle either way; an unannotated app switched within its next rollout, each way |
 | Component ConfigMaps' hash annotation (247 ConfigMaps) | one metadata patch each, data unchanged, nothing else changed; every annotation equals its component's hash; stable a cycle later |
+| No delivery status: existing apps over startup, a full cycle and an operator kill | no StatefulSet, revision, pod, component or app status change; no `definitions` status, `JoinsDelivered` condition or `delivery` field anywhere |
+| No delivery status: probe to `bundle` and back, with a join | components lost and regained `configMap`; old ConfigMaps deleted 4–26 s after each rollout; the join named and warned when left out; the rebalance after its delivery took effect |
+| Unannotated app running `bundle`, every component reconciled | each read the StatefulSet and wrote no ConfigMap |
+| `components`-mode app left with a shard and no components, operator killed right after the patch | the restarted operator's first reconciliation listed and deleted the shard |
+| App without components annotated `bundle` | no `DefinitionsDeliveryChanged` over a full cycle |
 
 ## Alternatives considered
 
