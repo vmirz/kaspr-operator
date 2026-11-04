@@ -1,4 +1,4 @@
-"""Handlers with definitions bundles: components, joins, status, cleanup and full renders."""
+"""Handlers with definitions bundles: components, joins, statuses, cleanup and full renders."""
 
 import asyncio
 import copy
@@ -19,6 +19,7 @@ from kaspr.resources.kasprapp import KasprApp
 from kaspr.types.schemas import KasprJoinSpecSchema, KasprWebViewSpecSchema
 from kaspr.types.settings import Settings
 from definitions_fixtures import APP, app_with, every_component_case, webview_doc
+from test_event_driven_reconciliation import FakeApp as StatusApp, healthy_status, run_update_status, use_fake_app
 
 
 @pytest.fixture(autouse=True)
@@ -34,13 +35,25 @@ def posted(monkeypatch):
     return events
 
 
-def fake_app_api(monkeypatch, module, app_body):
+def fake_app_api(monkeypatch, module, app_body, stateful_set=None):
+    """Serve the app and its StatefulSet; returns the StatefulSet names read."""
+    reads = []
+
+    async def fetch_stateful_set(api, name, namespace):
+        reads.append(name)
+        return stateful_set
+
     class FakeKasprApp:
         @staticmethod
         def default():
-            return SimpleNamespace(fetch=AsyncMock(return_value=app_body))
+            apps = KasprApp.default()
+            apps.__dict__["apps_v1_api"] = None
+            apps.fetch = AsyncMock(return_value=app_body)
+            apps.fetch_stateful_set = fetch_stateful_set
+            return apps
 
     monkeypatch.setattr(module, "KasprApp", FakeKasprApp)
+    return reads
 
 
 BUNDLE_APP = {"kind": "KasprApp", "metadata": {"annotations": {d.DELIVERY_ANNOTATION: "bundle"}}}
@@ -79,7 +92,7 @@ def run_component(component, status):
 
 
 def test_a_component_of_a_bundle_app_writes_no_config_map(monkeypatch, posted):
-    fake_app_api(monkeypatch, component_handler, BUNDLE_APP)
+    reads = fake_app_api(monkeypatch, component_handler, BUNDLE_APP)
     component = webview_component()
     reported = {"app": {"name": APP, "status": "AppFound"}, "configMap": "page-webview", "hash": component.hash}
 
@@ -87,11 +100,12 @@ def test_a_component_of_a_bundle_app_writes_no_config_map(monkeypatch, posted):
 
     assert bundled is True
     component.synchronize.assert_not_awaited()
-    assert status == {"configMap": None, "delivery": "bundle"}
+    assert status == {"configMap": None}
+    assert reads == []  # the annotation decides
 
 
 def test_a_component_of_a_components_app_reports_as_before(monkeypatch, posted):
-    fake_app_api(monkeypatch, component_handler, COMPONENTS_APP)
+    reads = fake_app_api(monkeypatch, component_handler, COMPONENTS_APP, app_with().stateful_set)
     component = webview_component()
 
     bundled, status = run_component(component, {})
@@ -103,17 +117,47 @@ def test_a_component_of_a_components_app_reports_as_before(monkeypatch, posted):
         "configMap": "page-webview",
         "hash": component.hash,
     }
+    assert reads == [f"{APP}-app"]
 
 
-def test_a_component_back_to_its_own_config_map_drops_the_delivery(monkeypatch, posted):
-    fake_app_api(monkeypatch, component_handler, COMPONENTS_APP)
+def test_a_component_of_an_unannotated_app_follows_its_pods(monkeypatch, posted):
+    fake_app_api(monkeypatch, component_handler, COMPONENTS_APP, app_with().render_stateful_set(d.BUNDLE))
     component = webview_component()
-    reported = {"app": {"name": APP, "status": "AppFound"}, "delivery": "bundle", "hash": component.hash}
+
+    bundled, _ = run_component(component, {})
+
+    assert bundled is True
+    component.synchronize.assert_not_awaited()
+
+
+@pytest.mark.parametrize("default, bundled", [("bundle", True), ("components", False)])
+def test_a_component_of_an_app_without_pods_follows_the_default(monkeypatch, posted, default, bundled):
+    monkeypatch.setattr(KasprApp, "conf", Settings(definitions_delivery_default=default), raising=False)
+    fake_app_api(monkeypatch, component_handler, COMPONENTS_APP)
+
+    assert run_component(webview_component(), {})[0] is bundled
+
+
+def test_a_component_without_its_app_writes_its_config_map(monkeypatch, posted):
+    reads = fake_app_api(monkeypatch, component_handler, None)
+    component = webview_component()
+
+    bundled, _ = run_component(component, {})
+
+    assert bundled is False
+    component.synchronize.assert_awaited_once()
+    assert reads == []
+
+
+def test_a_component_back_to_its_own_config_map_reports_it(monkeypatch, posted):
+    fake_app_api(monkeypatch, component_handler, COMPONENTS_APP, app_with().stateful_set)
+    component = webview_component()
+    reported = {"app": {"name": APP, "status": "AppFound"}, "hash": component.hash}
 
     _, status = run_component(component, reported)
 
     component.synchronize.assert_awaited_once()
-    assert status == {"configMap": "page-webview", "delivery": None}
+    assert status == {"configMap": "page-webview"}
 
 
 # ---------------------------------------------------------------------------
@@ -157,22 +201,25 @@ def run_join(monkeypatch, app_body, status, tables_of_app=("orders", "products")
     return dict(patch.get("status", {})), written
 
 
-def test_a_join_of_a_components_app_is_not_delivered_and_says_so(monkeypatch, posted):
+def test_a_join_of_a_components_app_is_not_delivered_and_says_so_each_time(monkeypatch, posted):
     status, written = run_join(monkeypatch, COMPONENTS_APP, status={})
 
     assert written == []
-    assert status["delivery"] == "notDelivered"
-    assert "configMap" not in status or status["configMap"] is None
+    assert set(status) == {"app", "hash", "leftTable", "rightTable"}
     assert status["leftTable"]["status"] == "LeftTableFound"
     assert status["rightTable"]["status"] == "RightTableFound"
-    assert ("warn", "NotDelivered") in posted
+    assert posted.count(("warn", "NotDelivered")) == 1
+
+    again, _ = run_join(monkeypatch, COMPONENTS_APP, status=status)
+    assert again == {}
+    assert posted.count(("warn", "NotDelivered")) == 2
 
 
 def test_a_join_of_a_bundle_app_is_delivered(monkeypatch, posted):
     status, written = run_join(monkeypatch, BUNDLE_APP, status={}, tables_of_app=("orders",))
 
     assert written == []
-    assert status["delivery"] == "bundle"
+    assert set(status) == {"app", "hash", "leftTable", "rightTable"}
     assert status["rightTable"]["status"] == "RightTableNotFound"
     assert ("warn", "NotDelivered") not in posted
     assert ("warn", "RightTableNotFound") in posted
@@ -216,61 +263,25 @@ def test_an_invalid_join_is_left_out_of_the_app():
 # ---------------------------------------------------------------------------
 
 
-def shard(name="s", components=3, size=100):
-    return SimpleNamespace(name=name, components=components, size=size)
+def test_the_app_status_reports_nothing_about_definitions(monkeypatch):
+    """How an app delivers shows in its StatefulSet and ConfigMaps, not in its status."""
+    use_fake_app(monkeypatch, StatusApp(actual_status=healthy_status()))
+    case_join = join_doc()
+    related = {
+        "agents": [],
+        "webviews": [],
+        "tables": [],
+        "tasks": [],
+        "joins": [case_join],
+        "delivered_joins": [case_join["metadata"]["name"]],
+        "success": True,
+        "hashes": {},
+    }
 
+    changes = run_update_status({}, handler.AppRuntimeState(), related_resources=related)
 
-@pytest.mark.parametrize(
-    "info, expected",
-    [
-        (dict(mode="components", shards=[], waiting=0), None),
-        (dict(mode="components", shards=[], waiting=2), {"delivery": "components", "pendingDeletion": 2}),
-        (
-            dict(mode="bundle", shards=[shard("a", 2, 10), shard("b", 3, 20)], waiting=0),
-            {"delivery": "bundle", "configMaps": ["a", "b"], "components": 5, "bytes": 30},
-        ),
-        (
-            dict(mode="bundle", shards=[shard("a")], waiting=1),
-            {"delivery": "bundle", "configMaps": ["a"], "components": 3, "bytes": 100, "pendingDeletion": 1},
-        ),
-    ],
-)
-def test_definitions_status(info, expected):
-    assert handler._definitions_status(info) == expected
-
-
-def test_an_app_without_joins_gets_no_joins_condition():
-    status_update = {}
-
-    changed = handler._update_joins_condition(status_update, {"conditions": [{"type": "Ready"}]}, dict(mode="components", joins=[]), 1)
-
-    assert changed is None and status_update == {}
-
-
-def test_a_components_app_with_joins_is_told_they_are_not_delivered():
-    status_update = {}
-
-    changed = handler._update_joins_condition(status_update, {}, dict(mode="components", joins=["j1"]), 1)
-
-    assert changed["status"] == "False" and changed["reason"] == "RequiresBundleDelivery"
-    assert "j1" in changed["message"]
-    [condition] = status_update["conditions"]
-    assert condition["type"] == "JoinsDelivered"
-    again = {}
-    assert handler._update_joins_condition(again, {"conditions": status_update["conditions"]}, dict(mode="components", joins=["j1"]), 1) is None
-
-
-def test_joins_condition_turns_true_in_bundle_mode_and_goes_with_the_joins():
-    current = {}
-    handler._update_joins_condition(current, {}, dict(mode="components", joins=["j1"]), 1)
-    status_update = {}
-
-    changed = handler._update_joins_condition(status_update, current, dict(mode="bundle", joins=["j1"]), 1)
-    assert changed["status"] == "True" and changed["reason"] == "Bundled"
-
-    removed = {}
-    handler._update_joins_condition(removed, status_update, dict(mode="bundle", joins=[]), 1)
-    assert removed["conditions"] == []
+    assert "definitions" not in changes
+    assert [c["type"] for c in changes.get("conditions", []) if "Join" in c["type"]] == []
 
 
 def linked_status(mode, current=None, joins=("orders-products-join",)):
@@ -283,7 +294,7 @@ def linked_status(mode, current=None, joins=("orders-products-join",)):
         "joins": [case_join] if joins else [],
         "success": True,
         "hashes": {"joins": {case_join["metadata"]["name"]: "h1"}},
-        "definitions": {"mode": mode, "joins": [case_join["metadata"]["name"]] if joins else []},
+        "delivered_joins": [case_join["metadata"]["name"]] if joins and mode == "bundle" else [],
     }
     app = SimpleNamespace(static_group_membership_enabled=True)
     status_update = {}
@@ -318,7 +329,6 @@ class CleanupApp:
     def __init__(self, mode, waiting=()):
         self.definitions_delivery = mode
         self.desired_definitions_config_maps = {"desired"}
-        self.definition_shards = [shard("desired")] if mode == "bundle" else []
         self.joins = []
         self.calls = []
         self.waiting = list(waiting)
@@ -328,71 +338,57 @@ class CleanupApp:
         return CleanupPlan(waiting=self.waiting, reason="a rollout is in progress" if self.waiting else None)
 
 
-def clean_up(app, config_maps, status):
+def clean_up(app, config_maps):
     state = handler.AppRuntimeState()
-    info = asyncio.run(handler._clean_up_definitions(app, config_maps, status, state, APP, "ns", {}, Mock()))
-    return info, state
+    asyncio.run(handler._clean_up_definitions(app, config_maps, state, APP, "ns", {}, Mock()))
+    return state
 
 
-def test_a_components_app_without_components_or_shards_makes_no_call():
+def test_a_components_app_without_components_lists_its_config_maps():
+    """Shards left from bundle mode are found from the cluster, whatever the app's status says."""
     app = CleanupApp("components")
 
-    info, state = clean_up(app, None, {})
+    state = clean_up(app, None)
 
-    assert app.calls == [] and state.definitions_cleanup is None
-    assert handler._definitions_status(info) is None
+    assert app.calls == [("components", {"desired"}, None)]
+    assert state.definitions_cleanup is None
 
 
 def test_a_components_app_reuses_the_listing_of_its_definitions_sync():
     app = CleanupApp("components")
     listing = ["listed"]
 
-    clean_up(app, listing, {})
+    clean_up(app, listing)
 
     assert app.calls == [("components", {"desired"}, listing)]
-
-
-def test_a_components_app_that_had_bundles_lists_its_config_maps():
-    app = CleanupApp("components")
-
-    clean_up(app, None, {"definitions": {"delivery": "components", "pendingDeletion": 1}})
-
-    assert app.calls == [("components", {"desired"}, None)]
 
 
 def test_waiting_config_maps_are_retried_on_status_refreshes():
     app = CleanupApp("bundle", waiting=["old"])
 
-    info, state = clean_up(app, [], {})
+    state = clean_up(app, [])
 
     assert state.definitions_cleanup == ("bundle", frozenset({"desired"}))
-    assert info["waiting"] == 1
 
     app.waiting = []
-    status_update = {}
-    asyncio.run(
-        handler._refresh_definitions_cleanup(
-            app, status_update, {"definitions": {"delivery": "bundle", "pendingDeletion": 1}}, state, APP, "ns", {}, Mock()
-        )
-    )
+    asyncio.run(handler._refresh_definitions_cleanup(app, state, APP, "ns", {}, Mock()))
     assert state.definitions_cleanup is None
-    # A merge patch keeps what it leaves out: the count must be removed explicitly.
-    assert status_update["definitions"] == {"delivery": "bundle", "pendingDeletion": None}
 
 
-def test_a_components_app_drops_its_definitions_status_once_clean():
-    app = CleanupApp("components")
+def test_a_status_refresh_retries_waiting_deletions_and_writes_no_status_for_them(monkeypatch):
+    status_app = StatusApp(actual_status=healthy_status())
+    status_app.calls = []
+    status_app.waiting = []
+    status_app.clean_up_definitions = CleanupApp.clean_up_definitions.__get__(status_app)
+    use_fake_app(monkeypatch, status_app)
     state = handler.AppRuntimeState()
-    state.definitions_cleanup = ("components", frozenset({"desired"}))
-    status_update = {}
+    state.definitions_cleanup = ("bundle", frozenset({"desired"}))
 
-    asyncio.run(
-        handler._refresh_definitions_cleanup(
-            app, status_update, {"definitions": {"delivery": "components", "pendingDeletion": 3}}, state, APP, "ns", {}, Mock()
-        )
-    )
+    changes = run_update_status({}, state)
 
-    assert status_update["definitions"] is None
+    assert status_app.calls == [("bundle", {"desired"}, None)]
+    assert state.definitions_cleanup is None
+    assert "definitions" not in changes
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +406,7 @@ def reported_component(cls, name, status, wrote=True):
         config_map_name=f"{name}-webview",
         patched=[],
     )
-    component.definitions_status = lambda bundled: KasprWebView.definitions_status(component, bundled)
+    component.config_map_status = lambda bundled: KasprWebView.config_map_status(component, bundled)
 
     async def patch_status(fields):
         component.patched.append(fields)
@@ -420,8 +416,10 @@ def reported_component(cls, name, status, wrote=True):
     return component
 
 
-def report(app):
-    asyncio.run(handler._report_definitions_to_components(app, Mock()))
+def report(app, changes=False):
+    deployed = "components" if app.definitions_delivery == "bundle" else "bundle"
+    delivery = Delivery(app.definitions_delivery, deployed if changes else app.definitions_delivery, "annotation")
+    asyncio.run(handler._report_definitions_to_components(app, delivery, Mock()))
 
 
 def test_components_of_a_components_app_are_left_alone():
@@ -437,37 +435,66 @@ def test_components_hear_of_a_switch_to_bundles_and_back():
     component = reported_component("KasprWebView", "page", {"app": {}, "configMap": "page-webview"})
     app = SimpleNamespace(definitions_delivery="bundle", agents=[], webviews=[component], tables=[], tasks=[], joins=[])
 
-    report(app)
-    assert component.patched == [{"configMap": None, "delivery": "bundle"}]
+    report(app, changes=True)
+    assert component.patched == [{"configMap": None}]
 
-    component.owner["status"] = {"app": {}, "delivery": "bundle"}
+    component.owner["status"] = {"app": {}}  # the ConfigMap removed by that patch
     component.patched.clear()
     app.definitions_delivery = "components"
-    report(app)
-    assert component.patched == [{"configMap": "page-webview", "delivery": None}]
+    report(app, changes=True)
+    assert component.patched == [{"configMap": "page-webview"}]
 
 
-def test_joins_hear_their_delivery_and_tables(posted):
+def reported_join():
     doc = join_doc()
     join = KasprJoin.from_spec(doc["metadata"]["name"], "KasprJoin", "ns", KasprJoinSpecSchema().load(doc["spec"]), doc["metadata"]["labels"])
     join.owner = {"metadata": {"name": join.cluster}, "status": {"app": {"name": APP, "status": "AppFound"}}}
-    patched = []
+    join.patched = []
 
     async def patch_status(fields):
-        patched.append(fields)
+        join.patched.append(fields)
         return {}
 
     join.patch_status = patch_status
+    return join
+
+
+def test_joins_hear_their_tables(posted):
+    join = reported_join()
     table = SimpleNamespace(cluster="orders", owner={}, WRITES_CONFIG_MAP=True)  # has not reported yet
-    app = SimpleNamespace(definitions_delivery="components", agents=[], webviews=[], tables=[table], tasks=[], joins=[join])
+    app = SimpleNamespace(definitions_delivery="bundle", agents=[], webviews=[], tables=[table], tasks=[], joins=[join])
 
     report(app)
 
-    [fields] = patched
-    assert fields["delivery"] == "notDelivered"
+    [fields] = join.patched
+    assert set(fields) == {"leftTable", "rightTable"}
     assert fields["leftTable"]["status"] == "LeftTableFound"
     assert fields["rightTable"]["status"] == "RightTableNotFound"
-    assert ("warn", "NotDelivered") in posted
+    assert posted == []
+
+
+@pytest.mark.parametrize("changes, warned", [(True, True), (False, False)])
+def test_joins_are_warned_when_their_app_stops_delivering_bundles(posted, changes, warned):
+    join = reported_join()
+    app = SimpleNamespace(definitions_delivery="components", agents=[], webviews=[], tables=[], tasks=[], joins=[join])
+
+    report(app, changes=changes)
+
+    assert (("warn", "NotDelivered") in posted) is warned
+
+
+def test_a_switch_to_components_names_the_joins_it_leaves_out(monkeypatch):
+    events = []
+    monkeypatch.setattr(handler, "_post_app_event", lambda *args: events.append(args[3:6]))
+    app = SimpleNamespace(joins=[reported_join()])
+
+    handler._post_delivery_events(app, APP, "ns", {}, Delivery("components", "bundle", "annotation"), Mock())
+    handler._post_delivery_events(app, APP, "ns", {}, Delivery("bundle", "components", "annotation"), Mock())
+
+    [(_, reason, to_components), (_, _, to_bundle)] = events
+    assert reason == "DefinitionsDeliveryChanged"
+    assert app.joins[0].cluster in to_components and "not delivered" in to_components
+    assert "KasprJoins" not in to_bundle
 
 
 # ---------------------------------------------------------------------------
@@ -548,27 +575,6 @@ def test_scaling_keeps_the_definitions_in_the_template(monkeypatch):
     )
 
     assert patches == []
-
-
-def test_status_definitions_drops_keys_the_new_value_lacks():
-    current = {"delivery": "bundle", "configMaps": ["a"], "components": 3, "bytes": 10, "pendingDeletion": 2}
-
-    assert handler._merge_patch_value(current, {"delivery": "components", "pendingDeletion": 1}) == {
-        "delivery": "components",
-        "pendingDeletion": 1,
-        "configMaps": None,
-        "components": None,
-        "bytes": None,
-    }
-    assert handler._merge_patch_value(current, None) is None
-    assert handler._merge_patch_value(None, {"delivery": "bundle"}) == {"delivery": "bundle"}
-
-
-def test_reconcile_status_clears_the_pending_count():
-    status = {"definitions": {"delivery": "bundle", "configMaps": ["s"], "components": 3, "bytes": 100, "pendingDeletion": 7}}
-    desired = handler._definitions_status(dict(mode="bundle", shards=[shard("s")], waiting=0))
-
-    assert handler._merge_patch_value(status["definitions"], desired)["pendingDeletion"] is None
 
 
 def test_a_delivered_joins_internal_topics_are_subscriptions():

@@ -247,20 +247,31 @@ def test_definitions_outgrowing_the_deployed_bundle_take_the_default():
     assert (delivery.mode, delivery.reason) == (d.COMPONENTS, "default")
 
 
+def annotated(value):
+    return {"metadata": {"annotations": {d.DELIVERY_ANNOTATION: value}}}
+
+
 @pytest.mark.parametrize(
-    "app, expected",
+    "app, deployed, default, expected",
     [
-        (None, False),
-        ({}, False),
-        ({"metadata": {"annotations": {d.DELIVERY_ANNOTATION: "bundle"}}}, True),
-        ({"metadata": {"annotations": {d.DELIVERY_ANNOTATION: "components"}}, "status": {"definitions": {"delivery": "bundle"}}}, False),
-        ({"metadata": {}, "status": {"definitions": {"delivery": "bundle"}}}, True),
-        ({"metadata": {"annotations": {d.DELIVERY_ANNOTATION: "nonsense"}}, "status": {"definitions": {"delivery": "bundle"}}}, True),
-        ({"metadata": {}, "status": {"definitions": {"delivery": "components", "pendingDeletion": 1}}}, False),
+        # An app that does not exist: its components write their ConfigMaps, as before.
+        (None, None, d.BUNDLE, False),
+        # The annotation decides, whatever the pods run.
+        (annotated("bundle"), d.COMPONENTS, d.COMPONENTS, True),
+        (annotated("components"), d.BUNDLE, d.BUNDLE, False),
+        # Without a valid annotation, the mode the pods run.
+        ({"metadata": {}}, d.BUNDLE, d.COMPONENTS, True),
+        ({"metadata": {}}, d.COMPONENTS, d.BUNDLE, False),
+        (annotated("nonsense"), d.BUNDLE, d.COMPONENTS, True),
+        # Without pods yet, the default the app will be created with.
+        ({"metadata": {}}, None, d.BUNDLE, True),
+        ({}, None, d.COMPONENTS, False),
     ],
 )
-def test_app_delivers_bundles(app, expected):
-    assert d.app_delivers_bundles(app) is expected
+def test_app_delivers_bundles(app, deployed, default, expected):
+    stateful_set = rendered(app_with(), deployed) if deployed else None
+
+    assert d.app_delivers_bundles(app, stateful_set, default) is expected
 
 
 # ---------------------------------------------------------------------------

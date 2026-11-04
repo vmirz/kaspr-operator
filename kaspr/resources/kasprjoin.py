@@ -2,10 +2,10 @@ from typing import Any, Dict, Set
 from kaspr.types.models import KasprJoinSpec, KasprJoinResources
 from kaspr.utils.objects import cached_property
 from kaspr.resources.appcomponent import BaseAppComponent
-from kaspr.resources.definitions import BUNDLE
+from kaspr.resources.definitions import BUNDLE, DELIVERY_ANNOTATION
 from kaspr.types.models import KasprAppComponents
 
-NOT_DELIVERED = "notDelivered"
+NOT_DELIVERED = "NotDelivered"
 LEFT_TABLE_FOUND = "LeftTableFound"
 LEFT_TABLE_NOT_FOUND = "LeftTableNotFound"
 RIGHT_TABLE_FOUND = "RightTableFound"
@@ -58,8 +58,12 @@ class KasprJoin(BaseAppComponent):
     async def synchronize(self):
         """A join has no ConfigMap of its own."""
 
-    def definitions_status(self, bundled: bool) -> Dict[str, Any]:
-        return {"delivery": BUNDLE if bundled else NOT_DELIVERED}
+    def not_delivered_message(self) -> str:
+        """Why the join does not reach the pods of an app that does not deliver bundles."""
+        return (
+            f"Not delivered to the pods of KasprApp `{self.app_name}`: KasprJoins need "
+            f"definitions bundle delivery (annotate the KasprApp `{DELIVERY_ANNOTATION}: {BUNDLE}`)."
+        )
 
     def tables_status(self, app_tables: Set[str]) -> Dict[str, Any]:
         """Whether the join's tables belong to its app, by KasprTable name."""

@@ -52,24 +52,24 @@ finds a join's channel when Kaspr builds them. Webviews fill further shards when
 exceed `DEFINITIONS_BUNDLE_SHARD_BYTES` (512 KiB by default). A shard over 1,000,000 bytes fails the
 reconciliation with `DefinitionsTooLarge`, and the pods keep running what they have.
 
-## Status
+## Checking an app
 
-```yaml
-status:
-  definitions:
-    delivery: bundle
-    configMaps: [orders-app-definitions-3f9a1c2b7d]
-    components: 94
-    bytes: 188287
-    pendingDeletion: 94     # waiting for the rollout; omitted when 0
+The KasprApp's status says nothing about delivery; the app's StatefulSet and ConfigMaps do:
+
+```sh
+# bundle mode mounts kaspr-definitions-<shard> volumes
+kubectl get statefulset orders-app -o jsonpath='{.spec.template.spec.volumes[*].name}'
+# its bundles; each one's kaspr.io/definitions-components annotation counts its components
+kubectl get configmap -l kaspr.io/app=orders,kaspr.io/component=definitions
 ```
 
-- Components of a bundle app report `delivery: bundle` and no `configMap`.
-- An app with KasprJoins has the condition `JoinsDelivered`: `True` in `bundle` mode, `False`
-  (reason `RequiresBundleDelivery`) in `components` mode, where its joins are not delivered.
+- A definitions ConfigMap the StatefulSet no longer mounts is deleted once the rollout has completed.
+- Components of a bundle app have no `configMap` in their status.
+- A KasprJoin of a `components`-mode app is not delivered: it gets a `NotDelivered` warning each time
+  it is reconciled and when its app switches away from bundles.
 - Events on the KasprApp: `DefinitionsDeliveryChanged`, `DefinitionsBundleCreated`,
   `DefinitionsCleanedUp`, and the warnings `DefinitionsTooLarge`, `DefinitionsConflict`,
-  `InvalidDefinitionsDelivery`, `JoinsNotDelivered`.
+  `InvalidDefinitionsDelivery`.
 
 ## Going back
 

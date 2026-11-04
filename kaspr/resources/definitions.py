@@ -307,19 +307,27 @@ def resolve_delivery(
     return Delivery(deployed, deployed, "deployed", invalid)
 
 
-def app_delivers_bundles(app: Optional[Mapping]) -> bool:
+def annotated_mode(app: Optional[Mapping]) -> Optional[str]:
+    """The delivery mode an app, as read from the API, is annotated with; None without a valid one."""
+    annotations = ((app or {}).get("metadata") or {}).get("annotations") or {}
+    return normalize_mode(annotations.get(DELIVERY_ANNOTATION))
+
+
+def app_delivers_bundles(
+    app: Optional[Mapping], stateful_set: Optional[V1StatefulSet], default: str
+) -> bool:
     """Whether an app, as read from the API, delivers its components in bundles.
 
-    Its annotation decides; without one, the mode its last reconciliation deployed.
+    Its annotation decides; without one, the mode its pods run, or the operator default
+    for an app without a StatefulSet yet. The components of an app that does not exist
+    write their own ConfigMaps, as before bundles.
     """
     if not app:
         return False
-    annotations = (app.get("metadata") or {}).get("annotations") or {}
-    mode = normalize_mode(annotations.get(DELIVERY_ANNOTATION))
-    if mode is not None:
-        return mode == BUNDLE
-    definitions = (app.get("status") or {}).get("definitions") or {}
-    return definitions.get("delivery") == BUNDLE
+    mode = annotated_mode(app)
+    if mode is None:
+        mode = deployed_mode(stateful_set) if stateful_set is not None else default
+    return mode == BUNDLE
 
 
 def is_shard(config_map: V1ConfigMap, app_name: str) -> bool:

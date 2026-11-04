@@ -15,7 +15,6 @@ from kubernetes_asyncio.client import (
 from kubernetes_asyncio.client.api_client import ApiClient
 
 from kaspr.resources.base import BaseResource
-from kaspr.resources.definitions import BUNDLE
 from kaspr.common.models.labels import Labels
 from kaspr.sensors import SensorDelegate
 
@@ -320,15 +319,14 @@ class BaseAppComponent(BaseResource):
             status=dict(fields),
         )
 
-    def definitions_status(self, bundled: bool) -> Dict[str, Any]:
-        """Status fields telling how this component reaches its app's pods.
+    def config_map_status(self, bundled: bool) -> Dict[str, Any]:
+        """The component's own ConfigMap in its status; None removes it from there.
 
-        A component of an app that does not deliver bundles reports its own ConfigMap
-        and no delivery field, as before bundles existed.
+        A component of an app that delivers bundles has none.
         """
-        if bundled:
-            return {"configMap": None, "delivery": BUNDLE}
-        return {"configMap": self.config_map_name, "delivery": None}
+        if not self.WRITES_CONFIG_MAP:
+            return {}
+        return {"configMap": None if bundled else self.config_map_name}
 
     def info(self) -> Dict:
         """Return kaspr resource info."""
