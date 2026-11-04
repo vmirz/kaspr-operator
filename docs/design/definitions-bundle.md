@@ -152,6 +152,8 @@ Inputs: the annotation `kaspr.io/definitions-delivery` on the KasprApp, the oper
   later rollout. Never at the cost of an extra one.
 - Removing the annotation therefore does not switch an app back by itself: it falls under the default rule.
   `components` switches back at once.
+- An app whose definitions outgrew the bundle it runs (rendering it in the deployed mode fails with
+  `DefinitionsTooLarge`) counts as changing anyway, so without the annotation it takes the default.
 
 ### 2. Bundle document
 
@@ -210,7 +212,8 @@ containers:
 ### 5. Reconciliation sequence
 
 ```
-1. List agents, webviews, tables, tasks, joins (a missing KasprJoin CRD lists as no joins)
+1. List agents, webviews, tables, tasks, joins (no KasprJoin CRD, or no permission to read
+   KasprJoins, lists as no joins)
 2. Read the StatefulSet (moved up from sync_stateful_set; still one read)
 3. Resolve the target mode (§1)
 4. Write the definitions for the target mode
@@ -223,6 +226,14 @@ containers:
 
 A failure at any step stops the reconciliation before the next one; it is retried (`RETRY`). Steps 4–6 are
 idempotent, so a retry, or an operator restart, continues from the cluster's state.
+
+**Other writers of the pod template.** The create/resume handler and the `spec.replicas`,
+`spec.storage.size` and `spec.template.pod` handlers write the whole pod template. They now attach the
+components, resolve the mode and write missing shards first, exactly like steps 1–4. Before, they
+rendered the template without the components, so each briefly wrote a template without definitions
+until the next reconciliation restored it, and an operator restart would have rolled a bundle app back
+to per-component ConfigMaps. The other field handlers send a strategic merge patch, which keeps the
+definitions volumes, mounts and env of the live template.
 
 ### 6. Cleanup
 
@@ -270,11 +281,13 @@ next event. A `components`-mode app with no history of bundles patches nothing.
 
 **KasprJoin.**
 
-- Today the operator never loads the KasprJoin handlers (`kaspr/__init__.py` does not import them), the
-  KasprApp does not list joins, and the StatefulSet mounts none: a KasprJoin does nothing.
+- Before this change the operator never loaded the KasprJoin handlers (`kaspr/__init__.py` did not import
+  them), the KasprApp did not list joins, and the StatefulSet mounted none: a KasprJoin did nothing.
 - After this change:
   - The handler uses the shared component path (`reconcile_component`, `notify_app`). It never writes a
-    ConfigMap. Its status reports `app`, `leftTable`, `rightTable`, `hash` and `delivery`.
+    ConfigMap. Its status reports `app`, `leftTable`, `rightTable` (found when a KasprTable of that name
+    belongs to the same app), `hash` and `delivery`. A join whose spec does not load is left out of the
+    app with a warning; the join's own handler reports the error.
   - `bundle` mode: joins go into shard 0 (§2), `JOINS_HASH` joins the env, and a change to the set of joins
     or their tables marks `rebalanceRequired` (joins consume internal topics).
   - `components` mode: joins are not delivered. The app gets a `JoinsDelivered=False` condition (reason

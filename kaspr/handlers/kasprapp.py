@@ -2122,7 +2122,9 @@ async def update_status(
             _update_linked_resources_status(status_update, _status, app, related_resources, name, logger)
         if related_resources is not None and "definitions" in related_resources:
             definitions = related_resources["definitions"]
-            status_update["definitions"] = _definitions_status(definitions)
+            status_update["definitions"] = _merge_patch_value(
+                _status.get("definitions"), _definitions_status(definitions)
+            )
             changed = _update_joins_condition(status_update, _status, definitions, gen)
             if changed and changed["status"] == "False":
                 _post_app_event(
@@ -2316,7 +2318,7 @@ async def _refresh_definitions_cleanup(
         updated.pop("pendingDeletion", None)
     if updated.get("delivery") != BUNDLE and "pendingDeletion" not in updated:
         updated = None
-    status_update["definitions"] = updated
+    status_update["definitions"] = _merge_patch_value(current, updated)
 
 
 async def _prepare_full_rendering(app: KasprApp, name: str, namespace: str):
@@ -2490,6 +2492,16 @@ async def _clean_up_definitions(
         "waiting": len(plan.waiting),
         "joins": sorted(join.cluster for join in app.joins or []),
     }
+
+
+def _merge_patch_value(current: Optional[Mapping], desired: Optional[Dict]) -> Optional[Dict]:
+    """The value replacing ``current`` with ``desired`` under a JSON merge patch.
+
+    A merge patch keeps the keys a new object leaves out, so those are set to None.
+    """
+    if desired is None or not isinstance(current, Mapping):
+        return desired
+    return {**{key: None for key in current if key not in desired}, **desired}
 
 
 def _definitions_status(info: Mapping) -> Optional[Dict]:

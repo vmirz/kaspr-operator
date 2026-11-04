@@ -377,7 +377,8 @@ def test_waiting_config_maps_are_retried_on_status_refreshes():
         )
     )
     assert state.definitions_cleanup is None
-    assert status_update["definitions"] == {"delivery": "bundle"}
+    # A merge patch keeps what it leaves out: the count must be removed explicitly.
+    assert status_update["definitions"] == {"delivery": "bundle", "pendingDeletion": None}
 
 
 def test_a_components_app_drops_its_definitions_status_once_clean():
@@ -548,3 +549,24 @@ def test_scaling_keeps_the_definitions_in_the_template(monkeypatch):
     )
 
     assert patches == []
+
+
+def test_status_definitions_drops_keys_the_new_value_lacks():
+    current = {"delivery": "bundle", "configMaps": ["a"], "components": 3, "bytes": 10, "pendingDeletion": 2}
+
+    assert handler._merge_patch_value(current, {"delivery": "components", "pendingDeletion": 1}) == {
+        "delivery": "components",
+        "pendingDeletion": 1,
+        "configMaps": None,
+        "components": None,
+        "bytes": None,
+    }
+    assert handler._merge_patch_value(current, None) is None
+    assert handler._merge_patch_value(None, {"delivery": "bundle"}) == {"delivery": "bundle"}
+
+
+def test_reconcile_status_clears_the_pending_count():
+    status = {"definitions": {"delivery": "bundle", "configMaps": ["s"], "components": 3, "bytes": 100, "pendingDeletion": 7}}
+    desired = handler._definitions_status(dict(mode="bundle", shards=[shard("s")], waiting=0))
+
+    assert handler._merge_patch_value(status["definitions"], desired)["pendingDeletion"] is None
