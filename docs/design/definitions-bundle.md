@@ -102,7 +102,8 @@ Kaspr<Component> CR ──handler──▶ ConfigMap <name>-<kind>   (key <name>
 - Each pod revision mounts exactly the definitions it was rolled for.
 - No orphaned ConfigMaps: whatever the operator stops mounting is deleted once nothing can mount it, and
   everything it creates is owned so that Kubernetes collects it when the owner goes.
-- Apps that do not opt in are untouched: identical StatefulSets, ConfigMaps and status, byte for byte.
+- Apps that do not opt in are untouched: identical StatefulSets and status, byte for byte. Their component
+  ConfigMaps keep their data; only their hash annotation changes once (see Compatibility).
 - Migration in both directions with one rollout, safe against operator restarts at any step.
 - KasprJoins delivered to the app's pods.
 
@@ -389,8 +390,11 @@ until the KasprApp is deleted, or until this operator returns and cleans them up
   `x-kubernetes-preserve-unknown-fields`.
 - **RBAC**: no change. ConfigMaps (create, delete, list), pods (list) and StatefulSets are already granted.
 - **Kubernetes**: immutable ConfigMaps are GA since 1.21.
-- **`components`-mode apps**: same StatefulSet, ConfigMaps, status and API calls, plus one KasprJoin list per
-  full reconciliation.
+- **`components`-mode apps**: same StatefulSet, ConfigMap data, status and API calls, plus one KasprJoin list
+  per full reconciliation.
+- **Component ConfigMaps' hash annotation**: it used to be computed before the annotation existed and never
+  matched the component's hash (its status, its app's `*_HASH` env). It now does. On upgrade each component
+  ConfigMap gets one metadata patch; component hashes, and so pod templates, do not change.
 
 ---
 
@@ -399,8 +403,9 @@ until the KasprApp is deleted, or until this operator returns and cleans them up
 **Unit tests** (`tests/unit/test_definitions*.py`, `legacy_rendering.py`)
 
 - Golden renderings of every example app, and of one app holding every example component, made by
-  v0.19.8's code: StatefulSets (with their `kaspr.io/resource-hash`) and component ConfigMaps are
-  byte-identical on this branch, KasprJoin attached included.
+  v0.19.8's code: StatefulSets (with their `kaspr.io/resource-hash`) are byte-identical on this branch,
+  KasprJoin attached included; component ConfigMaps differ only in their hash annotation, which now
+  equals the component's hash.
 - Shards: one document holds each component as its own ConfigMap does; sorted; content-addressed names;
   core kinds in shard 0, webviews spilling; hard limit.
 - Mode resolution: every row of §1, the template-change detector, definitions outgrowing a bundle.
@@ -433,6 +438,7 @@ until the KasprApp is deleted, or until this operator returns and cleans them up
 | Components created before an app born in `bundle` mode | their ConfigMaps deleted once the first pod was ready |
 | 94-component app to `bundle` and back | 95 → 2 ConfigMaps, 124 → 31 mounts, template 53.7 → 15.1 KiB; all 53 routes served; back to the original revision, ConfigMaps and statuses |
 | Operator default flipped to `bundle`, then back to `components` | nothing restarted over a full cycle either way; an unannotated app switched within its next rollout, each way |
+| Component ConfigMaps' hash annotation (247 ConfigMaps) | one metadata patch each, data unchanged, nothing else changed; every annotation equals its component's hash; stable a cycle later |
 
 ## Alternatives considered
 
