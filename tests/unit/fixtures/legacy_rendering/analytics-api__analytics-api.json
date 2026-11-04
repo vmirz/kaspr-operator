@@ -1,0 +1,271 @@
+{
+ "configMaps": [
+  {
+   "apiVersion": "v1",
+   "data": {
+    "metrics-dashboard-webview.yaml": "webviews:\n- description: REST API for querying real-time analytics metrics\n  name: metrics-dashboard\n  processors:\n    init:\n      entrypoint: null\n      python: \"from datetime import datetime, timezone, timedelta\\nimport json\\n\\n\\\n        def get_current_time_window(window_minutes=5):\\n    \\\"\\\"\\\"Get the current\\\n        \\ time window.\\\"\\\"\\\"\\n    now = datetime.now(timezone.utc)\\n    minutes =\\\n        \\ (now.minute // window_minutes) * window_minutes\\n    window_start = now.replace(minute=minutes,\\\n        \\ second=0, microsecond=0)\\n    return window_start.isoformat()\\n    \\ndef\\\n        \\ parse_time_range(time_range_param):\\n    \\\"\\\"\\\"Parse time range parameter\\\n        \\ (e.g., '1h', '24h', '7d').\\\"\\\"\\\"\\n    if not time_range_param:\\n       \\\n        \\ return 1  # Default 1 hour\\n        \\n    unit = time_range_param[-1].lower()\\n\\\n        \\    try:\\n        value = int(time_range_param[:-1])\\n    except ValueError:\\n\\\n        \\        return 1\\n        \\n    if unit == 'h':\\n        return value\\n \\\n        \\   elif unit == 'd':\\n        return value * 24\\n    elif unit == 'w':\\n\\\n        \\        return value * 24 * 7\\n    else:\\n        return 1\\n        \\n\"\n    operations:\n    - filter: null\n      map:\n        entrypoint: validate_request\n        python: \"def validate_request(request, dimension):\\n    \\\"\\\"\\\"\\n    Validates\\\n          \\ the incoming API request parameters.\\n    \\\"\\\"\\\"\\n    # Parse query parameters\\n\\\n          \\    query_params = {}\\n    if hasattr(request, 'query_string') and request.query_string:\\n\\\n          \\        for param in request.query_string.decode().split('&'):\\n      \\\n          \\      if '=' in param:\\n                key, value = param.split('=', 1)\\n\\\n          \\                query_params[key] = value\\n    \\n    # Validate dimension\\n\\\n          \\    valid_dimensions = [\\n        \\\"global\\\", \\\"event_type\\\", \\\"country\\\"\\\n          , \\\"hour\\\", \\\"weekend\\\"\\n    ]\\n    \\n    if dimension not in valid_dimensions:\\n\\\n          \\        raise ValueError(f\\\"Invalid dimension '{dimension}'. Valid options:\\\n          \\ {valid_dimensions}\\\")\\n    \\n    # Parse and validate parameters\\n   \\\n          \\ time_range_hours = parse_time_range(query_params.get('time_range', '1h'))\\n\\\n          \\    dimension_value = query_params.get('value', 'total')\\n    \\n    return\\\n          \\ {\\n        \\\"dimension\\\": dimension,\\n        \\\"dimension_value\\\": dimension_value,\\n\\\n          \\        \\\"time_range_hours\\\": time_range_hours,\\n        \\\"query_timestamp\\\"\\\n          : datetime.now(timezone.utc).isoformat(),\\n        \\\"query_params\\\": query_params\\n\\\n          \\    }\\n    \\n\"\n      name: validate-request\n      tables: []\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: query_metrics\n        python: \"def query_metrics(request, counters):\\n    \\\"\\\"\\\"\\n    Queries metrics\\\n          \\ from the counters table based on the request parameters.\\n    \\\"\\\"\\\"\\n\\\n          \\    dimension = request[\\\"dimension\\\"]\\n    dimension_value = request[\\\"\\\n          dimension_value\\\"]\\n    time_range_hours = request[\\\"time_range_hours\\\"\\\n          ]\\n    \\n    # Calculate time windows to query\\n    current_window = get_current_time_window()\\n\\\n          \\    current_time = datetime.fromisoformat(current_window.replace('Z', '+00:00'))\\n\\\n          \\    \\n    metrics = []\\n    windows_to_check = time_range_hours * (60 //\\\n          \\ 5)  # 5-minute windows\\n    \\n    for i in range(windows_to_check):\\n\\\n          \\        window_time = current_time - timedelta(minutes=i * 5)\\n       \\\n          \\ window_key = window_time.isoformat()\\n        \\n        # Build counter\\\n          \\ key\\n        counter_key = f\\\"{dimension}:{dimension_value}:{window_key}\\\"\\\n          \\n        \\n        counter = counters.get(counter_key)\\n        if counter:\\n\\\n          \\            metrics.append({\\n                \\\"time_window\\\": window_key,\\n\\\n          \\                \\\"count\\\": counter[\\\"count\\\"],\\n                \\\"unique_users\\\"\\\n          : counter.get(\\\"unique_user_count\\\", 0),\\n                \\\"dimension\\\"\\\n          : dimension,\\n                \\\"dimension_value\\\": dimension_value\\n   \\\n          \\         })\\n    \\n    if not metrics:\\n        raise ValueError(f\\\"No\\\n          \\ metrics found for {dimension}:{dimension_value}\\\")\\n    \\n    # Calculate\\\n          \\ aggregates\\n    total_count = sum(m[\\\"count\\\"] for m in metrics)\\n   \\\n          \\ total_unique_users = len(set(str(m[\\\"unique_users\\\"]) for m in metrics\\\n          \\ if m[\\\"unique_users\\\"] > 0))\\n    avg_count_per_window = total_count /\\\n          \\ len(metrics) if metrics else 0\\n    \\n    return {\\n        **request,\\n\\\n          \\        \\\"metrics\\\": metrics,\\n        \\\"summary\\\": {\\n            \\\"total_events\\\"\\\n          : total_count,\\n            \\\"unique_users\\\": total_unique_users,\\n    \\\n          \\        \\\"avg_events_per_window\\\": round(avg_count_per_window, 2),\\n  \\\n          \\          \\\"windows_queried\\\": len(metrics),\\n            \\\"time_range_hours\\\"\\\n          : time_range_hours\\n        }\\n    }\\n    \\n\"\n      name: query-metrics\n      tables:\n      - name: event-counters\n        param_name: counters\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: format_response\n        python: \"def format_response(result):\\n    \\\"\\\"\\\"\\n    Formats the final API\\\n          \\ response.\\n    \\\"\\\"\\\"\\n    return {\\n        \\\"query\\\": {\\n          \\\n          \\  \\\"dimension\\\": result[\\\"dimension\\\"],\\n            \\\"dimension_value\\\"\\\n          : result[\\\"dimension_value\\\"],\\n            \\\"time_range_hours\\\": result[\\\"\\\n          time_range_hours\\\"]\\n        },\\n        \\\"summary\\\": result[\\\"summary\\\"\\\n          ],\\n        \\\"metrics\\\": result[\\\"metrics\\\"],\\n        \\\"query_timestamp\\\"\\\n          : result[\\\"query_timestamp\\\"]\\n    }\"\n      name: format-response\n      tables: []\n      topic_send: null\n    pipeline:\n    - validate-request\n    - query-metrics\n    - format-response\n  request:\n    method: GET\n    path: /api/v1/metrics/{dimension}\n  response:\n    body_selector:\n      on_error:\n        entrypoint: error_body\n        python: \"def error_body(error):\\n    return {\\n        \\\"success\\\": False,\\n\\\n          \\        \\\"error\\\": str(error),\\n        \\\"timestamp\\\": datetime.now(timezone.utc).isoformat()\\n\\\n          \\    }\\n\"\n      on_success:\n        entrypoint: success_body\n        python: \"def success_body(result):\\n    return {\\n        \\\"success\\\": True,\\n\\\n          \\        \\\"data\\\": result,\\n        \\\"timestamp\\\": result.get(\\\"query_timestamp\\\"\\\n          )\\n    }\\n\"\n    content_type: application/json\n    error_content_type: null\n    headers: {}\n    headers_selector: null\n    status_code: null\n    status_code_selector:\n      on_error:\n        entrypoint: error_status\n        python: \"def error_status(error):\\n    if \\\"not found\\\" in str(error).lower():\\n\\\n          \\        return 404\\n    return 500\\n\"\n      on_success:\n        entrypoint: success_status\n        python: \"def success_status(result):\\n    return 200\\n\"\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "79a1c99cd2aa8783"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "metrics-dashboard",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprWebView",
+     "app.kubernetes.io/part-of": "kaspr-metrics-dashboard",
+     "kaspr.io/app": "analytics-api",
+     "kaspr.io/component-type": "KasprWebView",
+     "kaspr.io/kind": "KasprWebView",
+     "kaspr.io/name": "metrics-dashboard-webview"
+    },
+    "name": "metrics-dashboard-webview",
+    "namespace": "legacy-rendering"
+   }
+  }
+ ],
+ "statefulSet": {
+  "apiVersion": "apps/v1",
+  "kind": "StatefulSet",
+  "metadata": {
+   "annotations": {
+    "kaspr.io/resource-hash": "4078e9dbdac8536c"
+   },
+   "labels": {},
+   "name": "analytics-api-app"
+  },
+  "spec": {
+   "persistentVolumeClaimRetentionPolicy": {
+    "whenDeleted": "Delete",
+    "whenScaled": "Retain"
+   },
+   "podManagementPolicy": "Parallel",
+   "selector": {
+    "matchLabels": {
+     "kaspr.io/cluster": "analytics-api",
+     "kaspr.io/kind": "KasprApp",
+     "kaspr.io/name": "analytics-api-app"
+    }
+   },
+   "serviceName": "analytics-api-app",
+   "template": {
+    "metadata": {
+     "annotations": {},
+     "labels": {
+      "app.kubernetes.io/instance": "analytics-api",
+      "app.kubernetes.io/managed-by": "kaspr-operator",
+      "app.kubernetes.io/name": "KasprApp",
+      "app.kubernetes.io/part-of": "kaspr-analytics-api",
+      "kaspr.io/app": "analytics-api",
+      "kaspr.io/cluster": "analytics-api",
+      "kaspr.io/component-type": "KasprApp",
+      "kaspr.io/kind": "KasprApp",
+      "kaspr.io/name": "analytics-api-app"
+     }
+    },
+    "spec": {
+     "containers": [
+      {
+       "env": [
+        {
+         "name": "K_APP_NAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_APP_NAME",
+           "name": "analytics-api-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_BOOTSTRAP_SERVERS",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_BOOTSTRAP_SERVERS",
+           "name": "analytics-api-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SECURITY_PROTOCOL",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SECURITY_PROTOCOL",
+           "name": "analytics-api-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SASL_MECHANISM",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SASL_MECHANISM",
+           "name": "analytics-api-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_USERNAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_AUTH_USERNAME",
+           "name": "analytics-api-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_PORT",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_WEB_PORT",
+           "name": "analytics-api-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DATA_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DATA_DIR",
+           "name": "analytics-api-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_TABLE_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_TABLE_DIR",
+           "name": "analytics-api-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DEFINITIONS_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DEFINITIONS_DIR",
+           "name": "analytics-api-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_PASSWORD",
+         "valueFrom": {
+          "secretKeyRef": {
+           "key": "password",
+           "name": "kafka-credentials"
+          }
+         }
+        },
+        {
+         "name": "K_CONSUMER_GROUP_INSTANCE_ID",
+         "valueFrom": {
+          "fieldRef": {
+           "apiVersion": "v1",
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "POD_NAME",
+         "valueFrom": {
+          "fieldRef": {
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_HOST",
+         "value": "$(POD_NAME).analytics-api-app.legacy-rendering.svc.cluster.local"
+        },
+        {
+         "name": "CONFIG_HASH",
+         "value": "d2acfab1a25f1047"
+        },
+        {
+         "name": "WEBVIEWS_HASH",
+         "value": "78cf67cd865391bb"
+        }
+       ],
+       "image": "kasprio/kaspr:0.11.31",
+       "imagePullPolicy": "IfNotPresent",
+       "name": "kaspr",
+       "ports": [
+        {
+         "containerPort": 6065,
+         "name": "http"
+        }
+       ],
+       "resources": {
+        "limits": {
+         "cpu": "500m",
+         "memory": "512Mi"
+        },
+        "requests": {
+         "cpu": "100m",
+         "memory": "256Mi"
+        }
+       },
+       "volumeMounts": [
+        {
+         "mountPath": "/var/lib/data/tables",
+         "name": "analytics-api-app-pv"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/metrics-dashboard-webview.yaml",
+         "name": "metrics-dashboard-webview",
+         "readOnly": true,
+         "subPath": "metrics-dashboard-webview.yaml"
+        }
+       ]
+      }
+     ],
+     "hostAliases": [],
+     "imagePullSecrets": [],
+     "serviceAccountName": "analytics-api-app",
+     "tolerations": [],
+     "topologySpreadConstraints": [],
+     "volumes": [
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "metrics-dashboard-webview.yaml",
+          "path": "metrics-dashboard-webview.yaml"
+         }
+        ],
+        "name": "metrics-dashboard-webview"
+       },
+       "name": "metrics-dashboard-webview"
+      }
+     ]
+    }
+   },
+   "updateStrategy": {
+    "type": "RollingUpdate"
+   },
+   "volumeClaimTemplates": [
+    {
+     "metadata": {
+      "annotations": {
+       "kaspr.io/resource-hash": "3404df862d9abf6b"
+      },
+      "name": "analytics-api-app-pv"
+     },
+     "spec": {
+      "accessModes": [
+       "ReadWriteOnce"
+      ],
+      "resources": {
+       "requests": {
+        "storage": "1Gi"
+       }
+      },
+      "storageClassName": "standard"
+     }
+    }
+   ]
+  }
+ }
+}

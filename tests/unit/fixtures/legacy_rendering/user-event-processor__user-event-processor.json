@@ -1,0 +1,288 @@
+{
+ "configMaps": [
+  {
+   "apiVersion": "v1",
+   "data": {
+    "event-enricher-agent.yaml": "agents:\n- description: 'Processes raw user events by enriching them with additional metadata,\n\n    normalizing data formats, and filtering out invalid events.\n\n    '\n  input:\n    channel: null\n    declare: null\n    take: null\n    topic:\n      compacting: null\n      config: null\n      deleting: null\n      key_serializer: null\n      name: raw-user-events\n      partitions: null\n      pattern: null\n      replicas: null\n      retention: null\n      value_serializer: null\n  isolated_partitions: null\n  name: event-enricher\n  noack: null\n  output:\n    topics:\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value[\\\"user_id\\\"]\\n\"\n      key_serializer: null\n      name: enriched-user-events\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value.get(\\\"is_valid\\\", False)\\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"enriched_event\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector: null\n      key_serializer: null\n      name: invalid-events-dlq\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return not value.get(\\\"is_valid\\\", True)\\n\"\n      replicas: null\n      retention: null\n      value_selector: null\n      value_serializer: null\n  processors:\n    init:\n      entrypoint: null\n      python: \"import json\\nfrom datetime import datetime, timezone\\nimport hashlib\\n\\\n        import re\\n\\napp = context[\\\"app\\\"]\\n\\n# Valid event types\\nVALID_EVENT_TYPES\\\n        \\ = {\\\"login\\\", \\\"logout\\\", \\\"page_view\\\", \\\"click\\\", \\\"purchase\\\", \\\"signup\\\"\\\n        }\\n\\n# Country code mapping\\nCOUNTRY_CODES = {\\n    \\\"US\\\": \\\"United States\\\"\\\n        ,\\n    \\\"CA\\\": \\\"Canada\\\", \\n    \\\"GB\\\": \\\"United Kingdom\\\",\\n    \\\"DE\\\":\\\n        \\ \\\"Germany\\\",\\n    \\\"FR\\\": \\\"France\\\",\\n    \\\"JP\\\": \\\"Japan\\\",\\n    \\\"AU\\\"\\\n        : \\\"Australia\\\"\\n}\\n\\ndef is_valid_email(email):\\n    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\\\\\\n        .[a-zA-Z]{2,}$'\\n    return re.match(pattern, email) is not None\\n\\ndef generate_session_id(user_id,\\\n        \\ timestamp):\\n    # Generate deterministic session ID based on user and hour\\n\\\n        \\    hour_key = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime(\\\"\\\n        %Y%m%d%H\\\")\\n    return hashlib.md5(f\\\"{user_id}_{hour_key}\\\".encode()).hexdigest()[:16]\\n\\\n        \\    \\n\"\n    operations:\n    - filter: null\n      map:\n        entrypoint: validate_event\n        python: \"def validate_event(value):\\n    \\\"\\\"\\\"\\n    Validates incoming user\\\n          \\ events for required fields and data quality.\\n    \\\"\\\"\\\"\\n    errors =\\\n          \\ []\\n    \\n    # Check required fields\\n    required_fields = [\\\"user_id\\\"\\\n          , \\\"event_type\\\", \\\"timestamp\\\"]\\n    for field in required_fields:\\n  \\\n          \\      if field not in value or value[field] is None:\\n            errors.append(f\\\"\\\n          Missing required field: {field}\\\")\\n    \\n    # Validate event type\\n  \\\n          \\  if value.get(\\\"event_type\\\") not in VALID_EVENT_TYPES:\\n        errors.append(f\\\"\\\n          Invalid event_type: {value.get('event_type')}\\\")\\n    \\n    # Validate email\\\n          \\ if present\\n    if \\\"email\\\" in value and not is_valid_email(value[\\\"\\\n          email\\\"]):\\n        errors.append(\\\"Invalid email format\\\")\\n    \\n    #\\\n          \\ Validate timestamp\\n    try:\\n        timestamp = float(value.get(\\\"timestamp\\\"\\\n          , 0))\\n        if timestamp <= 0:\\n            errors.append(\\\"Invalid timestamp\\\"\\\n          )\\n    except (ValueError, TypeError):\\n        errors.append(\\\"Timestamp\\\n          \\ must be a number\\\")\\n    \\n    is_valid = len(errors) == 0\\n    \\n   \\\n          \\ return {\\n        \\\"raw_event\\\": value,\\n        \\\"is_valid\\\": is_valid,\\n\\\n          \\        \\\"validation_errors\\\": errors,\\n        \\\"processed_at\\\": datetime.now(timezone.utc).isoformat()\\n\\\n          \\    }\\n    \\n\"\n      name: validate-event\n      tables: []\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: enrich_metadata\n        python: \"def enrich_metadata(value):\\n    \\\"\\\"\\\"\\n    Enriches valid events\\\n          \\ with additional metadata and computed fields.\\n    \\\"\\\"\\\"\\n    if not\\\n          \\ value[\\\"is_valid\\\"]:\\n        return value\\n    \\n    event = value[\\\"\\\n          raw_event\\\"]\\n    timestamp = float(event[\\\"timestamp\\\"])\\n    \\n    # Add\\\n          \\ session information\\n    session_id = generate_session_id(event[\\\"user_id\\\"\\\n          ], timestamp)\\n    \\n    # Enrich country information\\n    country_code\\\n          \\ = event.get(\\\"country_code\\\", \\\"UNKNOWN\\\")\\n    country_name = COUNTRY_CODES.get(country_code,\\\n          \\ \\\"Unknown\\\")\\n    \\n    # Add computed fields\\n    event_date = datetime.fromtimestamp(timestamp,\\\n          \\ tz=timezone.utc)\\n    \\n    enriched = {\\n        **event,\\n        \\\"\\\n          session_id\\\": session_id,\\n        \\\"country_name\\\": country_name,\\n   \\\n          \\     \\\"event_date\\\": event_date.date().isoformat(),\\n        \\\"event_hour\\\"\\\n          : event_date.hour,\\n        \\\"day_of_week\\\": event_date.strftime(\\\"%A\\\"\\\n          ),\\n        \\\"is_weekend\\\": event_date.weekday() >= 5,\\n        \\\"enrichment_version\\\"\\\n          : \\\"1.0\\\"\\n    }\\n    \\n    value[\\\"enriched_event\\\"] = enriched\\n    return\\\n          \\ value\\n    \\n\"\n      name: enrich-metadata\n      tables: []\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: normalize_data\n        python: \"def normalize_data(value):\\n    \\\"\\\"\\\"\\n    Normalizes data formats\\\n          \\ and ensures consistency across events.\\n    \\\"\\\"\\\"\\n    if not value[\\\"\\\n          is_valid\\\"]:\\n        return value\\n    \\n    event = value[\\\"enriched_event\\\"\\\n          ]\\n    \\n    # Normalize event_type to lowercase\\n    event[\\\"event_type\\\"\\\n          ] = event[\\\"event_type\\\"].lower()\\n    \\n    # Normalize email to lowercase\\n\\\n          \\    if \\\"email\\\" in event:\\n        event[\\\"email\\\"] = event[\\\"email\\\"\\\n          ].lower().strip()\\n    \\n    # Normalize country code to uppercase\\n   \\\n          \\ if \\\"country_code\\\" in event:\\n        event[\\\"country_code\\\"] = event[\\\"\\\n          country_code\\\"].upper()\\n    \\n    # Add standard metadata\\n    event[\\\"\\\n          processing_timestamp\\\"] = datetime.now(timezone.utc).isoformat()\\n    event[\\\"\\\n          event_schema_version\\\"] = \\\"2.0\\\"\\n    \\n    value[\\\"enriched_event\\\"] =\\\n          \\ event\\n    return value\"\n      name: normalize-data\n      tables: []\n      topic_send: null\n    pipeline:\n    - validate-event\n    - enrich-metadata\n    - normalize-data\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "235e64637b764c7a"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "event-enricher",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprAgent",
+     "app.kubernetes.io/part-of": "kaspr-event-enricher",
+     "kaspr.io/app": "user-event-processor",
+     "kaspr.io/component-type": "KasprAgent",
+     "kaspr.io/kind": "KasprAgent",
+     "kaspr.io/name": "event-enricher-agent"
+    },
+    "name": "event-enricher-agent",
+    "namespace": "legacy-rendering"
+   }
+  }
+ ],
+ "statefulSet": {
+  "apiVersion": "apps/v1",
+  "kind": "StatefulSet",
+  "metadata": {
+   "annotations": {
+    "kaspr.io/resource-hash": "26878a1e6c869d4c"
+   },
+   "labels": {},
+   "name": "user-event-processor-app"
+  },
+  "spec": {
+   "persistentVolumeClaimRetentionPolicy": {
+    "whenDeleted": "Delete",
+    "whenScaled": "Retain"
+   },
+   "podManagementPolicy": "Parallel",
+   "selector": {
+    "matchLabels": {
+     "kaspr.io/cluster": "user-event-processor",
+     "kaspr.io/kind": "KasprApp",
+     "kaspr.io/name": "user-event-processor-app"
+    }
+   },
+   "serviceName": "user-event-processor-app",
+   "template": {
+    "metadata": {
+     "annotations": {},
+     "labels": {
+      "app.kubernetes.io/instance": "user-event-processor",
+      "app.kubernetes.io/managed-by": "kaspr-operator",
+      "app.kubernetes.io/name": "KasprApp",
+      "app.kubernetes.io/part-of": "kaspr-user-event-processor",
+      "kaspr.io/app": "user-event-processor",
+      "kaspr.io/cluster": "user-event-processor",
+      "kaspr.io/component-type": "KasprApp",
+      "kaspr.io/kind": "KasprApp",
+      "kaspr.io/name": "user-event-processor-app"
+     }
+    },
+    "spec": {
+     "containers": [
+      {
+       "env": [
+        {
+         "name": "K_AUTO.OFFSET.RESET",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_AUTO.OFFSET.RESET",
+           "name": "user-event-processor-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_APP_NAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_APP_NAME",
+           "name": "user-event-processor-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_BOOTSTRAP_SERVERS",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_BOOTSTRAP_SERVERS",
+           "name": "user-event-processor-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SECURITY_PROTOCOL",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SECURITY_PROTOCOL",
+           "name": "user-event-processor-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SASL_MECHANISM",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SASL_MECHANISM",
+           "name": "user-event-processor-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_USERNAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_AUTH_USERNAME",
+           "name": "user-event-processor-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_PORT",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_WEB_PORT",
+           "name": "user-event-processor-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DATA_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DATA_DIR",
+           "name": "user-event-processor-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_TABLE_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_TABLE_DIR",
+           "name": "user-event-processor-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DEFINITIONS_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DEFINITIONS_DIR",
+           "name": "user-event-processor-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_PASSWORD",
+         "valueFrom": {
+          "secretKeyRef": {
+           "key": "password",
+           "name": "kafka-credentials"
+          }
+         }
+        },
+        {
+         "name": "K_CONSUMER_GROUP_INSTANCE_ID",
+         "valueFrom": {
+          "fieldRef": {
+           "apiVersion": "v1",
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "POD_NAME",
+         "valueFrom": {
+          "fieldRef": {
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_HOST",
+         "value": "$(POD_NAME).user-event-processor-app.legacy-rendering.svc.cluster.local"
+        },
+        {
+         "name": "CONFIG_HASH",
+         "value": "4c9199a226745a44"
+        },
+        {
+         "name": "AGENTS_HASH",
+         "value": "32bdcb927b7af665"
+        },
+        {
+         "name": "LOG_LEVEL",
+         "value": "INFO"
+        },
+        {
+         "name": "ENABLE_METRICS",
+         "value": "true"
+        }
+       ],
+       "image": "kasprio/kaspr:0.11.31",
+       "imagePullPolicy": "IfNotPresent",
+       "name": "kaspr",
+       "ports": [
+        {
+         "containerPort": 6065,
+         "name": "http"
+        }
+       ],
+       "resources": {
+        "limits": {
+         "cpu": "500m",
+         "memory": "512Mi"
+        },
+        "requests": {
+         "cpu": "100m",
+         "memory": "256Mi"
+        }
+       },
+       "volumeMounts": [
+        {
+         "mountPath": "/var/lib/data/tables",
+         "name": "user-event-processor-app-pv"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/event-enricher-agent.yaml",
+         "name": "event-enricher-agent",
+         "readOnly": true,
+         "subPath": "event-enricher-agent.yaml"
+        }
+       ]
+      }
+     ],
+     "hostAliases": [],
+     "imagePullSecrets": [],
+     "serviceAccountName": "user-event-processor-app",
+     "tolerations": [],
+     "topologySpreadConstraints": [],
+     "volumes": [
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "event-enricher-agent.yaml",
+          "path": "event-enricher-agent.yaml"
+         }
+        ],
+        "name": "event-enricher-agent"
+       },
+       "name": "event-enricher-agent"
+      }
+     ]
+    }
+   },
+   "updateStrategy": {
+    "type": "RollingUpdate"
+   },
+   "volumeClaimTemplates": [
+    {
+     "metadata": {
+      "annotations": {
+       "kaspr.io/resource-hash": "b6ae6963cac820b1"
+      },
+      "name": "user-event-processor-app-pv"
+     },
+     "spec": {
+      "accessModes": [
+       "ReadWriteOnce"
+      ],
+      "resources": {
+       "requests": {
+        "storage": "1Gi"
+       }
+      },
+      "storageClassName": "standard"
+     }
+    }
+   ]
+  }
+ }
+}

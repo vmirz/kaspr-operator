@@ -1000,6 +1000,8 @@ class FakeComponent:
     cluster = "agent-1"
     config_map_name = "agent-1-agent"
     hash = "hash-1"
+    WRITES_CONFIG_MAP = True
+    definitions_status = BaseAppComponent.definitions_status
 
     def __init__(self):
         self.synced = 0

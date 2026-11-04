@@ -60,6 +60,9 @@ def test_attach_app_related_resources_uses_task_schema(monkeypatch):
         def with_tasks(self, tasks):
             self.tasks = tasks
 
+        def with_joins(self, joins):
+            self.joins = joins
+
     class FakeTaskSchema:
         def load(self, value):
             seen["task_spec"] = value
@@ -450,8 +453,18 @@ def test_on_create_requests_reconciliation(monkeypatch):
     class FakeApp:
         reconciliation_paused = False
         pod_selector = "kaspr.io/cluster=test-app"
+        apps_v1_api = None
+        stateful_set_name = "test-app-app"
+        definitions_delivery = "components"
 
-        async def create(self):
+        async def fetch_stateful_set(self, api, name, namespace):
+            calls.append("fetch_stateful_set")
+            return None
+
+        def resolve_definitions_delivery(self, stateful_set):
+            calls.append("resolve_definitions_delivery")
+
+        async def create(self, stateful_set=None):
             calls.append("create")
 
     async def fake_attach(app, name, namespace, related=None):
@@ -483,9 +496,12 @@ def test_on_create_requests_reconciliation(monkeypatch):
         )
     )
 
-    # Components must be attached before create so the first pod template mounts them.
+    # Components must be attached, and their delivery mode chosen, before create so the
+    # first pod template mounts them.
     assert calls == [
         ("attach", "test-app", "test-namespace"),
+        "fetch_stateful_set",
+        "resolve_definitions_delivery",
         "create",
         ("request_reconciliation", "test-app", "test-namespace"),
     ]
@@ -496,14 +512,26 @@ def test_reconcile_attaches_components_before_synchronize(monkeypatch):
 
     class FakeApp:
         reconciliation_paused = False
-        agents, webviews, tables, tasks = [], [], [], []
+        agents, webviews, tables, tasks, joins = [], [], [], [], []
         stateful_set = object()
         vpa_condition = None
+        apps_v1_api = None
+        stateful_set_name = "test-app-app"
+        definitions_delivery = "components"
+        desired_definitions_config_maps = set()
+
+        async def fetch_stateful_set(self, api, name, namespace):
+            calls.append("fetch_stateful_set")
+            return None
+
+        def resolve_definitions_delivery(self, stateful_set):
+            calls.append("resolve_definitions_delivery")
+            return handler.Delivery("components", None, "default")
 
         async def sync_component_config_maps(self):
             calls.append("sync_component_config_maps")
 
-        async def synchronize(self):
+        async def synchronize(self, stateful_set=None):
             calls.append("synchronize")
 
         def prepare_statefulset_fingerprint(self, stateful_set):
@@ -547,10 +575,13 @@ def test_reconcile_attaches_components_before_synchronize(monkeypatch):
         )
     )
 
-    # Definitions are synced before the StatefulSet that rolls pods mounting them.
+    # The delivery mode is chosen, and definitions are synced, before the StatefulSet
+    # that rolls pods mounting them.
     assert calls == [
         "fetch",
         "attach",
+        "fetch_stateful_set",
+        "resolve_definitions_delivery",
         "sync_component_config_maps",
         "synchronize",
         "update_status",

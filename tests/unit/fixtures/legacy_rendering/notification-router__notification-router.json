@@ -1,0 +1,325 @@
+{
+ "configMaps": [
+  {
+   "apiVersion": "v1",
+   "data": {
+    "notification-fanout-agent.yaml": "agents:\n- description: 'Demonstrates fan-out capability by taking a single notification request\n    and\n\n    generating multiple targeted notifications based on user preferences, device types,\n\n    and delivery channels. Implements rate limiting and preference checking.\n\n    '\n  input:\n    channel: null\n    declare: null\n    take: null\n    topic:\n      compacting: null\n      config: null\n      deleting: null\n      key_serializer: null\n      name: notification-requests\n      partitions: null\n      pattern: null\n      replicas: null\n      retention: null\n      value_serializer: null\n  isolated_partitions: null\n  name: notification-fanout\n  noack: null\n  output:\n    topics:\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return f\\\"{value['user_id']}:{value['notification_id']}\\\"\\\n          \\n\"\n      key_serializer: null\n      name: email-notifications\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value[\\\"channel\\\"] == \\\"email\\\"\\\n          \\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"notification\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return f\\\"{value['user_id']}:{value['notification_id']}\\\"\\\n          \\n\"\n      key_serializer: null\n      name: push-notifications\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value[\\\"channel\\\"] == \\\"push\\\"\\\n          \\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"notification\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return f\\\"{value['user_id']}:{value['notification_id']}\\\"\\\n          \\n\"\n      key_serializer: null\n      name: sms-notifications\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value[\\\"channel\\\"] == \\\"sms\\\"\\\n          \\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"notification\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return f\\\"{value['user_id']}:{value['notification_id']}\\\"\\\n          \\n\"\n      key_serializer: null\n      name: in-app-notifications\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value[\\\"channel\\\"] == \\\"in_app\\\"\\\n          \\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"notification\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value[\\\"analytics_key\\\"]\\n\"\n      key_serializer: null\n      name: notification-analytics\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return \\\"analytics_data\\\" in value\\n\\\n          \\    \\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"analytics_data\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value[\\\"user_id\\\"]\\n\"\n      key_serializer: null\n      name: rate-limit-violations\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value.get(\\\"rate_limited\\\", False)\\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"rate_limit_info\\\"]\\n\"\n      value_serializer: null\n  processors:\n    init:\n      entrypoint: null\n      python: \"from datetime import datetime, timezone, timedelta\\nimport uuid\\nimport\\\n        \\ os\\nfrom collections import defaultdict\\n\\napp = context[\\\"app\\\"]\\n\\n# Configuration\\n\\\n        MAX_NOTIFICATIONS_PER_USER = int(os.getenv(\\\"MAX_NOTIFICATIONS_PER_USER\\\"\\\n        , \\\"5\\\"))\\nNOTIFICATION_WINDOW_HOURS = int(os.getenv(\\\"NOTIFICATION_WINDOW_HOURS\\\"\\\n        , \\\"1\\\"))\\n\\n# Default user preferences\\nDEFAULT_PREFERENCES = {\\n    \\\"email\\\"\\\n        : {\\\"enabled\\\": True, \\\"frequency\\\": \\\"immediate\\\"},\\n    \\\"push\\\": {\\\"enabled\\\"\\\n        : True, \\\"frequency\\\": \\\"immediate\\\"},\\n    \\\"sms\\\": {\\\"enabled\\\": False,\\\n        \\ \\\"frequency\\\": \\\"daily_digest\\\"},\\n    \\\"in_app\\\": {\\\"enabled\\\": True, \\\"\\\n        frequency\\\": \\\"immediate\\\"}\\n}\\n\\n# Notification priority levels\\nPRIORITY_LEVELS\\\n        \\ = {\\n    \\\"critical\\\": 1,\\n    \\\"high\\\": 2,\\n    \\\"normal\\\": 3,\\n    \\\"\\\n        low\\\": 4\\n}\\n\\ndef should_send_channel(preferences, channel, notification_type,\\\n        \\ priority):\\n    \\\"\\\"\\\"Determine if notification should be sent on a specific\\\n        \\ channel.\\\"\\\"\\\"\\n    channel_prefs = preferences.get(channel, {})\\n    \\n\\\n        \\    if not channel_prefs.get(\\\"enabled\\\", False):\\n        return False\\n\\\n        \\    \\n    # Critical notifications always go through if channel is enabled\\n\\\n        \\    if priority == \\\"critical\\\":\\n        return True\\n    \\n    # Check\\\n        \\ notification type preferences\\n    type_prefs = channel_prefs.get(\\\"notification_types\\\"\\\n        , {})\\n    if notification_type in type_prefs:\\n        return type_prefs[notification_type]\\n\\\n        \\    \\n    # Default based on frequency setting\\n    frequency = channel_prefs.get(\\\"\\\n        frequency\\\", \\\"immediate\\\")\\n    if frequency == \\\"disabled\\\":\\n        return\\\n        \\ False\\n    elif frequency == \\\"immediate\\\":\\n        return True\\n    elif\\\n        \\ frequency == \\\"daily_digest\\\" and priority in [\\\"critical\\\", \\\"high\\\"]:\\n\\\n        \\        return True\\n    \\n    return False\\n\\ndef is_within_rate_limit(sent_notifications,\\\n        \\ max_count, window_hours):\\n    \\\"\\\"\\\"Check if user is within rate limit.\\\"\\\n        \\\"\\\"\\n    if not sent_notifications:\\n        return True\\n    \\n    cutoff_time\\\n        \\ = datetime.now(timezone.utc) - timedelta(hours=window_hours)\\n    recent_notifications\\\n        \\ = [\\n        notif for notif in sent_notifications \\n        if datetime.fromisoformat(notif[\\\"\\\n        sent_at\\\"]) > cutoff_time\\n    ]\\n    \\n    return len(recent_notifications)\\\n        \\ < max_count\\n    \\n\"\n    operations:\n    - filter: null\n      map:\n        entrypoint: parse_request\n        python: \"def parse_request(value):\\n    \\\"\\\"\\\"\\n    Parses and validates the\\\n          \\ incoming notification request.\\n    \\\"\\\"\\\"\\n    required_fields = [\\\"\\\n          user_id\\\", \\\"message\\\", \\\"notification_type\\\"]\\n    for field in required_fields:\\n\\\n          \\        if field not in value:\\n            raise ValueError(f\\\"Missing\\\n          \\ required field: {field}\\\")\\n    \\n    # Generate unique notification ID\\n\\\n          \\    notification_id = str(uuid.uuid4())\\n    \\n    return {\\n        \\\"\\\n          notification_id\\\": notification_id,\\n        \\\"user_id\\\": value[\\\"user_id\\\"\\\n          ],\\n        \\\"message\\\": value[\\\"message\\\"],\\n        \\\"notification_type\\\"\\\n          : value[\\\"notification_type\\\"],\\n        \\\"priority\\\": value.get(\\\"priority\\\"\\\n          , \\\"normal\\\"),\\n        \\\"title\\\": value.get(\\\"title\\\", \\\"Notification\\\"\\\n          ),\\n        \\\"data\\\": value.get(\\\"data\\\", {}),\\n        \\\"sender\\\": value.get(\\\"\\\n          sender\\\", \\\"system\\\"),\\n        \\\"expires_at\\\": value.get(\\\"expires_at\\\"\\\n          ),\\n        \\\"request_timestamp\\\": datetime.now(timezone.utc).isoformat(),\\n\\\n          \\        \\\"original_request\\\": value\\n    }\\n    \\n\"\n      name: parse-notification-request\n      tables: []\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: check_preferences\n        python: \"def check_preferences(request, preferences_table):\\n    \\\"\\\"\\\"\\n\\\n          \\    Looks up user notification preferences.\\n    \\\"\\\"\\\"\\n    user_id =\\\n          \\ request[\\\"user_id\\\"]\\n    user_prefs = preferences_table.get(user_id,\\\n          \\ {\\n        \\\"preferences\\\": DEFAULT_PREFERENCES,\\n        \\\"timezone\\\"\\\n          : \\\"UTC\\\",\\n        \\\"created_at\\\": datetime.now(timezone.utc).isoformat(),\\n\\\n          \\        \\\"sent_notifications\\\": []\\n    })\\n    \\n    return {\\n      \\\n          \\  **request,\\n        \\\"user_preferences\\\": user_prefs\\n    }\\n    \\n\"\n      name: check-user-preferences\n      tables:\n      - name: user-preferences\n        param_name: preferences_table\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: apply_rate_limiting\n        python: \"def apply_rate_limiting(request, preferences_table):\\n    \\\"\\\"\\\"\\n\\\n          \\    Applies rate limiting rules and updates user notification history.\\n\\\n          \\    \\\"\\\"\\\"\\n    user_id = request[\\\"user_id\\\"]\\n    user_prefs = request[\\\"\\\n          user_preferences\\\"]\\n    priority = request[\\\"priority\\\"]\\n    \\n    # Critical\\\n          \\ notifications bypass rate limiting\\n    if priority == \\\"critical\\\":\\n\\\n          \\        return {**request, \\\"rate_limited\\\": False}\\n    \\n    # Check\\\n          \\ rate limit\\n    sent_notifications = user_prefs.get(\\\"sent_notifications\\\"\\\n          , [])\\n    within_limit = is_within_rate_limit(\\n        sent_notifications,\\\n          \\ \\n        MAX_NOTIFICATIONS_PER_USER, \\n        NOTIFICATION_WINDOW_HOURS\\n\\\n          \\    )\\n    \\n    if not within_limit:\\n        # Log rate limit violation\\n\\\n          \\        return {\\n            **request,\\n            \\\"rate_limited\\\"\\\n          : True,\\n            \\\"rate_limit_info\\\": {\\n                \\\"user_id\\\"\\\n          : user_id,\\n                \\\"notification_id\\\": request[\\\"notification_id\\\"\\\n          ],\\n                \\\"reason\\\": \\\"exceeded_hourly_limit\\\",\\n           \\\n          \\     \\\"max_allowed\\\": MAX_NOTIFICATIONS_PER_USER,\\n                \\\"window_hours\\\"\\\n          : NOTIFICATION_WINDOW_HOURS,\\n                \\\"timestamp\\\": datetime.now(timezone.utc).isoformat()\\n\\\n          \\            }\\n        }\\n    \\n    return {**request, \\\"rate_limited\\\"\\\n          : False}\\n    \\n\"\n      name: apply-rate-limiting\n      tables:\n      - name: user-preferences\n        param_name: preferences_table\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: generate_notifications\n        python: \"def generate_notifications(request, preferences_table):\\n    \\\"\\\"\\\n          \\\"\\n    Fan-out: Generate multiple targeted notifications for different\\\n          \\ channels.\\n    This is where the fan-out happens - one input produces\\\n          \\ multiple outputs.\\n    \\\"\\\"\\\"\\n    if request.get(\\\"rate_limited\\\", False):\\n\\\n          \\        # Only yield rate limit violation, no notifications\\n        yield\\\n          \\ request\\n        return\\n    \\n    user_id = request[\\\"user_id\\\"]\\n  \\\n          \\  notification_id = request[\\\"notification_id\\\"]\\n    user_prefs = request[\\\"\\\n          user_preferences\\\"]\\n    preferences = user_prefs[\\\"preferences\\\"]\\n   \\\n          \\ \\n    # Track which notifications we're sending\\n    sent_channels = []\\n\\\n          \\    \\n    # Generate notification for each enabled channel\\n    for channel\\\n          \\ in [\\\"email\\\", \\\"push\\\", \\\"sms\\\", \\\"in_app\\\"]:\\n        should_send =\\\n          \\ should_send_channel(\\n            preferences, \\n            channel,\\\n          \\ \\n            request[\\\"notification_type\\\"], \\n            request[\\\"\\\n          priority\\\"]\\n        )\\n        \\n        if should_send:\\n            #\\\n          \\ Create channel-specific notification\\n            notification = {\\n \\\n          \\               \\\"notification_id\\\": notification_id,\\n                \\\"\\\n          user_id\\\": user_id,\\n                \\\"channel\\\": channel,\\n           \\\n          \\     \\\"title\\\": request[\\\"title\\\"],\\n                \\\"message\\\": request[\\\"\\\n          message\\\"],\\n                \\\"notification_type\\\": request[\\\"notification_type\\\"\\\n          ],\\n                \\\"priority\\\": request[\\\"priority\\\"],\\n             \\\n          \\   \\\"data\\\": request[\\\"data\\\"],\\n                \\\"sender\\\": request[\\\"\\\n          sender\\\"],\\n                \\\"expires_at\\\": request.get(\\\"expires_at\\\"),\\n\\\n          \\                \\\"created_at\\\": request[\\\"request_timestamp\\\"],\\n     \\\n          \\           \\\"delivery_timestamp\\\": datetime.now(timezone.utc).isoformat(),\\n\\\n          \\                \\n                # Channel-specific formatting\\n     \\\n          \\           \\\"channel_config\\\": preferences[channel]\\n            }\\n  \\\n          \\          \\n            # Add channel-specific content\\n            if\\\n          \\ channel == \\\"email\\\":\\n                notification.update({\\n       \\\n          \\             \\\"subject\\\": request[\\\"title\\\"],\\n                    \\\"html_body\\\"\\\n          : f\\\"<p>{request['message']}</p>\\\",\\n                    \\\"text_body\\\":\\\n          \\ request[\\\"message\\\"]\\n                })\\n            elif channel ==\\\n          \\ \\\"sms\\\":\\n                # Truncate for SMS\\n                notification[\\\"\\\n          message\\\"] = request[\\\"message\\\"][:160]\\n            elif channel == \\\"\\\n          push\\\":\\n                notification.update({\\n                    \\\"badge_count\\\"\\\n          : 1,\\n                    \\\"sound\\\": \\\"default\\\" if request[\\\"priority\\\"\\\n          ] in [\\\"critical\\\", \\\"high\\\"] else None\\n                })\\n          \\\n          \\  \\n            sent_channels.append(channel)\\n            \\n         \\\n          \\   yield {\\n                \\\"user_id\\\": user_id,\\n                \\\"notification_id\\\"\\\n          : notification_id,\\n                \\\"channel\\\": channel,\\n            \\\n          \\    \\\"notification\\\": notification\\n            }\\n    \\n    # Update user's\\\n          \\ notification history\\n    if sent_channels:\\n        updated_prefs = {**user_prefs}\\n\\\n          \\        sent_notifications = updated_prefs.get(\\\"sent_notifications\\\",\\\n          \\ [])\\n        sent_notifications.append({\\n            \\\"notification_id\\\"\\\n          : notification_id,\\n            \\\"sent_at\\\": datetime.now(timezone.utc).isoformat(),\\n\\\n          \\            \\\"channels\\\": sent_channels,\\n            \\\"notification_type\\\"\\\n          : request[\\\"notification_type\\\"],\\n            \\\"priority\\\": request[\\\"\\\n          priority\\\"]\\n        })\\n        \\n        # Keep only recent notifications\\\n          \\ for rate limiting\\n        cutoff_time = datetime.now(timezone.utc) -\\\n          \\ timedelta(days=7)\\n        updated_prefs[\\\"sent_notifications\\\"] = [\\n\\\n          \\            notif for notif in sent_notifications[-100:]  # Keep last 100\\n\\\n          \\            if datetime.fromisoformat(notif[\\\"sent_at\\\"]) > cutoff_time\\n\\\n          \\        ]\\n        \\n        preferences_table[user_id] = updated_prefs\\n\\\n          \\    \\n\"\n      name: generate-targeted-notifications\n      tables:\n      - name: user-preferences\n        param_name: preferences_table\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: track_analytics\n        python: \"def track_analytics(notification_data):\\n    \\\"\\\"\\\"\\n    Generate\\\n          \\ analytics data for notification delivery tracking.\\n    \\\"\\\"\\\"\\n    if\\\n          \\ notification_data.get(\\\"rate_limited\\\", False):\\n        return notification_data\\\n          \\  # Pass through rate limit violations\\n    \\n    if \\\"notification\\\" in\\\n          \\ notification_data:\\n        # This is a notification delivery\\n      \\\n          \\  notif = notification_data[\\\"notification\\\"]\\n        \\n        analytics_data\\\n          \\ = {\\n            \\\"event_type\\\": \\\"notification_sent\\\",\\n            \\\"\\\n          notification_id\\\": notif[\\\"notification_id\\\"],\\n            \\\"user_id\\\"\\\n          : notif[\\\"user_id\\\"],\\n            \\\"channel\\\": notif[\\\"channel\\\"],\\n  \\\n          \\          \\\"notification_type\\\": notif[\\\"notification_type\\\"],\\n      \\\n          \\      \\\"priority\\\": notif[\\\"priority\\\"],\\n            \\\"sender\\\": notif[\\\"\\\n          sender\\\"],\\n            \\\"timestamp\\\": notif[\\\"delivery_timestamp\\\"],\\n\\\n          \\            \\\"metadata\\\": {\\n                \\\"has_expiry\\\": bool(notif.get(\\\"\\\n          expires_at\\\")),\\n                \\\"has_custom_data\\\": bool(notif.get(\\\"\\\n          data\\\"))\\n            }\\n        }\\n        \\n        return {\\n       \\\n          \\     **notification_data,\\n            \\\"analytics_key\\\": f\\\"notification_analytics:{notif['notification_type']}:{notif['channel']}\\\"\\\n          ,\\n            \\\"analytics_data\\\": analytics_data\\n        }\\n    \\n   \\\n          \\ return notification_data\"\n      name: track-analytics\n      tables: []\n      topic_send: null\n    pipeline:\n    - parse-notification-request\n    - check-user-preferences\n    - apply-rate-limiting\n    - generate-targeted-notifications\n    - track-analytics\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "5af5cd4c5230c050"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "notification-fanout",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprAgent",
+     "app.kubernetes.io/part-of": "kaspr-notification-fanout",
+     "kaspr.io/app": "notification-router",
+     "kaspr.io/component-type": "KasprAgent",
+     "kaspr.io/kind": "KasprAgent",
+     "kaspr.io/name": "notification-fanout-agent"
+    },
+    "name": "notification-fanout-agent",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "user-preferences-table.yaml": "tables:\n- default_selector: null\n  description: 'Stores user notification preferences and rate limiting information.\n\n    Updated when users change their preferences or when notifications are sent.\n\n    '\n  extra_topic_configs: {}\n  global: false\n  key_serializer: json\n  name: user-preferences\n  options: {}\n  partitions: 8\n  value_serializer: json\n  window: null\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "967fd34eddf49c99"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "user-preferences",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprTable",
+     "app.kubernetes.io/part-of": "kaspr-user-preferences",
+     "kaspr.io/app": "notification-router",
+     "kaspr.io/component-type": "KasprTable",
+     "kaspr.io/kind": "KasprTable",
+     "kaspr.io/name": "user-preferences-table"
+    },
+    "name": "user-preferences-table",
+    "namespace": "legacy-rendering"
+   }
+  }
+ ],
+ "statefulSet": {
+  "apiVersion": "apps/v1",
+  "kind": "StatefulSet",
+  "metadata": {
+   "annotations": {
+    "kaspr.io/resource-hash": "0bb5117b09733f5b"
+   },
+   "labels": {},
+   "name": "notification-router-app"
+  },
+  "spec": {
+   "persistentVolumeClaimRetentionPolicy": {
+    "whenDeleted": "Delete",
+    "whenScaled": "Retain"
+   },
+   "podManagementPolicy": "Parallel",
+   "selector": {
+    "matchLabels": {
+     "kaspr.io/cluster": "notification-router",
+     "kaspr.io/kind": "KasprApp",
+     "kaspr.io/name": "notification-router-app"
+    }
+   },
+   "serviceName": "notification-router-app",
+   "template": {
+    "metadata": {
+     "annotations": {},
+     "labels": {
+      "app.kubernetes.io/instance": "notification-router",
+      "app.kubernetes.io/managed-by": "kaspr-operator",
+      "app.kubernetes.io/name": "KasprApp",
+      "app.kubernetes.io/part-of": "kaspr-notification-router",
+      "kaspr.io/app": "notification-router",
+      "kaspr.io/cluster": "notification-router",
+      "kaspr.io/component-type": "KasprApp",
+      "kaspr.io/kind": "KasprApp",
+      "kaspr.io/name": "notification-router-app"
+     }
+    },
+    "spec": {
+     "containers": [
+      {
+       "env": [
+        {
+         "name": "K_APP_NAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_APP_NAME",
+           "name": "notification-router-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_BOOTSTRAP_SERVERS",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_BOOTSTRAP_SERVERS",
+           "name": "notification-router-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SECURITY_PROTOCOL",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SECURITY_PROTOCOL",
+           "name": "notification-router-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SASL_MECHANISM",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SASL_MECHANISM",
+           "name": "notification-router-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_USERNAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_AUTH_USERNAME",
+           "name": "notification-router-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_PORT",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_WEB_PORT",
+           "name": "notification-router-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DATA_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DATA_DIR",
+           "name": "notification-router-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_TABLE_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_TABLE_DIR",
+           "name": "notification-router-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DEFINITIONS_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DEFINITIONS_DIR",
+           "name": "notification-router-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_PASSWORD",
+         "valueFrom": {
+          "secretKeyRef": {
+           "key": "password",
+           "name": "kafka-credentials"
+          }
+         }
+        },
+        {
+         "name": "K_CONSUMER_GROUP_INSTANCE_ID",
+         "valueFrom": {
+          "fieldRef": {
+           "apiVersion": "v1",
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "POD_NAME",
+         "valueFrom": {
+          "fieldRef": {
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_HOST",
+         "value": "$(POD_NAME).notification-router-app.legacy-rendering.svc.cluster.local"
+        },
+        {
+         "name": "CONFIG_HASH",
+         "value": "9d69601825be055a"
+        },
+        {
+         "name": "AGENTS_HASH",
+         "value": "ed7ed813cf058c3a"
+        },
+        {
+         "name": "TABLES_HASH",
+         "value": "ab99010415bc1944"
+        },
+        {
+         "name": "MAX_NOTIFICATIONS_PER_USER",
+         "value": "5"
+        },
+        {
+         "name": "NOTIFICATION_WINDOW_HOURS",
+         "value": "1"
+        }
+       ],
+       "image": "kasprio/kaspr:0.11.31",
+       "imagePullPolicy": "IfNotPresent",
+       "name": "kaspr",
+       "ports": [
+        {
+         "containerPort": 6065,
+         "name": "http"
+        }
+       ],
+       "resources": {
+        "limits": {
+         "cpu": "750m",
+         "memory": "768Mi"
+        },
+        "requests": {
+         "cpu": "150m",
+         "memory": "384Mi"
+        }
+       },
+       "volumeMounts": [
+        {
+         "mountPath": "/var/lib/data/tables",
+         "name": "notification-router-app-pv"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/notification-fanout-agent.yaml",
+         "name": "notification-fanout-agent",
+         "readOnly": true,
+         "subPath": "notification-fanout-agent.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/user-preferences-table.yaml",
+         "name": "user-preferences-table",
+         "readOnly": true,
+         "subPath": "user-preferences-table.yaml"
+        }
+       ]
+      }
+     ],
+     "hostAliases": [],
+     "imagePullSecrets": [],
+     "serviceAccountName": "notification-router-app",
+     "tolerations": [],
+     "topologySpreadConstraints": [],
+     "volumes": [
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "notification-fanout-agent.yaml",
+          "path": "notification-fanout-agent.yaml"
+         }
+        ],
+        "name": "notification-fanout-agent"
+       },
+       "name": "notification-fanout-agent"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "user-preferences-table.yaml",
+          "path": "user-preferences-table.yaml"
+         }
+        ],
+        "name": "user-preferences-table"
+       },
+       "name": "user-preferences-table"
+      }
+     ]
+    }
+   },
+   "updateStrategy": {
+    "type": "RollingUpdate"
+   },
+   "volumeClaimTemplates": [
+    {
+     "metadata": {
+      "annotations": {
+       "kaspr.io/resource-hash": "1f8690c86ed3f1d0"
+      },
+      "name": "notification-router-app-pv"
+     },
+     "spec": {
+      "accessModes": [
+       "ReadWriteOnce"
+      ],
+      "resources": {
+       "requests": {
+        "storage": "2Gi"
+       }
+      },
+      "storageClassName": "standard"
+     }
+    }
+   ]
+  }
+ }
+}

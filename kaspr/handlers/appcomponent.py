@@ -5,6 +5,7 @@ import logging
 from logging import Logger
 from kaspr.resources import KasprApp
 from kaspr.resources.appcomponent import BaseAppComponent
+from kaspr.resources.definitions import app_delivers_bundles
 from kaspr.handlers.kasprapp import APP_FOUND, APP_NOT_FOUND
 
 
@@ -31,8 +32,11 @@ async def reconcile_component(
     """Sync a component's config map and report whether its KasprApp exists.
 
     The component's KasprApp is reconciled separately when the component changes
-    (see kasprapp.notify_component_event), since it mounts the config map.
-    Only status fields that changed are patched.
+    (see kasprapp.notify_component_event), since it mounts the config map. A
+    component of an app that delivers bundles has no config map of its own: the app
+    writes it into a bundle. Only status fields that changed are patched.
+
+    Returns whether the component's app delivers bundles.
     """
     sensor = getattr(BaseAppComponent, "sensor", None)
     trigger_source = getattr(reason, "value", reason) or "event"
@@ -46,7 +50,9 @@ async def reconcile_component(
     try:
         component.validate()
         app = await KasprApp.default().fetch(component.app_name, namespace)
-        await component.synchronize()
+        bundled = app_delivers_bundles(app)
+        if component.WRITES_CONFIG_MAP and not bundled:
+            await component.synchronize()
 
         current = status or {}
         desired = {
@@ -54,7 +60,7 @@ async def reconcile_component(
                 "name": component.app_name,
                 "status": APP_FOUND if app else APP_NOT_FOUND,
             },
-            "configMap": component.config_map_name,
+            **component.definitions_status(bundled),
             "hash": component.hash,
         }
         patch.status.update(
@@ -84,3 +90,4 @@ async def reconcile_component(
             sensor.on_reconcile_complete(
                 component.app_name, component.cluster, namespace, sensor_state, success, error
             )
+    return bundled

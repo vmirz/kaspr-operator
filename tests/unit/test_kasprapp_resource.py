@@ -313,7 +313,7 @@ def test_create_syncs_hpa_before_stateful_set(monkeypatch, kasprapp_without_pack
     )
     monkeypatch.setattr(kasprapp_without_packages, "sync_hpa", lambda: record("hpa"))
     monkeypatch.setattr(
-        kasprapp_without_packages, "sync_stateful_set", lambda: record("stateful_set")
+        kasprapp_without_packages, "sync_stateful_set", lambda *_: record("stateful_set")
     )
 
     import asyncio
@@ -357,7 +357,7 @@ def test_synchronize_unites_before_syncing_children(monkeypatch, kasprapp_withou
     )
     monkeypatch.setattr(kasprapp_without_packages, "sync_hpa", lambda: record("hpa"))
     monkeypatch.setattr(
-        kasprapp_without_packages, "sync_stateful_set", lambda: record("stateful_set")
+        kasprapp_without_packages, "sync_stateful_set", lambda *_: record("stateful_set")
     )
     monkeypatch.setattr(kasprapp_without_packages, "sync_vpa", lambda: record("vpa"))
 

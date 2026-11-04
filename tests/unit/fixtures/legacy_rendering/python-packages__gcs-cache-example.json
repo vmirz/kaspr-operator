@@ -1,0 +1,291 @@
+{
+ "configMaps": [],
+ "statefulSet": {
+  "apiVersion": "apps/v1",
+  "kind": "StatefulSet",
+  "metadata": {
+   "annotations": {
+    "kaspr.io/resource-hash": "0ca98ceb219039e3"
+   },
+   "labels": {},
+   "name": "gcs-cache-example-app"
+  },
+  "spec": {
+   "persistentVolumeClaimRetentionPolicy": {
+    "whenDeleted": "Retain",
+    "whenScaled": "Retain"
+   },
+   "podManagementPolicy": "Parallel",
+   "selector": {
+    "matchLabels": {
+     "kaspr.io/cluster": "gcs-cache-example",
+     "kaspr.io/kind": "KasprApp",
+     "kaspr.io/name": "gcs-cache-example-app"
+    }
+   },
+   "serviceName": "gcs-cache-example-app",
+   "template": {
+    "metadata": {
+     "annotations": {},
+     "labels": {
+      "app.kubernetes.io/instance": "gcs-cache-example",
+      "app.kubernetes.io/managed-by": "kaspr-operator",
+      "app.kubernetes.io/name": "KasprApp",
+      "app.kubernetes.io/part-of": "kaspr-gcs-cache-example",
+      "kaspr.io/app": "gcs-cache-example",
+      "kaspr.io/cluster": "gcs-cache-example",
+      "kaspr.io/component-type": "KasprApp",
+      "kaspr.io/kind": "KasprApp",
+      "kaspr.io/name": "gcs-cache-example-app"
+     }
+    },
+    "spec": {
+     "containers": [
+      {
+       "env": [
+        {
+         "name": "K_APP_NAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_APP_NAME",
+           "name": "gcs-cache-example-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_BOOTSTRAP_SERVERS",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_BOOTSTRAP_SERVERS",
+           "name": "gcs-cache-example-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SECURITY_PROTOCOL",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SECURITY_PROTOCOL",
+           "name": "gcs-cache-example-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SASL_MECHANISM",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SASL_MECHANISM",
+           "name": "gcs-cache-example-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_USERNAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_AUTH_USERNAME",
+           "name": "gcs-cache-example-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_PORT",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_WEB_PORT",
+           "name": "gcs-cache-example-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DATA_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DATA_DIR",
+           "name": "gcs-cache-example-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_TABLE_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_TABLE_DIR",
+           "name": "gcs-cache-example-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DEFINITIONS_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DEFINITIONS_DIR",
+           "name": "gcs-cache-example-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_PASSWORD",
+         "valueFrom": {
+          "secretKeyRef": {
+           "key": "password",
+           "name": "kafka-credentials"
+          }
+         }
+        },
+        {
+         "name": "K_CONSUMER_GROUP_INSTANCE_ID",
+         "valueFrom": {
+          "fieldRef": {
+           "apiVersion": "v1",
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "PYTHONPATH",
+         "value": "/opt/kaspr/packages:${PYTHONPATH}"
+        },
+        {
+         "name": "POD_NAME",
+         "valueFrom": {
+          "fieldRef": {
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_HOST",
+         "value": "$(POD_NAME).gcs-cache-example-app.legacy-rendering.svc.cluster.local"
+        },
+        {
+         "name": "CONFIG_HASH",
+         "value": "d82ef11b8b2d96c4"
+        },
+        {
+         "name": "PACKAGES_HASH",
+         "value": "5bab44315f4f3b2a"
+        }
+       ],
+       "image": "kasprio/kaspr:0.11.31",
+       "imagePullPolicy": "IfNotPresent",
+       "name": "kaspr",
+       "ports": [
+        {
+         "containerPort": 6065,
+         "name": "http"
+        }
+       ],
+       "volumeMounts": [
+        {
+         "mountPath": "/var/lib/data/tables",
+         "name": "gcs-cache-example-app-pv"
+        },
+        {
+         "mountPath": "/opt/kaspr/packages",
+         "name": "gcs-cache-example-app-packages",
+         "readOnly": true
+        }
+       ]
+      }
+     ],
+     "hostAliases": [],
+     "imagePullSecrets": [],
+     "initContainers": [
+      {
+       "args": [
+        "#!/bin/bash\nset -e\n\necho \"Python Package Installer - GCS Cache Mode\"\necho \"Cache path: /opt/kaspr/packages\"\necho 'Packages: [\"requests==2.31.0\", \"numpy>=1.24.0\", \"pandas>=2.0.0\"]'\necho \"Packages hash: 5bab44315f4f3b2a\"\necho \"Timeout: 600s\"\necho \"Retries: 3\"\necho \"On failure: block\"\necho \"Max archive size: 1073741824 bytes\"\n\n# Detect Python major.minor version at runtime\n# GCS object key is suffixed with Python version so different Python versions\n# get separate cached archives.\nPYTHON_VERSION=$(python3 -c \"import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')\")\necho \"Python version: $PYTHON_VERSION\"\n\n# Append Python version to GCS object key\n# e.g. kaspr-packages/my-app/a1b2c3d4.tar.gz -> kaspr-packages/my-app/a1b2c3d4-py3.12.tar.gz\nGCS_OBJECT_KEY=\"${GCS_OBJECT_KEY%.tar.gz}-py${PYTHON_VERSION}.tar.gz\"\necho \"GCS object key (with Python version): $GCS_OBJECT_KEY\"\nexport GCS_OBJECT_KEY\n\n# Ensure install directory exists\nmkdir -p /opt/kaspr/packages\n\nbuild_pip_command() {\n    local pip_cmd=\"pip install --no-warn-script-location --target /opt/kaspr/packages --no-cache-dir\"\n    \n    # Helper: embed credentials into a URL (insert username:password@ after scheme)\n    embed_credentials() {\n        local url=\"$1\"\n        if [ -n \"${PYPI_USERNAME:-}\" ] && [ -n \"${PYPI_PASSWORD:-}\" ]; then\n            echo \"$url\" | sed \"s|://|://${PYPI_USERNAME}:${PYPI_PASSWORD}@|\"\n        else\n            echo \"$url\"\n        fi\n    }\n    \n    # Custom index URL with optional authentication\n    if [ -n \"${INDEX_URL:-}\" ]; then\n        local effective_index=$(embed_credentials \"$INDEX_URL\")\n        pip_cmd=\"$pip_cmd --index-url $effective_index\"\n    elif [ -n \"${PYPI_USERNAME:-}\" ] && [ -n \"${PYPI_PASSWORD:-}\" ]; then\n        # Credentials without custom index - use PyPI with auth\n        pip_cmd=\"$pip_cmd --index-url https://${PYPI_USERNAME}:${PYPI_PASSWORD}@pypi.org/simple\"\n    fi\n    \n    # Extra index URLs (credentials embedded if available)\n    if [ -n \"${EXTRA_INDEX_URLS:-}\" ]; then\n        IFS=',' read -ra EXTRA_URLS <<< \"$EXTRA_INDEX_URLS\"\n        for url in \"${EXTRA_URLS[@]}\"; do\n            local effective_url=$(embed_credentials \"$url\")\n            pip_cmd=\"$pip_cmd --extra-index-url $effective_url\"\n        done\n    fi\n    \n    # Trusted hosts\n    if [ -n \"${TRUSTED_HOSTS:-}\" ]; then\n        IFS=',' read -ra HOSTS <<< \"$TRUSTED_HOSTS\"\n        for host in \"${HOSTS[@]}\"; do\n            pip_cmd=\"$pip_cmd --trusted-host $host\"\n        done\n    fi\n\n    local package_spec_0=\"requests==2.31.0\"\n    pip_cmd=\"$pip_cmd $(printf '%q' \"$package_spec_0\")\"\n    local package_spec_1=\"numpy>=1.24.0\"\n    pip_cmd=\"$pip_cmd $(printf '%q' \"$package_spec_1\")\"\n    local package_spec_2=\"pandas>=2.0.0\"\n    pip_cmd=\"$pip_cmd $(printf '%q' \"$package_spec_2\")\"\n    echo \"$pip_cmd\"\n}\n\n\n# Function to install packages with retry logic\ninstall_packages() {\n    local attempt=1\n    local max_attempts=3\n    local install_start_ts=$(date +%s)\n    local pip_cmd=$(build_pip_command)\n\n    while [ $attempt -le $max_attempts ]; do\n        echo \"Installation attempt $attempt of $max_attempts\"\n\n        if timeout 600s bash -c \"$pip_cmd\" 2>/tmp/pip-error.log; then\n            echo \"Successfully installed packages\"\n            local install_end_ts=$(date +%s)\n            local duration=$((install_end_ts - install_start_ts))\n            echo \"Installation completed in ${duration}s\"\n            return 0\n        else\n            local exit_code=$?\n            echo \"Installation failed with exit code $exit_code\"\n            cat /tmp/pip-error.log 2>/dev/null || true\n            \n    # Categorize the failure\n    if [ -f /tmp/pip-error.log ]; then\n        if grep -qi \"No matching distribution\\|Could not find a version\" /tmp/pip-error.log; then\n            echo \"ERROR_TYPE: package_not_found\"\n            echo \"ERROR_MSG: One or more packages not found in the index. Verify package name and version.\"\n        elif grep -qi \"THESE PACKAGES DO NOT MATCH THE HASHES\\|hash\" /tmp/pip-error.log; then\n            echo \"ERROR_TYPE: hash_mismatch\"\n            echo \"ERROR_MSG: Package integrity check failed. Package may be corrupted.\"\n        elif grep -qi \"403\\|401\\|authentication\\|Access denied\" /tmp/pip-error.log; then\n            echo \"ERROR_TYPE: authentication\"\n            echo \"ERROR_MSG: Authentication failed. Check credentials in referenced Secret.\"\n        elif grep -qi \"ConnectionError\\|NewConnectionError\\|MaxRetryError\\|Name or service not known\" /tmp/pip-error.log; then\n            echo \"ERROR_TYPE: network\"\n            echo \"ERROR_MSG: Cannot reach package index. Check network connectivity and firewall rules.\"\n        else\n            echo \"ERROR_TYPE: unknown\"\n            echo \"ERROR_MSG: Package installation failed. See init container logs for details.\"\n        fi\n    else\n        echo \"ERROR_TYPE: unknown\"\n        echo \"ERROR_MSG: Package installation failed (no error log captured).\"\n    fi\n\n\n            if [ $attempt -lt $max_attempts ]; then\n                echo \"Retrying in 5 seconds...\"\n                sleep 5\n            fi\n            attempt=$((attempt + 1))\n        fi\n    done\n\n    echo \"Failed to install packages after $max_attempts attempts\"\n    return 1\n}\n\n# ------------------------------------------------------------------\n# Step 1: Try GCS cache download\n# ------------------------------------------------------------------\necho \"Attempting to download cached packages from GCS...\"\nGCS_DOWNLOAD_EXIT=0\npython3 -c '\n\nimport json, base64, time, subprocess, os\nimport urllib.request, urllib.parse, urllib.error\n\ndef _b64url(data):\n    \"\"\"Base64url encode without padding.\"\"\"\n    return base64.urlsafe_b64encode(data).rstrip(b\"=\")\n\ndef get_access_token():\n    \"\"\"Authenticate with GCS using mounted service account key.\"\"\"\n    with open(\"/var/run/secrets/gcs/sa.json\") as f:\n        sa = json.load(f)\n\n    # Build JWT header and payload\n    header = _b64url(json.dumps({\"alg\": \"RS256\", \"typ\": \"JWT\"}).encode())\n    now = int(time.time())\n    payload = _b64url(json.dumps({\n        \"iss\": sa[\"client_email\"],\n        \"scope\": \"https://www.googleapis.com/auth/devstorage.read_write\",\n        \"aud\": \"https://oauth2.googleapis.com/token\",\n        \"iat\": now,\n        \"exp\": now + 3600,\n    }).encode())\n\n    signing_input = header + b\".\" + payload\n\n    # Write private key to temp file for openssl\n    pk_path = \"/tmp/.gcs_pk.pem\"\n    with open(pk_path, \"w\") as f:\n        f.write(sa[\"private_key\"])\n    try:\n        sig = subprocess.check_output(\n            [\"openssl\", \"dgst\", \"-sha256\", \"-sign\", pk_path, \"-binary\"],\n            input=signing_input,\n            stderr=subprocess.DEVNULL,\n        )\n    finally:\n        os.remove(pk_path)\n\n    jwt_token = (header + b\".\" + payload + b\".\" + _b64url(sig)).decode()\n\n    # Exchange JWT for access token\n    data = urllib.parse.urlencode({\n        \"grant_type\": \"urn:ietf:params:oauth:grant-type:jwt-bearer\",\n        \"assertion\": jwt_token,\n    }).encode()\n    req = urllib.request.Request(\"https://oauth2.googleapis.com/token\", data=data)\n    resp = json.loads(urllib.request.urlopen(req).read())\n    return resp[\"access_token\"]\n\n\nimport sys\n\nbucket = os.environ[\"GCS_BUCKET\"]\nobject_key = os.environ[\"GCS_OBJECT_KEY\"]\n_safe = \"\"\n\ntry:\n    token = get_access_token()\nexcept Exception as e:\n    print(f\"GCS auth failed: {e}\")\n    sys.exit(1)\n\nurl = f\"https://storage.googleapis.com/storage/v1/b/{urllib.parse.quote(bucket, safe=_safe)}/o/{urllib.parse.quote(object_key, safe=_safe)}?alt=media\"\nreq = urllib.request.Request(url, headers={\"Authorization\": f\"Bearer {token}\"})\ntry:\n    with urllib.request.urlopen(req) as r, open(\"/tmp/packages.tar.gz\", \"wb\") as f:\n        while True:\n            chunk = r.read(65536)\n            if not chunk:\n                break\n            f.write(chunk)\n    print(\"Cache hit - downloaded archive from GCS\")\n    sys.exit(0)\nexcept urllib.error.HTTPError as e:\n    if e.code == 404:\n        print(\"Cache miss - archive not found in GCS\")\n        sys.exit(1)\n    print(f\"GCS download failed (HTTP {e.code}): {e.reason}\")\n    sys.exit(1)\nexcept Exception as e:\n    print(f\"GCS download failed: {e}\")\n    sys.exit(1)\n\n' || GCS_DOWNLOAD_EXIT=$?\n\nif [ \"$GCS_DOWNLOAD_EXIT\" -eq 0 ]; then\n    echo \"Extracting cached archive...\"\n    tar xzf /tmp/packages.tar.gz -C /opt/kaspr/packages\n    rm -f /tmp/packages.tar.gz\n    echo \"Package installation complete (GCS cache hit)\"\n    exit 0\nfi\n\n# ------------------------------------------------------------------\n# Step 2: Cache miss \u2014 install packages via pip\n# ------------------------------------------------------------------\necho \"GCS cache miss \u2014 falling back to pip install\"\nif install_packages; then\n    echo \"Package installation via pip succeeded\"\nelse\n    if [ \"block\" = \"block\" ]; then\n        echo \"Installation failed - blocking pod startup\"\n        exit 1\n    else\n        echo \"Installation failed - allowing pod to start in degraded mode\"\n        exit 0\n    fi\nfi\n\n# ------------------------------------------------------------------\n# Step 3: Archive and upload to GCS (non-fatal)\n# ------------------------------------------------------------------\necho \"Creating archive for GCS upload...\"\ntar czf /tmp/packages.tar.gz -C /opt/kaspr/packages .\n\n# Get archive size (macOS stat vs GNU stat)\nARCHIVE_SIZE=$(stat -f%z /tmp/packages.tar.gz 2>/dev/null || stat -c%s /tmp/packages.tar.gz 2>/dev/null || echo 0)\n\nif [ \"$ARCHIVE_SIZE\" -le 1073741824 ]; then\n    echo \"Archive size: ${ARCHIVE_SIZE} bytes (limit: 1073741824), uploading...\"\n    python3 -c '\n\nimport json, base64, time, subprocess, os\nimport urllib.request, urllib.parse, urllib.error\n\ndef _b64url(data):\n    \"\"\"Base64url encode without padding.\"\"\"\n    return base64.urlsafe_b64encode(data).rstrip(b\"=\")\n\ndef get_access_token():\n    \"\"\"Authenticate with GCS using mounted service account key.\"\"\"\n    with open(\"/var/run/secrets/gcs/sa.json\") as f:\n        sa = json.load(f)\n\n    # Build JWT header and payload\n    header = _b64url(json.dumps({\"alg\": \"RS256\", \"typ\": \"JWT\"}).encode())\n    now = int(time.time())\n    payload = _b64url(json.dumps({\n        \"iss\": sa[\"client_email\"],\n        \"scope\": \"https://www.googleapis.com/auth/devstorage.read_write\",\n        \"aud\": \"https://oauth2.googleapis.com/token\",\n        \"iat\": now,\n        \"exp\": now + 3600,\n    }).encode())\n\n    signing_input = header + b\".\" + payload\n\n    # Write private key to temp file for openssl\n    pk_path = \"/tmp/.gcs_pk.pem\"\n    with open(pk_path, \"w\") as f:\n        f.write(sa[\"private_key\"])\n    try:\n        sig = subprocess.check_output(\n            [\"openssl\", \"dgst\", \"-sha256\", \"-sign\", pk_path, \"-binary\"],\n            input=signing_input,\n            stderr=subprocess.DEVNULL,\n        )\n    finally:\n        os.remove(pk_path)\n\n    jwt_token = (header + b\".\" + payload + b\".\" + _b64url(sig)).decode()\n\n    # Exchange JWT for access token\n    data = urllib.parse.urlencode({\n        \"grant_type\": \"urn:ietf:params:oauth:grant-type:jwt-bearer\",\n        \"assertion\": jwt_token,\n    }).encode()\n    req = urllib.request.Request(\"https://oauth2.googleapis.com/token\", data=data)\n    resp = json.loads(urllib.request.urlopen(req).read())\n    return resp[\"access_token\"]\n\n\nbucket = os.environ[\"GCS_BUCKET\"]\nobject_key = os.environ[\"GCS_OBJECT_KEY\"]\n_safe = \"\"\n\ntry:\n    token = get_access_token()\n    \n    with open(\"/tmp/packages.tar.gz\", \"rb\") as f:\n        file_data = f.read()\n    \n    upload_url = (\n        f\"https://storage.googleapis.com/upload/storage/v1/b/\"\n        f\"{urllib.parse.quote(bucket, safe=_safe)}/o\"\n        f\"?uploadType=media&name={urllib.parse.quote(object_key, safe=_safe)}\"\n    )\n    req = urllib.request.Request(\n        upload_url,\n        data=file_data,\n        method=\"POST\",\n        headers={\n            \"Authorization\": f\"Bearer {token}\",\n            \"Content-Type\": \"application/gzip\",\n        },\n    )\n    urllib.request.urlopen(req)\n    print(\"Uploaded packages archive to GCS cache\")\nexcept Exception as e:\n    print(f\"GCS upload failed (non-fatal): {e}\")\n\n' || true\nelse\n    echo \"Archive size ${ARCHIVE_SIZE} bytes exceeds limit (1073741824 bytes), skipping upload\"\nfi\n\nrm -f /tmp/packages.tar.gz\necho \"Package installation complete (GCS cache miss, installed from pip)\"\nexit 0"
+       ],
+       "command": [
+        "/bin/bash",
+        "-c"
+       ],
+       "env": [
+        {
+         "name": "PACKAGES_HASH",
+         "value": "5bab44315f4f3b2a"
+        },
+        {
+         "name": "GCS_BUCKET",
+         "value": "my-kaspr-packages"
+        },
+        {
+         "name": "GCS_OBJECT_KEY",
+         "value": "kaspr-packages/gcs-cache-example-app/5bab44315f4f3b2a.tar.gz"
+        }
+       ],
+       "image": "python:3.12-bookworm",
+       "name": "install-packages",
+       "resources": {
+        "limits": {
+         "cpu": "500m",
+         "memory": "512Mi"
+        },
+        "requests": {
+         "cpu": "100m",
+         "memory": "256Mi"
+        }
+       },
+       "volumeMounts": [
+        {
+         "mountPath": "/opt/kaspr/packages",
+         "name": "gcs-cache-example-app-packages"
+        },
+        {
+         "mountPath": "/var/run/secrets/gcs",
+         "name": "gcs-sa-key",
+         "readOnly": true
+        }
+       ]
+      }
+     ],
+     "serviceAccountName": "gcs-cache-example-app",
+     "tolerations": [],
+     "topologySpreadConstraints": [],
+     "volumes": [
+      {
+       "emptyDir": {},
+       "name": "gcs-cache-example-app-packages"
+      },
+      {
+       "name": "gcs-sa-key",
+       "secret": {
+        "items": [
+         {
+          "key": "sa.json",
+          "path": "sa.json"
+         }
+        ],
+        "secretName": "gcs-sa-key"
+       }
+      }
+     ]
+    }
+   },
+   "updateStrategy": {
+    "type": "RollingUpdate"
+   },
+   "volumeClaimTemplates": [
+    {
+     "metadata": {
+      "annotations": {
+       "kaspr.io/resource-hash": "67c2559cc193599c"
+      },
+      "name": "gcs-cache-example-app-pv"
+     },
+     "spec": {
+      "accessModes": [
+       "ReadWriteOnce"
+      ],
+      "resources": {
+       "requests": {
+        "storage": "1Gi"
+       }
+      },
+      "storageClassName": "standard"
+     }
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,333 @@
+{
+ "configMaps": [
+  {
+   "apiVersion": "v1",
+   "data": {
+    "api-cache-table.yaml": "tables:\n- default_selector: null\n  description: 'Caches API responses to reduce external API calls and improve performance.\n\n    Key format: {api_type}:{cache_key}\n\n    '\n  extra_topic_configs:\n    retention.ms: '86400000'\n  global: false\n  key_serializer: json\n  name: api-cache\n  options: {}\n  partitions: 8\n  value_serializer: json\n  window: null\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "4aee57f17d783ab0"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "api-cache",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprTable",
+     "app.kubernetes.io/part-of": "kaspr-api-cache",
+     "kaspr.io/app": "user-enrichment",
+     "kaspr.io/component-type": "KasprTable",
+     "kaspr.io/kind": "KasprTable",
+     "kaspr.io/name": "api-cache-table"
+    },
+    "name": "api-cache-table",
+    "namespace": "legacy-rendering"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "data": {
+    "api-enricher-agent.yaml": "agents:\n- description: 'Enriches user events by calling external APIs to gather additional\n    information\n\n    such as geolocation data and user details. Implements caching to minimize API\n    calls.\n\n    '\n  input:\n    channel: null\n    declare: null\n    take: null\n    topic:\n      compacting: null\n      config: null\n      deleting: null\n      key_serializer: null\n      name: enriched-user-events\n      partitions: null\n      pattern: null\n      replicas: null\n      retention: null\n      value_serializer: null\n  isolated_partitions: null\n  name: api-enricher\n  noack: null\n  output:\n    topics:\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value[\\\"user_id\\\"]\\n\"\n      key_serializer: null\n      name: api-enriched-events\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return value.get(\\\"enrichment_successful\\\"\\\n          , False)\\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"enriched_event\\\"]\\n\"\n      value_serializer: null\n    - ack: null\n      compacting: null\n      config: null\n      declare: false\n      deleting: null\n      headers_selector: null\n      key_selector:\n        entrypoint: null\n        python: \"def get_key(value):\\n    return value[\\\"user_id\\\"]\\n\"\n      key_serializer: null\n      name: api-enrichment-errors\n      name_selector: null\n      partition_selector: null\n      partitions: null\n      pass_through: false\n      predicate:\n        entrypoint: null\n        python: \"def should_send(value):\\n    return not value.get(\\\"enrichment_successful\\\"\\\n          , True)\\n\"\n      replicas: null\n      retention: null\n      value_selector:\n        entrypoint: null\n        python: \"def get_value(value):\\n    return value[\\\"error_info\\\"]\\n\"\n      value_serializer: null\n  processors:\n    init:\n      entrypoint: null\n      python: \"import aiohttp\\nimport asyncio\\nimport json\\nimport os\\nfrom datetime\\\n        \\ import datetime, timezone, timedelta\\nimport hashlib\\n\\napp = context[\\\"\\\n        app\\\"]\\n\\n# Configuration\\nGEO_API_URL = os.getenv(\\\"GEO_API_URL\\\", \\\"http://ip-api.com/json\\\"\\\n        )\\nUSER_API_URL = os.getenv(\\\"USER_API_URL\\\", \\\"https://jsonplaceholder.typicode.com/users\\\"\\\n        )\\nAPI_TIMEOUT = int(os.getenv(\\\"API_TIMEOUT_SECONDS\\\", \\\"5\\\"))\\nCACHE_TTL_HOURS\\\n        \\ = int(os.getenv(\\\"CACHE_TTL_HOURS\\\", \\\"24\\\"))\\n\\n# Create a single HTTP\\\n        \\ session for reuse across all API calls\\n# This session will be reused for\\\n        \\ all HTTP requests to improve performance\\nhttp_session = aiohttp.ClientSession(\\n\\\n        \\    timeout=aiohttp.ClientTimeout(total=API_TIMEOUT)\\n)\\n\\n# Note: In a production\\\n        \\ environment, you may want to handle session cleanup\\n# when the agent shuts\\\n        \\ down, though Kaspr typically handles this automatically\\n\\nasync def make_api_call(session,\\\n        \\ url, params=None):\\n    \\\"\\\"\\\"Make an HTTP API call with timeout and error\\\n        \\ handling.\\\"\\\"\\\"\\n    try:\\n        async with session.get(url, params=params)\\\n        \\ as response:\\n            if response.status == 200:\\n                return\\\n        \\ await response.json()\\n            else:\\n                return {\\\"error\\\"\\\n        : f\\\"HTTP {response.status}\\\"}\\n    except asyncio.TimeoutError:\\n       \\\n        \\ return {\\\"error\\\": \\\"API timeout\\\"}\\n    except Exception as e:\\n      \\\n        \\  return {\\\"error\\\": str(e)}\\n\\ndef is_cache_valid(cached_item):\\n    \\\"\\\"\\\n        \\\"Check if a cached item is still valid based on TTL.\\\"\\\"\\\"\\n    if not cached_item\\\n        \\ or \\\"cached_at\\\" not in cached_item:\\n        return False\\n    \\n    cached_at\\\n        \\ = datetime.fromisoformat(cached_item[\\\"cached_at\\\"])\\n    expiry = cached_at\\\n        \\ + timedelta(hours=CACHE_TTL_HOURS)\\n    return datetime.now(timezone.utc)\\\n        \\ < expiry\\n\\ndef get_cache_key(api_type, identifier):\\n    \\\"\\\"\\\"Generate\\\n        \\ a consistent cache key.\\\"\\\"\\\"\\n    return f\\\"{api_type}:{hashlib.md5(str(identifier).encode()).hexdigest()}\\\"\\\n        \\n    \\n\"\n    operations:\n    - filter: null\n      map:\n        entrypoint: check_cache\n        python: \"def check_cache(value, cache):\\n    \\\"\\\"\\\"\\n    Check if we have\\\n          \\ valid cached data for this event's enrichment needs.\\n    \\\"\\\"\\\"\\n   \\\n          \\ ip_address = value.get(\\\"ip_address\\\")\\n    user_id = value[\\\"user_id\\\"\\\n          ]\\n    \\n    # Check geo cache\\n    geo_data = None\\n    if ip_address:\\n\\\n          \\        geo_cache_key = get_cache_key(\\\"geo\\\", ip_address)\\n        cached_geo\\\n          \\ = cache.get(geo_cache_key)\\n        if is_cache_valid(cached_geo):\\n \\\n          \\           geo_data = cached_geo[\\\"data\\\"]\\n    \\n    # Check user data\\\n          \\ cache\\n    user_data = None\\n    user_cache_key = get_cache_key(\\\"user\\\"\\\n          , user_id)\\n    cached_user = cache.get(user_cache_key)\\n    if is_cache_valid(cached_user):\\n\\\n          \\        user_data = cached_user[\\\"data\\\"]\\n    \\n    return {\\n       \\\n          \\ **value,\\n        \\\"cached_geo_data\\\": geo_data,\\n        \\\"cached_user_data\\\"\\\n          : user_data,\\n        \\\"needs_geo_api\\\": ip_address and not geo_data,\\n\\\n          \\        \\\"needs_user_api\\\": not user_data,\\n        \\\"geo_cache_key\\\":\\\n          \\ get_cache_key(\\\"geo\\\", ip_address) if ip_address else None,\\n        \\\"\\\n          user_cache_key\\\": user_cache_key\\n    }\\n    \\n\"\n      name: check-cache\n      tables:\n      - name: api-cache\n        param_name: cache\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: enrich_with_geo_api\n        python: \"async def enrich_with_geo_api(value):\\n    \\\"\\\"\\\"\\n    Call geolocation\\\n          \\ API to enrich event with location data.\\n    \\\"\\\"\\\"\\n    if not value.get(\\\"\\\n          needs_geo_api\\\"):\\n        return {**value, \\\"api_geo_data\\\": value.get(\\\"\\\n          cached_geo_data\\\")}\\n    \\n    ip_address = value.get(\\\"ip_address\\\")\\n\\\n          \\    if not ip_address:\\n        return {**value, \\\"api_geo_data\\\": None}\\n\\\n          \\    \\n    geo_url = f\\\"{GEO_API_URL}/{ip_address}\\\"\\n    geo_response =\\\n          \\ await make_api_call(http_session, geo_url)\\n        \\n        if \\\"error\\\"\\\n          \\ in geo_response:\\n            app.log.warning(f\\\"Geo API error for IP\\\n          \\ {ip_address}: {geo_response['error']}\\\")\\n            return {**value,\\\n          \\ \\\"api_geo_data\\\": None, \\\"geo_api_error\\\": geo_response[\\\"error\\\"]}\\n\\\n          \\        \\n        # Extract relevant geo data\\n        geo_data = {\\n \\\n          \\           \\\"country\\\": geo_response.get(\\\"country\\\"),\\n            \\\"\\\n          country_code\\\": geo_response.get(\\\"countryCode\\\"),\\n            \\\"region\\\"\\\n          : geo_response.get(\\\"regionName\\\"),\\n            \\\"city\\\": geo_response.get(\\\"\\\n          city\\\"),\\n            \\\"timezone\\\": geo_response.get(\\\"timezone\\\"),\\n  \\\n          \\          \\\"latitude\\\": geo_response.get(\\\"lat\\\"),\\n            \\\"longitude\\\"\\\n          : geo_response.get(\\\"lon\\\"),\\n            \\\"isp\\\": geo_response.get(\\\"isp\\\"\\\n          )\\n        }\\n        \\n        return {**value, \\\"api_geo_data\\\": geo_data}\\n\\\n          \\        \\n\"\n      name: enrich-with-geo-api\n      tables: []\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: enrich_with_user_api\n        python: \"async def enrich_with_user_api(value):\\n    \\\"\\\"\\\"\\n    Call user\\\n          \\ API to enrich event with user profile data.\\n    \\\"\\\"\\\"\\n    if not value.get(\\\"\\\n          needs_user_api\\\"):\\n        return {**value, \\\"api_user_data\\\": value.get(\\\"\\\n          cached_user_data\\\")}\\n    \\n    user_id = value[\\\"user_id\\\"]\\n    \\n   \\\n          \\ # Simulate user lookup - in real world, this would be your user service\\n\\\n          \\    user_url = f\\\"{USER_API_URL}/{hash(user_id) % 10 + 1}\\\"  # Map to user\\\n          \\ 1-10\\n    user_response = await make_api_call(http_session, user_url)\\n\\\n          \\        \\n        if \\\"error\\\" in user_response:\\n            app.log.warning(f\\\"\\\n          User API error for user {user_id}: {user_response['error']}\\\")\\n       \\\n          \\     return {**value, \\\"api_user_data\\\": None, \\\"user_api_error\\\": user_response[\\\"\\\n          error\\\"]}\\n        \\n        # Extract relevant user data\\n        user_data\\\n          \\ = {\\n            \\\"name\\\": user_response.get(\\\"name\\\"),\\n            \\\"\\\n          username\\\": user_response.get(\\\"username\\\"),\\n            \\\"email\\\": user_response.get(\\\"\\\n          email\\\"),\\n            \\\"phone\\\": user_response.get(\\\"phone\\\"),\\n      \\\n          \\      \\\"website\\\": user_response.get(\\\"website\\\"),\\n            \\\"company\\\"\\\n          : user_response.get(\\\"company\\\", {}).get(\\\"name\\\"),\\n            \\\"address\\\"\\\n          : {\\n                \\\"city\\\": user_response.get(\\\"address\\\", {}).get(\\\"\\\n          city\\\"),\\n                \\\"zipcode\\\": user_response.get(\\\"address\\\", {}).get(\\\"\\\n          zipcode\\\")\\n            }\\n        }\\n        \\n        return {**value,\\\n          \\ \\\"api_user_data\\\": user_data}\\n        \\n\"\n      name: enrich-with-user-api\n      tables: []\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: update_cache\n        python: \"def update_cache(value, cache):\\n    \\\"\\\"\\\"\\n    Update cache with\\\n          \\ new API responses.\\n    \\\"\\\"\\\"\\n    current_time = datetime.now(timezone.utc).isoformat()\\n\\\n          \\    \\n    # Cache geo data if we fetched it\\n    if value.get(\\\"needs_geo_api\\\"\\\n          ) and value.get(\\\"api_geo_data\\\"):\\n        geo_cache_key = value[\\\"geo_cache_key\\\"\\\n          ]\\n        cache[geo_cache_key] = {\\n            \\\"data\\\": value[\\\"api_geo_data\\\"\\\n          ],\\n            \\\"cached_at\\\": current_time,\\n            \\\"cache_type\\\"\\\n          : \\\"geo\\\"\\n        }\\n    \\n    # Cache user data if we fetched it\\n   \\\n          \\ if value.get(\\\"needs_user_api\\\") and value.get(\\\"api_user_data\\\"):\\n \\\n          \\       user_cache_key = value[\\\"user_cache_key\\\"]\\n        cache[user_cache_key]\\\n          \\ = {\\n            \\\"data\\\": value[\\\"api_user_data\\\"],\\n            \\\"cached_at\\\"\\\n          : current_time,\\n            \\\"cache_type\\\": \\\"user\\\"\\n        }\\n    \\n\\\n          \\    return value\\n    \\n\"\n      name: update-cache\n      tables:\n      - name: api-cache\n        param_name: cache\n      topic_send: null\n    - filter: null\n      map:\n        entrypoint: compile_enrichment\n        python: \"def compile_enrichment(value):\\n    \\\"\\\"\\\"\\n    Compile all enrichment\\\n          \\ data into the final enriched event.\\n    \\\"\\\"\\\"\\n    enriched_event =\\\n          \\ {**value}\\n    \\n    # Add geo enrichment\\n    geo_data = value.get(\\\"\\\n          api_geo_data\\\")\\n    if geo_data:\\n        enriched_event.update({\\n   \\\n          \\         \\\"geo_country\\\": geo_data.get(\\\"country\\\"),\\n            \\\"geo_country_code\\\"\\\n          : geo_data.get(\\\"country_code\\\"),\\n            \\\"geo_region\\\": geo_data.get(\\\"\\\n          region\\\"),\\n            \\\"geo_city\\\": geo_data.get(\\\"city\\\"),\\n        \\\n          \\    \\\"geo_timezone\\\": geo_data.get(\\\"timezone\\\"),\\n            \\\"geo_coordinates\\\"\\\n          : [geo_data.get(\\\"latitude\\\"), geo_data.get(\\\"longitude\\\")] if geo_data.get(\\\"\\\n          latitude\\\") else None,\\n            \\\"geo_isp\\\": geo_data.get(\\\"isp\\\")\\n\\\n          \\        })\\n    \\n    # Add user enrichment\\n    user_data = value.get(\\\"\\\n          api_user_data\\\")\\n    if user_data:\\n        enriched_event.update({\\n \\\n          \\           \\\"user_name\\\": user_data.get(\\\"name\\\"),\\n            \\\"user_username\\\"\\\n          : user_data.get(\\\"username\\\"),\\n            \\\"user_email\\\": user_data.get(\\\"\\\n          email\\\"),\\n            \\\"user_phone\\\": user_data.get(\\\"phone\\\"),\\n     \\\n          \\       \\\"user_company\\\": user_data.get(\\\"company\\\"),\\n            \\\"user_city\\\"\\\n          : user_data.get(\\\"address\\\", {}).get(\\\"city\\\"),\\n            \\\"user_zipcode\\\"\\\n          : user_data.get(\\\"address\\\", {}).get(\\\"zipcode\\\")\\n        })\\n    \\n  \\\n          \\  # Track enrichment success\\n    has_errors = bool(value.get(\\\"geo_api_error\\\"\\\n          ) or value.get(\\\"user_api_error\\\"))\\n    enrichment_successful = not has_errors\\n\\\n          \\    \\n    result = {\\n        **value,\\n        \\\"enriched_event\\\": enriched_event,\\n\\\n          \\        \\\"enrichment_successful\\\": enrichment_successful,\\n        \\\"enrichment_timestamp\\\"\\\n          : datetime.now(timezone.utc).isoformat()\\n    }\\n    \\n    if has_errors:\\n\\\n          \\        result[\\\"error_info\\\"] = {\\n            \\\"user_id\\\": value[\\\"user_id\\\"\\\n          ],\\n            \\\"geo_error\\\": value.get(\\\"geo_api_error\\\"),\\n         \\\n          \\   \\\"user_error\\\": value.get(\\\"user_api_error\\\"),\\n            \\\"timestamp\\\"\\\n          : result[\\\"enrichment_timestamp\\\"]\\n        }\\n    \\n    return result\"\n      name: compile-enrichment\n      tables: []\n      topic_send: null\n    pipeline:\n    - check-cache\n    - enrich-with-geo-api\n    - enrich-with-user-api\n    - update-cache\n    - compile-enrichment\n"
+   },
+   "kind": "ConfigMap",
+   "metadata": {
+    "annotations": {
+     "kaspr.io/resource-hash": "31d25d98ed2c2d41"
+    },
+    "labels": {
+     "app.kubernetes.io/instance": "api-enricher",
+     "app.kubernetes.io/managed-by": "kaspr-operator",
+     "app.kubernetes.io/name": "KasprAgent",
+     "app.kubernetes.io/part-of": "kaspr-api-enricher",
+     "kaspr.io/app": "user-enrichment",
+     "kaspr.io/component-type": "KasprAgent",
+     "kaspr.io/kind": "KasprAgent",
+     "kaspr.io/name": "api-enricher-agent"
+    },
+    "name": "api-enricher-agent",
+    "namespace": "legacy-rendering"
+   }
+  }
+ ],
+ "statefulSet": {
+  "apiVersion": "apps/v1",
+  "kind": "StatefulSet",
+  "metadata": {
+   "annotations": {
+    "kaspr.io/resource-hash": "acd36f7566278843"
+   },
+   "labels": {},
+   "name": "user-enrichment-app"
+  },
+  "spec": {
+   "persistentVolumeClaimRetentionPolicy": {
+    "whenDeleted": "Delete",
+    "whenScaled": "Retain"
+   },
+   "podManagementPolicy": "Parallel",
+   "selector": {
+    "matchLabels": {
+     "kaspr.io/cluster": "user-enrichment",
+     "kaspr.io/kind": "KasprApp",
+     "kaspr.io/name": "user-enrichment-app"
+    }
+   },
+   "serviceName": "user-enrichment-app",
+   "template": {
+    "metadata": {
+     "annotations": {},
+     "labels": {
+      "app.kubernetes.io/instance": "user-enrichment",
+      "app.kubernetes.io/managed-by": "kaspr-operator",
+      "app.kubernetes.io/name": "KasprApp",
+      "app.kubernetes.io/part-of": "kaspr-user-enrichment",
+      "kaspr.io/app": "user-enrichment",
+      "kaspr.io/cluster": "user-enrichment",
+      "kaspr.io/component-type": "KasprApp",
+      "kaspr.io/kind": "KasprApp",
+      "kaspr.io/name": "user-enrichment-app"
+     }
+    },
+    "spec": {
+     "containers": [
+      {
+       "env": [
+        {
+         "name": "K_APP_NAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_APP_NAME",
+           "name": "user-enrichment-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_BOOTSTRAP_SERVERS",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_BOOTSTRAP_SERVERS",
+           "name": "user-enrichment-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SECURITY_PROTOCOL",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SECURITY_PROTOCOL",
+           "name": "user-enrichment-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SASL_MECHANISM",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SASL_MECHANISM",
+           "name": "user-enrichment-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_USERNAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_AUTH_USERNAME",
+           "name": "user-enrichment-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_PORT",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_WEB_PORT",
+           "name": "user-enrichment-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DATA_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DATA_DIR",
+           "name": "user-enrichment-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_TABLE_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_TABLE_DIR",
+           "name": "user-enrichment-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DEFINITIONS_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DEFINITIONS_DIR",
+           "name": "user-enrichment-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_PASSWORD",
+         "valueFrom": {
+          "secretKeyRef": {
+           "key": "password",
+           "name": "kafka-credentials"
+          }
+         }
+        },
+        {
+         "name": "K_CONSUMER_GROUP_INSTANCE_ID",
+         "valueFrom": {
+          "fieldRef": {
+           "apiVersion": "v1",
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "POD_NAME",
+         "valueFrom": {
+          "fieldRef": {
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_HOST",
+         "value": "$(POD_NAME).user-enrichment-app.legacy-rendering.svc.cluster.local"
+        },
+        {
+         "name": "CONFIG_HASH",
+         "value": "77c25dfd52bb002e"
+        },
+        {
+         "name": "AGENTS_HASH",
+         "value": "ceb884e72f88e964"
+        },
+        {
+         "name": "TABLES_HASH",
+         "value": "3c934f6cd7ce64cc"
+        },
+        {
+         "name": "GEO_API_URL",
+         "value": "http://ip-api.com/json"
+        },
+        {
+         "name": "USER_API_URL",
+         "value": "https://jsonplaceholder.typicode.com/users"
+        },
+        {
+         "name": "API_TIMEOUT_SECONDS",
+         "value": "5"
+        },
+        {
+         "name": "CACHE_TTL_HOURS",
+         "value": "24"
+        }
+       ],
+       "image": "kasprio/kaspr:0.11.31",
+       "imagePullPolicy": "IfNotPresent",
+       "name": "kaspr",
+       "ports": [
+        {
+         "containerPort": 6065,
+         "name": "http"
+        }
+       ],
+       "resources": {
+        "limits": {
+         "cpu": "1000m",
+         "memory": "1Gi"
+        },
+        "requests": {
+         "cpu": "200m",
+         "memory": "512Mi"
+        }
+       },
+       "volumeMounts": [
+        {
+         "mountPath": "/var/lib/data/tables",
+         "name": "user-enrichment-app-pv"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/api-enricher-agent.yaml",
+         "name": "api-enricher-agent",
+         "readOnly": true,
+         "subPath": "api-enricher-agent.yaml"
+        },
+        {
+         "mountPath": "/var/lib/data/definitions/api-cache-table.yaml",
+         "name": "api-cache-table",
+         "readOnly": true,
+         "subPath": "api-cache-table.yaml"
+        }
+       ]
+      }
+     ],
+     "hostAliases": [],
+     "imagePullSecrets": [],
+     "serviceAccountName": "user-enrichment-app",
+     "tolerations": [],
+     "topologySpreadConstraints": [],
+     "volumes": [
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "api-enricher-agent.yaml",
+          "path": "api-enricher-agent.yaml"
+         }
+        ],
+        "name": "api-enricher-agent"
+       },
+       "name": "api-enricher-agent"
+      },
+      {
+       "configMap": {
+        "items": [
+         {
+          "key": "api-cache-table.yaml",
+          "path": "api-cache-table.yaml"
+         }
+        ],
+        "name": "api-cache-table"
+       },
+       "name": "api-cache-table"
+      }
+     ]
+    }
+   },
+   "updateStrategy": {
+    "type": "RollingUpdate"
+   },
+   "volumeClaimTemplates": [
+    {
+     "metadata": {
+      "annotations": {
+       "kaspr.io/resource-hash": "1ed1b41269695814"
+      },
+      "name": "user-enrichment-app-pv"
+     },
+     "spec": {
+      "accessModes": [
+       "ReadWriteOnce"
+      ],
+      "resources": {
+       "requests": {
+        "storage": "2Gi"
+       }
+      },
+      "storageClassName": "standard"
+     }
+    }
+   ]
+  }
+ }
+}

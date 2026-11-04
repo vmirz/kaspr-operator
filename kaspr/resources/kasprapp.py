@@ -6,7 +6,7 @@ import time
 import logging
 from dataclasses import dataclass, field
 from logging import Logger
-from typing import Any, List, Dict, Optional, Tuple
+from typing import Any, List, Dict, Mapping, Optional, Set, Tuple
 from kaspr.utils.objects import cached_property
 from kaspr.utils.helpers import now
 from kaspr.types.settings import Settings
@@ -85,7 +85,27 @@ from kubernetes_asyncio.client import (
 from kubernetes_asyncio.client.api_client import ApiClient
 
 from kaspr.resources.base import BaseResource
-from kaspr.resources import KasprAgent, KasprWebView, KasprTable, KasprTask
+from kaspr.resources import KasprAgent, KasprWebView, KasprTable, KasprTask, KasprJoin
+from kaspr.resources.definitions import (
+    BUNDLE,
+    COMPONENTS,
+    DEFAULT_SHARD_BYTES,
+    SHARD_KEY,
+    CleanupPlan,
+    Delivery,
+    DefinitionsConflict,
+    Shard,
+    build_shards,
+    cleanup_blocker,
+    cleanup_candidates,
+    is_shard,
+    plan_cleanup,
+    prepare_shard_config_map,
+    prepare_shard_volume_mounts,
+    prepare_shard_volumes,
+    resolve_delivery,
+)
+from kaspr.utils.errors import already_exists_error
 from kaspr.common.models.labels import Labels
 from kaspr.web import KasprWebClient
 from kaspr.sensors import SensorDelegate
@@ -127,6 +147,10 @@ class PodMetadataCache:
     metadata_by_ordinal: Dict[int, Dict[str, str]] = field(default_factory=dict)
     # Pods listed during the current refresh, for reuse by other status checks.
     listed_pods: Optional[V1PodList] = None
+
+
+# Sentinel telling sync_stateful_set to read the StatefulSet from the API.
+_FETCH = object()
 
 
 class KasprApp(BaseResource):
@@ -264,10 +288,23 @@ class KasprApp(BaseResource):
     webviews: List[KasprWebView] = None
     tables: List[KasprTable] = None
     tasks: List[KasprTask] = None
+    joins: List[KasprJoin] = None
     _webviews_hash: str = None
     _agents_hash: str = None
     _tables_hash: str = None
     _tasks_hash: str = None
+    _joins_hash: str = None
+
+    # How the components reach the pods: COMPONENTS or BUNDLE (see resolve_definitions_delivery).
+    definitions_delivery: str = COMPONENTS
+    _definition_shards: Optional[List[Shard]] = None
+    # Shards the last sync_definition_shards created.
+    created_definition_shards: List[Shard] = None
+    # The spec the app was built from, to render it in another delivery mode.
+    spec_model: Optional[KasprAppSpec] = None
+    # Body of the KasprApp, owner of its shards. When None, kopf.adopt() uses the
+    # object of the handler being run.
+    owner: Optional[Mapping[str, Any]] = None
     _packages_hash: str = None
 
     # TODO: Templates allow customizing k8s behavior
@@ -356,6 +393,7 @@ class KasprApp(BaseResource):
         app.template_python_packages_init_container = (
             spec.template.python_packages_init_container
         )
+        app.spec_model = spec
         return app
 
     @classmethod
@@ -368,8 +406,13 @@ class KasprApp(BaseResource):
             component_type=self.COMPONENT_TYPE,
         )
 
-    async def synchronize(self) -> "KasprApp":
-        """Compare current state with desired state for all child resources and create/patch as needed."""
+    async def synchronize(self, stateful_set: Optional[V1StatefulSet] = _FETCH) -> "KasprApp":
+        """Compare current state with desired state for all child resources and create/patch as needed.
+
+        Args:
+            stateful_set: The StatefulSet as the caller just read it (None if missing);
+                read from the API when omitted.
+        """
         self.unite()
         await self.sync_auth_credentials()
         await self.sync_service()
@@ -378,7 +421,7 @@ class KasprApp(BaseResource):
         await self.sync_settings_config_map()
         await self.sync_python_packages_pvc()
         await self.sync_hpa()
-        await self.sync_stateful_set()
+        await self.sync_stateful_set(stateful_set)
         await self.sync_vpa()
 
     async def sync_service(self):
@@ -684,11 +727,17 @@ class KasprApp(BaseResource):
                         f"Manual intervention required (delete and recreate PVC)."
                     )
 
-    async def sync_stateful_set(self):
-        """Check current state of stateful set and create/patch if needed."""
-        stateful_set: V1StatefulSet = await self.fetch_stateful_set(
-            self.apps_v1_api, self.stateful_set_name, self.namespace
-        )
+    async def sync_stateful_set(self, stateful_set: Optional[V1StatefulSet] = _FETCH):
+        """Check current state of stateful set and create/patch if needed.
+
+        Args:
+            stateful_set: The StatefulSet as the caller just read it (None if missing);
+                read from the API when omitted.
+        """
+        if stateful_set is _FETCH:
+            stateful_set = await self.fetch_stateful_set(
+                self.apps_v1_api, self.stateful_set_name, self.namespace
+            )
         if stateful_set and self.statefulset_needs_migrations(stateful_set):
             await self.recreate_statefulset(stateful_set)
             return
@@ -1041,21 +1090,31 @@ class KasprApp(BaseResource):
         """Apply agent resources to the app."""
         self.agents = agents
         self._agents_hash = None  # reset hash
+        self._definition_shards = None
 
     def with_webviews(self, webviews: List[KasprWebView]):
         """Apply webview resources to the app."""
         self.webviews = webviews
         self._webviews_hash = None  # reset hash
+        self._definition_shards = None
 
     def with_tables(self, tables: List[KasprTable]):
         """Apply table resources to the app."""
         self.tables = tables
         self._tables_hash = None  # reset hash
+        self._definition_shards = None
 
     def with_tasks(self, tasks: List[KasprTask]):
         """Apply task resources to the app."""
         self.tasks = tasks
         self._tasks_hash = None  # reset hash
+        self._definition_shards = None
+
+    def with_joins(self, joins: List[KasprJoin]):
+        """Apply join resources to the app. Joins are delivered in bundles only."""
+        self.joins = joins
+        self._joins_hash = None  # reset hash
+        self._definition_shards = None
 
     async def sync_component_config_maps(self):
         """Create or patch the config maps of the attached components as needed.
@@ -1064,6 +1123,9 @@ class KasprApp(BaseResource):
         definition rolls the pods. Syncing the definitions first ensures the new pods
         mount the definitions they were rolled for. All config maps are read with one
         request: they carry the app's label like their components do.
+
+        Returns the config maps labelled for the app as listed, or None when the app
+        has no components (nothing is listed then).
         """
         components = [
             *(self.agents or []),
@@ -1087,6 +1149,204 @@ class KasprApp(BaseResource):
             await component.sync_config_map(
                 actual=config_maps_by_name.get(component.config_map_name)
             )
+        return config_maps
+
+    def render_stateful_set(self, mode: str) -> V1StatefulSet:
+        """The app's StatefulSet with its components delivered in the given mode."""
+        twin = KasprApp.from_spec(
+            self.cluster,
+            self.KIND,
+            self.namespace,
+            self.spec_model,
+            self.annotations,
+            logger=self.logger,
+        )
+        twin.with_agents(self.agents or [])
+        twin.with_webviews(self.webviews or [])
+        twin.with_tables(self.tables or [])
+        twin.with_tasks(self.tasks or [])
+        twin.with_joins(self.joins or [])
+        twin.definitions_delivery = mode
+        return twin.stateful_set
+
+    def resolve_definitions_delivery(self, stateful_set: Optional[V1StatefulSet]) -> Delivery:
+        """Choose how the app's components reach its pods, before anything renders the pods.
+
+        The ``kaspr.io/definitions-delivery`` annotation applies at once. Without it the
+        app keeps the mode its pods run until its pod template changes anyway; then the
+        operator default applies (docs/design/definitions-bundle.md).
+
+        Args:
+            stateful_set: The app's StatefulSet as just read, or None if it does not exist.
+        """
+        conf = getattr(self, "conf", None)
+        default = conf.definitions_delivery_default if conf is not None else COMPONENTS
+        delivery = resolve_delivery(
+            self.annotations, default, stateful_set, self.render_stateful_set
+        )
+        self.definitions_delivery = delivery.mode
+        return delivery
+
+    @property
+    def definitions_shard_bytes(self) -> int:
+        conf = getattr(self, "conf", None)
+        return conf.definitions_bundle_shard_bytes if conf is not None else DEFAULT_SHARD_BYTES
+
+    @property
+    def definition_shards(self) -> List[Shard]:
+        """The app's components rendered into bundle shards."""
+        if self._definition_shards is None:
+            self._definition_shards = build_shards(
+                self.component_name,
+                {
+                    "agents": self.agents or [],
+                    "webviews": self.webviews or [],
+                    "tables": self.tables or [],
+                    "tasks": self.tasks or [],
+                    "joins": self.joins or [],
+                },
+                self.definitions_shard_bytes,
+            )
+        return self._definition_shards
+
+    @property
+    def desired_definitions_config_maps(self) -> Set[str]:
+        """Names of the ConfigMaps holding the app's components in its delivery mode."""
+        if self.definitions_delivery == BUNDLE:
+            return {shard.name for shard in self.definition_shards}
+        return {
+            component.config_map_name
+            for component in [
+                *(self.agents or []),
+                *(self.webviews or []),
+                *(self.tables or []),
+                *(self.tasks or []),
+            ]
+        }
+
+    def prepare_definition_shard_config_maps(self) -> List[V1ConfigMap]:
+        """The app's shard ConfigMaps, owned by the app."""
+        config_maps = [
+            prepare_shard_config_map(shard, self.namespace, self.labels.as_dict())
+            for shard in self.definition_shards
+        ]
+        if config_maps:
+            kopf.adopt(config_maps, owner=self.owner)
+        return config_maps
+
+    async def sync_definition_shards(self) -> List[V1ConfigMap]:
+        """Create the app's missing shards. A shard is never changed once created.
+
+        Returns the ConfigMaps labelled for the app as listed before any was created.
+
+        Raises:
+            DefinitionsConflict: a shard's name is taken by another object.
+        """
+        config_maps = await self.list_config_maps(
+            self.core_v1_api,
+            self.namespace,
+            label_selector=f"{self.KASPR_APP_NAME_LABEL}={self.cluster}",
+        )
+        listed = {config_map.metadata.name: config_map for config_map in config_maps}
+        created = []
+        for shard, desired in zip(
+            self.definition_shards, self.prepare_definition_shard_config_maps()
+        ):
+            existing = listed.get(shard.name)
+            if existing is None:
+                try:
+                    await self.core_v1_api.create_namespaced_config_map(
+                        namespace=self.namespace, body=desired
+                    )
+                    created.append(shard)
+                    continue
+                except ApiException as ex:
+                    if not already_exists_error(ex):
+                        raise
+                existing = await self.fetch_config_map(
+                    self.core_v1_api, shard.name, self.namespace
+                )
+                if existing is None:
+                    raise kopf.TemporaryError(
+                        f"ConfigMap {shard.name} was deleted while it was created.", delay=5
+                    )
+            self.verify_definition_shard(existing, shard, desired)
+            owner_patch = self.prepare_owner_references_patch(existing, desired)
+            if owner_patch:
+                await self.patch_config_map(
+                    self.core_v1_api, shard.name, self.namespace, owner_patch
+                )
+        self.created_definition_shards = created
+        return config_maps
+
+    def verify_definition_shard(
+        self, existing: V1ConfigMap, shard: Shard, desired: V1ConfigMap
+    ):
+        """Raise DefinitionsConflict unless an existing ConfigMap is this app's shard."""
+        owners = {
+            ref.uid
+            for ref in (existing.metadata.owner_references or [])
+            if ref.controller
+        }
+        own = {ref.uid for ref in (desired.metadata.owner_references or [])}
+        if (
+            not is_shard(existing, self.cluster)
+            or (existing.data or {}) != {SHARD_KEY: shard.document}
+            or (owners and own and not owners & own)
+        ):
+            raise DefinitionsConflict(
+                f"ConfigMap {shard.name} exists but is not a definitions shard of KasprApp "
+                f"{self.cluster}; it is left as it is."
+            )
+
+    async def clean_up_definitions(
+        self,
+        mode: str,
+        desired: Set[str],
+        config_maps: Optional[List[V1ConfigMap]] = None,
+    ) -> CleanupPlan:
+        """Delete the definitions ConfigMaps the app no longer mounts, once no pod can need them.
+
+        Args:
+            mode: The delivery mode of the app's pod template.
+            desired: The definitions ConfigMaps its pod template mounts.
+            config_maps: The ConfigMaps labelled for the app; listed when omitted.
+        """
+        if config_maps is None:
+            config_maps = await self.list_config_maps(
+                self.core_v1_api,
+                self.namespace,
+                label_selector=f"{self.KASPR_APP_NAME_LABEL}={self.cluster}",
+            )
+        candidates = cleanup_candidates(self.cluster, mode, desired, config_maps)
+        if not candidates:
+            return CleanupPlan()
+        stateful_set = await self.fetch_stateful_set(
+            self.apps_v1_api, self.stateful_set_name, self.namespace
+        )
+        blocker = cleanup_blocker(desired, stateful_set)
+        if blocker:
+            return CleanupPlan(waiting=candidates, reason=blocker)
+        pods = await self.list_pods(
+            self.core_v1_api,
+            self.namespace,
+            self.labels.kasper_label_selectors().as_dict(),
+        )
+        plan = plan_cleanup(candidates, desired, stateful_set, pods.items or [])
+        deleted = []
+        for config_map in plan.delete:
+            if await self.delete_config_map(
+                self.core_v1_api,
+                config_map.metadata.name,
+                self.namespace,
+                uid=config_map.metadata.uid,
+            ):
+                deleted.append(config_map)
+            else:
+                plan.waiting.append(config_map)
+                plan.reason = plan.reason or "a ConfigMap was replaced while it was deleted"
+        plan.delete = deleted
+        return plan
 
     async def fetch(self, name: str, namespace: str):
         """Fetch actual KasprApp in kubernetes."""
@@ -1952,6 +2212,10 @@ class KasprApp(BaseResource):
         if self.tasks:
             env_vars.append(V1EnvVar(name="TASKS_HASH", value=self.tasks_hash))
 
+        # include joins hash; joins reach the pods in bundles only
+        if self.joins and self.definitions_delivery == BUNDLE:
+            env_vars.append(V1EnvVar(name="JOINS_HASH", value=self.joins_hash))
+
         # include packages hash
         if self.python_packages:
             env_vars.append(V1EnvVar(name="PACKAGES_HASH", value=self.packages_hash))
@@ -2136,15 +2400,25 @@ class KasprApp(BaseResource):
                     name=self.persistent_volume_claim_name,
                     mount_path=self.table_dir_path,
                 ),
-                *self.prepare_agent_volume_mounts(),
-                *self.prepare_webview_volume_mounts(),
-                *self.prepare_table_volume_mounts(),
-                *self.prepare_task_volume_mounts(),
+                *self.prepare_definitions_volume_mounts(),
                 *self.prepare_container_template_volume_mounts(),
                 *self.prepare_packages_volume_mounts(),
             ]
         )
         return volume_mounts
+
+    def prepare_definitions_volume_mounts(self) -> List[V1VolumeMount]:
+        """Mounts of the app's component definitions, in its delivery mode."""
+        if self.definitions_delivery == BUNDLE:
+            return prepare_shard_volume_mounts(
+                self.definition_shards, self.definitions_dir_path
+            )
+        return [
+            *self.prepare_agent_volume_mounts(),
+            *self.prepare_webview_volume_mounts(),
+            *self.prepare_table_volume_mounts(),
+            *self.prepare_task_volume_mounts(),
+        ]
 
     def prepare_packages_volume_mounts(self) -> List[V1VolumeMount]:
         """Prepare volume mount for Python packages.
@@ -2209,10 +2483,7 @@ class KasprApp(BaseResource):
 
     def prepare_volumes(self) -> List[V1Volume]:
         volumes = []
-        volumes.extend(self.prepare_agent_volumes())
-        volumes.extend(self.prepare_webview_volumes())
-        volumes.extend(self.prepare_table_volumes())
-        volumes.extend(self.prepare_task_volumes())
+        volumes.extend(self.prepare_definitions_volumes())
         volumes.extend(self.prepare_pod_template_volumes())
         
         # Add python packages volume (PVC or emptyDir based on cache config)
@@ -2254,6 +2525,17 @@ class KasprApp(BaseResource):
                 )
         
         return volumes
+
+    def prepare_definitions_volumes(self) -> List[V1Volume]:
+        """Volumes of the app's component definitions, in its delivery mode."""
+        if self.definitions_delivery == BUNDLE:
+            return prepare_shard_volumes(self.definition_shards)
+        return [
+            *self.prepare_agent_volumes(),
+            *self.prepare_webview_volumes(),
+            *self.prepare_table_volumes(),
+            *self.prepare_task_volumes(),
+        ]
 
     def prepare_pod_template_volumes(self) -> List[V1Volume]:
         """Prepare an additional volumes from the template pod."""
@@ -3004,8 +3286,13 @@ class KasprApp(BaseResource):
             stateful_set={"spec": {"template": self.pod_template}},
         )
 
-    async def create(self):
-        """Create KMS resources."""
+    async def create(self, stateful_set: Optional[V1StatefulSet] = _FETCH):
+        """Create KMS resources.
+
+        Args:
+            stateful_set: The StatefulSet as the caller just read it (None if missing);
+                read from the API when omitted.
+        """
         self.unite()
         await self.sync_service_account()
         await self.sync_settings_config_map()
@@ -3013,7 +3300,7 @@ class KasprApp(BaseResource):
         await self.sync_service()
         await self.sync_headless_service()
         await self.sync_hpa()
-        await self.sync_stateful_set()
+        await self.sync_stateful_set(stateful_set)
 
     async def patch_replicas(self):
         if self.replicas == 0:
@@ -3954,6 +4241,17 @@ class KasprApp(BaseResource):
                 else None
             )
         return self._tasks_hash
+
+    @cached_property
+    def joins_hash(self) -> str:
+        """Hash of all joins."""
+        if self._joins_hash is None:
+            self._joins_hash = (
+                self.compute_hash("".join(join.hash for join in self.joins))
+                if self.joins
+                else None
+            )
+        return self._joins_hash
 
     @cached_property
     def packages_hash(self) -> Optional[str]:

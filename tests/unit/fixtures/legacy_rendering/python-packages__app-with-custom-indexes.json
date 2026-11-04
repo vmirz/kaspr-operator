@@ -1,0 +1,270 @@
+{
+ "configMaps": [],
+ "statefulSet": {
+  "apiVersion": "apps/v1",
+  "kind": "StatefulSet",
+  "metadata": {
+   "annotations": {
+    "kaspr.io/resource-hash": "c93e49d3aa89723a"
+   },
+   "labels": {},
+   "name": "app-with-custom-indexes-app"
+  },
+  "spec": {
+   "persistentVolumeClaimRetentionPolicy": {
+    "whenDeleted": "Retain",
+    "whenScaled": "Retain"
+   },
+   "podManagementPolicy": "Parallel",
+   "selector": {
+    "matchLabels": {
+     "kaspr.io/cluster": "app-with-custom-indexes",
+     "kaspr.io/kind": "KasprApp",
+     "kaspr.io/name": "app-with-custom-indexes-app"
+    }
+   },
+   "serviceName": "app-with-custom-indexes-app",
+   "template": {
+    "metadata": {
+     "annotations": {},
+     "labels": {
+      "app.kubernetes.io/instance": "app-with-custom-indexes",
+      "app.kubernetes.io/managed-by": "kaspr-operator",
+      "app.kubernetes.io/name": "KasprApp",
+      "app.kubernetes.io/part-of": "kaspr-app-with-custom-indexes",
+      "kaspr.io/app": "app-with-custom-indexes",
+      "kaspr.io/cluster": "app-with-custom-indexes",
+      "kaspr.io/component-type": "KasprApp",
+      "kaspr.io/kind": "KasprApp",
+      "kaspr.io/name": "app-with-custom-indexes-app"
+     }
+    },
+    "spec": {
+     "containers": [
+      {
+       "env": [
+        {
+         "name": "K_APP_NAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_APP_NAME",
+           "name": "app-with-custom-indexes-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_BOOTSTRAP_SERVERS",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_BOOTSTRAP_SERVERS",
+           "name": "app-with-custom-indexes-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SECURITY_PROTOCOL",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SECURITY_PROTOCOL",
+           "name": "app-with-custom-indexes-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_SASL_MECHANISM",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_SASL_MECHANISM",
+           "name": "app-with-custom-indexes-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_USERNAME",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_KAFKA_AUTH_USERNAME",
+           "name": "app-with-custom-indexes-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_PORT",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_WEB_PORT",
+           "name": "app-with-custom-indexes-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DATA_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DATA_DIR",
+           "name": "app-with-custom-indexes-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_TABLE_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_TABLE_DIR",
+           "name": "app-with-custom-indexes-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_DEFINITIONS_DIR",
+         "valueFrom": {
+          "configMapKeyRef": {
+           "key": "K_DEFINITIONS_DIR",
+           "name": "app-with-custom-indexes-app-config"
+          }
+         }
+        },
+        {
+         "name": "K_KAFKA_AUTH_PASSWORD",
+         "valueFrom": {
+          "secretKeyRef": {
+           "key": "password",
+           "name": "kafka-credentials"
+          }
+         }
+        },
+        {
+         "name": "K_CONSUMER_GROUP_INSTANCE_ID",
+         "valueFrom": {
+          "fieldRef": {
+           "apiVersion": "v1",
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "PYTHONPATH",
+         "value": "/opt/kaspr/packages:${PYTHONPATH}"
+        },
+        {
+         "name": "POD_NAME",
+         "valueFrom": {
+          "fieldRef": {
+           "fieldPath": "metadata.name"
+          }
+         }
+        },
+        {
+         "name": "K_WEB_HOST",
+         "value": "$(POD_NAME).app-with-custom-indexes-app.legacy-rendering.svc.cluster.local"
+        },
+        {
+         "name": "CONFIG_HASH",
+         "value": "e4e60ae4eb5a3139"
+        },
+        {
+         "name": "PACKAGES_HASH",
+         "value": "6f5ba8bda1165b62"
+        }
+       ],
+       "image": "kasprio/kaspr:0.11.31",
+       "imagePullPolicy": "IfNotPresent",
+       "name": "kaspr",
+       "ports": [
+        {
+         "containerPort": 6065,
+         "name": "http"
+        }
+       ],
+       "volumeMounts": [
+        {
+         "mountPath": "/var/lib/data/tables",
+         "name": "app-with-custom-indexes-app-pv"
+        },
+        {
+         "mountPath": "/opt/kaspr/packages",
+         "name": "app-with-custom-indexes-app-packages",
+         "readOnly": true
+        }
+       ]
+      }
+     ],
+     "hostAliases": [],
+     "imagePullSecrets": [],
+     "initContainers": [
+      {
+       "args": [
+        "#!/bin/bash\nset -e\n\necho \"Python Package Installer - Starting\"\necho \"Cache path: /opt/kaspr/packages\"\necho 'Packages: [\"requests==2.31.0\", \"company-lib==1.0.0\"]'\necho \"Packages hash: 6f5ba8bda1165b62\"\necho \"Timeout: 600s\"\necho \"Retries: 3\"\necho \"On failure: block\"\n\n# Detect Python major.minor version at runtime\n# This is used to invalidate cache when the base image's Python is upgraded,\n# without triggering reinstalls on every Kaspr version bump.\nPYTHON_VERSION=$(python3 -c \"import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')\")\necho \"Python version: $PYTHON_VERSION\"\n\n# Ensure cache directory exists\nmkdir -p /opt/kaspr/packages\nmkdir -p \"$(dirname /opt/kaspr/packages/.install.lock)\"\n\nbuild_pip_command() {\n    local pip_cmd=\"pip install --no-warn-script-location --target /opt/kaspr/packages --no-cache-dir\"\n    \n    # Helper: embed credentials into a URL (insert username:password@ after scheme)\n    embed_credentials() {\n        local url=\"$1\"\n        if [ -n \"${PYPI_USERNAME:-}\" ] && [ -n \"${PYPI_PASSWORD:-}\" ]; then\n            echo \"$url\" | sed \"s|://|://${PYPI_USERNAME}:${PYPI_PASSWORD}@|\"\n        else\n            echo \"$url\"\n        fi\n    }\n    \n    # Custom index URL with optional authentication\n    if [ -n \"${INDEX_URL:-}\" ]; then\n        local effective_index=$(embed_credentials \"$INDEX_URL\")\n        pip_cmd=\"$pip_cmd --index-url $effective_index\"\n    elif [ -n \"${PYPI_USERNAME:-}\" ] && [ -n \"${PYPI_PASSWORD:-}\" ]; then\n        # Credentials without custom index - use PyPI with auth\n        pip_cmd=\"$pip_cmd --index-url https://${PYPI_USERNAME}:${PYPI_PASSWORD}@pypi.org/simple\"\n    fi\n    \n    # Extra index URLs (credentials embedded if available)\n    if [ -n \"${EXTRA_INDEX_URLS:-}\" ]; then\n        IFS=',' read -ra EXTRA_URLS <<< \"$EXTRA_INDEX_URLS\"\n        for url in \"${EXTRA_URLS[@]}\"; do\n            local effective_url=$(embed_credentials \"$url\")\n            pip_cmd=\"$pip_cmd --extra-index-url $effective_url\"\n        done\n    fi\n    \n    # Trusted hosts\n    if [ -n \"${TRUSTED_HOSTS:-}\" ]; then\n        IFS=',' read -ra HOSTS <<< \"$TRUSTED_HOSTS\"\n        for host in \"${HOSTS[@]}\"; do\n            pip_cmd=\"$pip_cmd --trusted-host $host\"\n        done\n    fi\n\n    local package_spec_0=\"requests==2.31.0\"\n    pip_cmd=\"$pip_cmd $(printf '%q' \"$package_spec_0\")\"\n    local package_spec_1=\"company-lib==1.0.0\"\n    pip_cmd=\"$pip_cmd $(printf '%q' \"$package_spec_1\")\"\n    echo \"$pip_cmd\"\n}\n\n\n# Stale lock detection and cleanup\ncheck_stale_lock() {\n    if [ -f \"/opt/kaspr/packages/.install.lock\" ]; then\n        local lock_mtime=$(stat -c %Y \"/opt/kaspr/packages/.install.lock\" 2>/dev/null || stat -f %m \"/opt/kaspr/packages/.install.lock\" 2>/dev/null || echo 0)\n        local now=$(date +%s)\n        local lock_age=$((now - lock_mtime))\n        local stale_threshold=900\n        \n        if [ $lock_age -gt $stale_threshold ]; then\n            echo \"WARNING: Stale lock detected (${lock_age}s old, threshold ${stale_threshold}s), removing...\"\n            rm -f \"/opt/kaspr/packages/.install.lock\"\n        fi\n    fi\n}\n\n# Function to install packages with retry logic\ninstall_packages() {\n    local attempt=1\n    local max_attempts=3\n    local install_start=$(date -u +\"%Y-%m-%dT%H:%M:%S.%6N+00:00\")\n    local install_start_ts=$(date +%s)\n    local pip_cmd=$(build_pip_command)\n    \n    while [ $attempt -le $max_attempts ]; do\n        echo \"Installation attempt $attempt of $max_attempts\"\n        \n        # Run pip install with timeout, capturing errors\n        if timeout 600s bash -c \"$pip_cmd\" 2>/tmp/pip-error.log; then\n            echo \"Successfully installed packages\"\n            \n            # Calculate duration\n            local install_end_ts=$(date +%s)\n            local duration=$((install_end_ts - install_start_ts))\n\n            cat > \"/opt/kaspr/packages/.installed-6f5ba8bda1165b62\" <<EOF\n{\n  \"packages\": [\"requests==2.31.0\", \"company-lib==1.0.0\"],\n  \"python_version\": \"$PYTHON_VERSION\",\n  \"install_time\": \"$install_start\",\n  \"duration\": \"${duration}s\",\n  \"pod_name\": \"$HOSTNAME\"\n}\nEOF\n            echo \"Created marker file: /opt/kaspr/packages/.installed-6f5ba8bda1165b62\"\n            return 0\n        else\n            local exit_code=$?\n            echo \"Installation failed with exit code $exit_code\"\n            cat /tmp/pip-error.log 2>/dev/null || true\n            \n    # Categorize the failure\n    if [ -f /tmp/pip-error.log ]; then\n        if grep -qi \"No matching distribution\\|Could not find a version\" /tmp/pip-error.log; then\n            echo \"ERROR_TYPE: package_not_found\"\n            echo \"ERROR_MSG: One or more packages not found in the index. Verify package name and version.\"\n        elif grep -qi \"THESE PACKAGES DO NOT MATCH THE HASHES\\|hash\" /tmp/pip-error.log; then\n            echo \"ERROR_TYPE: hash_mismatch\"\n            echo \"ERROR_MSG: Package integrity check failed. Package may be corrupted.\"\n        elif grep -qi \"403\\|401\\|authentication\\|Access denied\" /tmp/pip-error.log; then\n            echo \"ERROR_TYPE: authentication\"\n            echo \"ERROR_MSG: Authentication failed. Check credentials in referenced Secret.\"\n        elif grep -qi \"ConnectionError\\|NewConnectionError\\|MaxRetryError\\|Name or service not known\" /tmp/pip-error.log; then\n            echo \"ERROR_TYPE: network\"\n            echo \"ERROR_MSG: Cannot reach package index. Check network connectivity and firewall rules.\"\n        else\n            echo \"ERROR_TYPE: unknown\"\n            echo \"ERROR_MSG: Package installation failed. See init container logs for details.\"\n        fi\n    else\n        echo \"ERROR_TYPE: unknown\"\n        echo \"ERROR_MSG: Package installation failed (no error log captured).\"\n    fi\n\n            \n            if [ $attempt -lt $max_attempts ]; then\n                echo \"Retrying in 5 seconds...\"\n                sleep 5\n            fi\n            attempt=$((attempt + 1))\n        fi\n    done\n    \n    echo \"Failed to install packages after $max_attempts attempts\"\n    return 1\n}\n\n# Check for stale locks before acquiring\ncheck_stale_lock\n\n# Acquire lock to prevent concurrent installations\n# Use flock with exclusive lock and timeout\nexec 200>/opt/kaspr/packages/.install.lock\nif flock -x -w 600 200; then\n    echo \"Acquired installation lock\"\n    \n    # Check if packages with this hash are already installed\n    if [ -f \"/opt/kaspr/packages/.installed-6f5ba8bda1165b62\" ]; then\n        # Verify the cached packages were built with the same Python version.\n        # Compiled extensions (.so files) are not compatible across Python\n        # major.minor versions, so a Python upgrade must trigger a reinstall.\n        CACHED_PY=$(python3 -c \"\nimport json, sys\ntry:\n    data = json.load(open('/opt/kaspr/packages/.installed-6f5ba8bda1165b62'))\n    print(data.get('python_version', ''))\nexcept Exception:\n    print('')\n\")\n        if [ \"$CACHED_PY\" = \"$PYTHON_VERSION\" ]; then\n            echo \"Packages with hash 6f5ba8bda1165b62 already installed (Python $PYTHON_VERSION), skipping installation\"\n            flock -u 200\n            exit 0\n        else\n            echo \"Python version changed ($CACHED_PY -> $PYTHON_VERSION), reinstalling packages\"\n            rm -f /opt/kaspr/packages/.installed-*\n        fi\n    fi\n    \n    # Remove old marker files\n    rm -f /opt/kaspr/packages/.installed-*\n    \n    # Install packages\n    if install_packages; then\n        echo \"Package installation complete\"\n        flock -u 200\n        exit 0\n    else\n        flock -u 200\n        if [ \"block\" = \"block\" ]; then\n            echo \"Installation failed - blocking pod startup\"\n            exit 1\n        else\n            echo \"Installation failed - allowing pod to start in degraded mode\"\n            exit 0\n        fi\n    fi\nelse\n    echo \"Failed to acquire installation lock within 600s\"\n    if [ \"block\" = \"block\" ]; then\n        exit 1\n    else\n        exit 0\n    fi\nfi"
+       ],
+       "command": [
+        "/bin/bash",
+        "-c"
+       ],
+       "env": [
+        {
+         "name": "PACKAGES_HASH",
+         "value": "6f5ba8bda1165b62"
+        },
+        {
+         "name": "INDEX_URL",
+         "value": "https://pypi.org/simple"
+        },
+        {
+         "name": "EXTRA_INDEX_URLS",
+         "value": "https://pypi.company.com/simple"
+        },
+        {
+         "name": "TRUSTED_HOSTS",
+         "value": "pypi.company.com"
+        }
+       ],
+       "image": "python:3.12-bookworm",
+       "name": "install-packages",
+       "volumeMounts": [
+        {
+         "mountPath": "/opt/kaspr/packages",
+         "name": "app-with-custom-indexes-app-packages"
+        }
+       ]
+      }
+     ],
+     "serviceAccountName": "app-with-custom-indexes-app",
+     "tolerations": [],
+     "topologySpreadConstraints": [],
+     "volumes": [
+      {
+       "name": "app-with-custom-indexes-app-packages",
+       "persistentVolumeClaim": {
+        "claimName": "app-with-custom-indexes-app-python-packages"
+       }
+      }
+     ]
+    }
+   },
+   "updateStrategy": {
+    "type": "RollingUpdate"
+   },
+   "volumeClaimTemplates": [
+    {
+     "metadata": {
+      "annotations": {
+       "kaspr.io/resource-hash": "2541c4977ece8193"
+      },
+      "name": "app-with-custom-indexes-app-pv"
+     },
+     "spec": {
+      "accessModes": [
+       "ReadWriteOnce"
+      ],
+      "resources": {
+       "requests": {
+        "storage": "1Gi"
+       }
+      },
+      "storageClassName": "standard"
+     }
+    }
+   ]
+  }
+ }
+}

@@ -15,6 +15,7 @@ from kubernetes_asyncio.client import (
 from kubernetes_asyncio.client.api_client import ApiClient
 
 from kaspr.resources.base import BaseResource
+from kaspr.resources.definitions import BUNDLE
 from kaspr.common.models.labels import Labels
 from kaspr.sensors import SensorDelegate
 
@@ -38,6 +39,10 @@ class BaseAppComponent(BaseResource):
     KIND = None
     COMPONENT_TYPE = None
     PLURAL_NAME = None
+
+    # Whether the component has a ConfigMap of its own when its app does not deliver
+    # bundles. Joins never have one: they are delivered in bundles only.
+    WRITES_CONFIG_MAP = True
 
     kaspr_resource: KasprResourceT
     config_map_name: str
@@ -292,6 +297,15 @@ class BaseAppComponent(BaseResource):
 
     async def patch_app_status(self, app_status: str):
         """Record whether this component's KasprApp exists in its status."""
+        return await self.patch_status(
+            {"app": {"name": self.app_name, "status": app_status}}
+        )
+
+    async def patch_status(self, fields: Mapping[str, Any]):
+        """Merge fields into this component's status; a None value removes a field.
+
+        Returns the patched component, or None if it no longer exists.
+        """
         return await self.patch_custom_object_status(
             self.custom_objects_api,
             namespace=self.namespace,
@@ -299,8 +313,18 @@ class BaseAppComponent(BaseResource):
             version=self.GROUP_VERSION,
             plural=self.PLURAL_NAME,
             name=self.cluster,
-            status={"app": {"name": self.app_name, "status": app_status}},
+            status=dict(fields),
         )
+
+    def definitions_status(self, bundled: bool) -> Dict[str, Any]:
+        """Status fields telling how this component reaches its app's pods.
+
+        A component of an app that does not deliver bundles has today's status: its
+        ConfigMap, and no delivery field.
+        """
+        if bundled:
+            return {"configMap": None, "delivery": BUNDLE}
+        return {"configMap": self.config_map_name, "delivery": None}
 
     def info(self) -> Dict:
         """Return kaspr resource info."""

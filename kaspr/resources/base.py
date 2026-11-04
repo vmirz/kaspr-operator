@@ -23,6 +23,7 @@ from kubernetes_asyncio.client import (
     V1ConfigMap,
     V1PersistentVolumeClaim,
     V1DeleteOptions,
+    V1Preconditions,
     V2HorizontalPodAutoscaler,
     V1PodList
 )
@@ -383,6 +384,27 @@ class BaseResource:
             namespace=namespace,
             body=config_map,
         )
+
+    async def delete_config_map(
+        self, core_v1_api: CoreV1Api, name: str, namespace: str, uid: str = None
+    ) -> bool:
+        """Delete a config map; given its uid, only that very object.
+
+        Returns True once it is gone, False when the name now belongs to another object.
+        """
+        try:
+            await core_v1_api.delete_namespaced_config_map(
+                name=name,
+                namespace=namespace,
+                body=V1DeleteOptions(preconditions=V1Preconditions(uid=uid) if uid else None),
+            )
+        except ApiException as ex:
+            if ex.status == 404:
+                return True
+            if ex.status == 409:
+                return False
+            raise
+        return True
 
     async def list_config_maps(
         self, core_v1_api: CoreV1Api, namespace: str, label_selector: str = None
