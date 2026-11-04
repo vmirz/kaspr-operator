@@ -204,8 +204,7 @@ def test_an_invalid_join_is_left_out_of_the_app():
     bad = copy.deepcopy(good)
     bad["metadata"]["name"] = "broken"
     bad["spec"] = {"leftTable": "orders"}
-    app = app_with(components=[])
-    app.logger = Mock()
+    app = KasprApp.default()  # as on_delete builds it: no logger of its own
     related = {"agents": [], "webviews": [], "tables": [], "tasks": [], "joins": [good, bad], "success": True}
 
     assert asyncio.run(handler.attach_app_related_resources(app, APP, "ns", related=related)) is True

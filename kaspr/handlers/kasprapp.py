@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import kopf
+import logging
 import random
 import time
 import json
@@ -275,7 +276,7 @@ async def attach_app_related_resources(
             joins.append(_component_from_item(KasprJoin, KasprJoinSpecSchema, item, namespace))
         except Exception as e:
             # The join's own handler reports why; the rest of the app is unaffected.
-            app.logger.warning(
+            logging.getLogger(__name__).warning(
                 f"Leaving out KasprJoin {item['metadata']['name']} of {name}: {e}"
             )
     app.with_joins(joins)
