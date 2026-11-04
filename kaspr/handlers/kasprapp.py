@@ -2383,7 +2383,9 @@ def _post_delivery_events(
             f"delivery mode ({COMPONENTS} or {BUNDLE}); it is ignored.",
             logger,
         )
-    if delivery.changes:
+    # Without components both modes render the same pod template, which then reads as
+    # components mode: a bundle annotation changes nothing.
+    if delivery.changes and any((app.agents, app.webviews, app.tables, app.tasks, app.joins)):
         why = (
             f"the {DELIVERY_ANNOTATION} annotation"
             if delivery.reason == "annotation"
