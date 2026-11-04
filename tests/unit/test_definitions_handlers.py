@@ -486,7 +486,7 @@ def test_joins_are_warned_when_their_app_stops_delivering_bundles(posted, change
 def test_a_switch_to_components_names_the_joins_it_leaves_out(monkeypatch):
     events = []
     monkeypatch.setattr(handler, "_post_app_event", lambda *args: events.append(args[3:6]))
-    app = SimpleNamespace(joins=[reported_join()])
+    app = SimpleNamespace(agents=[], webviews=[], tables=[], tasks=[], joins=[reported_join()])
 
     handler._post_delivery_events(app, APP, "ns", {}, Delivery("components", "bundle", "annotation"), Mock())
     handler._post_delivery_events(app, APP, "ns", {}, Delivery("bundle", "components", "annotation"), Mock())
@@ -598,3 +598,18 @@ def test_a_delivered_joins_internal_topics_are_subscriptions():
     members = [{"assignment": {"actives": {"probe-orders": [0]}, "standbys": {}}, "rebalancing": False}]
     check = check_assignment(members, subscribed_topics(linked, "probe"))
     assert not check.satisfied and check.unassigned == sorted(expected)
+
+
+def test_an_app_without_components_reports_no_delivery_change(monkeypatch):
+    """Both modes render its pod template alike, so its StatefulSet always reads as
+    components mode: a bundle annotation must not report a change on every reconciliation."""
+    events = []
+    monkeypatch.setattr(handler, "_post_app_event", lambda *args: events.append(args[4]))
+    app = app_with(components=[], annotations={d.DELIVERY_ANNOTATION: "bundle"})
+    live = app.render_stateful_set(d.BUNDLE)
+
+    delivery = app.resolve_definitions_delivery(live)
+    handler._post_delivery_events(app, APP, "ns", {}, delivery, Mock())
+
+    assert delivery.mode == d.BUNDLE
+    assert events == []
