@@ -221,6 +221,10 @@ class BaseAppComponent(BaseResource):
                 self.file_name: self.file_data,
             },
         )
+        # Hash the config map as it is stored, with its hash annotation: hashing leaves
+        # that annotation out, so the value is the component's own hash, which its
+        # status reports and its app's pods carry.
+        annotations.update(self.prepare_hash_annotation(""))
         annotations.update(
             self.prepare_hash_annotation(self.prepare_config_map_hash(configmap))
         )
