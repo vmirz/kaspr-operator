@@ -1,10 +1,13 @@
 # KasprJoin Basic Example
 # This example demonstrates a key join between an orders table and a products table.
-# The join produces an output channel that an agent consumes to create enriched orders.
+# Two agents fill the tables from their topics; the join produces an output channel
+# that a third agent consumes to create enriched orders.
 #
 # Prerequisites:
 #   - A KasprApp named "order-system" must exist
-#   - Kafka topics "raw-orders" and "raw-products" must exist
+#   - Kafka topics "raw-orders" and "raw-products" must exist, each with the tables'
+#     partition count (6), their records keyed by order_id and product_id as plain
+#     strings, partitioned by Kafka's default partitioner
 #
 # Usage:
 #   kubectl apply -f examples/join/basic.yaml
@@ -13,6 +16,9 @@
 #
 # KasprJoins reach the app's pods only with definitions bundle delivery: annotate the
 # KasprApp "kaspr.io/definitions-delivery: bundle" (docs/user-guide/definitions-delivery.md).
+#
+# A joined table must be keyed like the topic that fills it: here both are raw, the
+# keys as produced. The app refuses to start when they differ.
 
 ---
 # Orders table (keyed by order_id)
@@ -26,6 +32,7 @@ spec:
   name: orders
   description: "Orders keyed by order_id"
   partitions: 6
+  keySerializer: raw
 
 ---
 # Products table (keyed by product_id)
@@ -39,6 +46,65 @@ spec:
   name: products
   description: "Product catalog keyed by product_id"
   partitions: 6
+  keySerializer: raw
+
+---
+# Fills the orders table from raw-orders
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: ingest-orders
+  labels:
+    kaspr.io/app: order-system
+spec:
+  description: "Stores each order under its record's key"
+  input:
+    topic:
+      name: raw-orders
+      keySerializer: raw
+  processors:
+    pipeline:
+      - store
+    operations:
+      - name: store
+        tables:
+          - name: orders
+            paramName: orders
+        map:
+          entrypoint: store
+          python: |
+            def store(value, orders):
+                orders[context["event"].key] = value
+                return value
+
+---
+# Fills the products table from raw-products
+apiVersion: kaspr.io/v1alpha1
+kind: KasprAgent
+metadata:
+  name: ingest-products
+  labels:
+    kaspr.io/app: order-system
+spec:
+  description: "Stores each product under its record's key"
+  input:
+    topic:
+      name: raw-products
+      keySerializer: raw
+  processors:
+    pipeline:
+      - store
+    operations:
+      - name: store
+        tables:
+          - name: products
+            paramName: products
+        map:
+          entrypoint: store
+          python: |
+            def store(value, products):
+                products[context["event"].key] = value
+                return value
 
 ---
 # Key join: orders -> products by product_id
@@ -95,7 +161,13 @@ spec:
                 """
                 value is a JoinedValue named tuple:
                   JoinedValue(left=<order>, right=<product>)
+                or None: the order has no joined result any more (deleted,
+                or its product is gone or changed to a missing one). The
+                event's key is the order's key.
                 """
+                if value is None:
+                    order_id = context["event"].key.decode()
+                    return {"order_id": order_id, "deleted": True}
                 order = value.left
                 product = value.right
                 return {
